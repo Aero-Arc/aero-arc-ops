@@ -2,6 +2,8 @@
 
 Aero Arc Ops is a Flutter operations dashboard for monitoring distributed aerial infrastructure. The app presents a command-center view of relay health, agent activity, service registration, compute node utilization, and live telemetry in a responsive dark interface.
 
+![Aero Arc Ops dashboard overview](assets/dashboard.png)
+
 ## Goal
 
 Provide operators with a fast, readable surface for understanding whether the Aero Arc network is healthy and where attention is needed. The current app is a front-end prototype with representative operational data, reusable dashboard patterns, and room to connect real services behind each panel.
