@@ -209,6 +209,56 @@ class AircraftDashboard {
   }
 }
 
+class AircraftMapView {
+  const AircraftMapView({
+    required this.aircraft,
+    this.liveState,
+    required this.liveStateAvailable,
+    this.latestTelemetry,
+    required this.replaySamples,
+    this.activeIntent,
+    required this.operationalVolumes,
+    this.conformanceSummary,
+    required this.conformanceEvents,
+  });
+
+  final Aircraft aircraft;
+  final LiveAircraftState? liveState;
+  final bool liveStateAvailable;
+  final TelemetrySample? latestTelemetry;
+  final List<TelemetrySample> replaySamples;
+  final OperationalIntent? activeIntent;
+  final List<OperationalVolume> operationalVolumes;
+  final ConformanceSummary? conformanceSummary;
+  final List<ConformanceEvent> conformanceEvents;
+
+  factory AircraftMapView.fromJson(Map<String, dynamic> json) {
+    return AircraftMapView(
+      aircraft: Aircraft.fromJson(asMap(json['aircraft'])),
+      liveState: optional(json['live_state'], LiveAircraftState.fromJson),
+      liveStateAvailable: asBool(json['live_state_available']),
+      latestTelemetry: optional(
+        json['latest_telemetry'],
+        TelemetrySample.fromJson,
+      ),
+      replaySamples: listOf(json['replay_samples'], TelemetrySample.fromJson),
+      activeIntent: optional(json['active_intent'], OperationalIntent.fromJson),
+      operationalVolumes: listOf(
+        json['operational_volumes'],
+        OperationalVolume.fromJson,
+      ),
+      conformanceSummary: optional(
+        json['conformance_summary'],
+        ConformanceSummary.fromJson,
+      ),
+      conformanceEvents: listOf(
+        json['conformance_events'],
+        ConformanceEvent.fromJson,
+      ),
+    );
+  }
+}
+
 class Aircraft {
   const Aircraft({
     required this.id,
@@ -532,6 +582,65 @@ class OperationalIntent {
       maxAltitudeFtAgl: asNullableDouble(json['max_altitude_ft_agl']),
       supervisorId: asNullableString(json['supervisor_id']),
       flightCoordinatorId: asNullableString(json['flight_coordinator_id']),
+      updatedAt: asDate(json['updated_at']),
+    );
+  }
+}
+
+class OperationalVolume {
+  const OperationalVolume({
+    required this.id,
+    this.operatorId,
+    required this.intentId,
+    required this.intentVersion,
+    required this.sequence,
+    this.geometryUri,
+    this.geoJson,
+    required this.minAltitudeM,
+    required this.maxAltitudeM,
+    required this.altitudeRef,
+    this.startsAt,
+    this.endsAt,
+    this.bufferMeters,
+    this.volumeType,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final String id;
+  final String? operatorId;
+  final String intentId;
+  final int intentVersion;
+  final int sequence;
+  final String? geometryUri;
+  final String? geoJson;
+  final double minAltitudeM;
+  final double maxAltitudeM;
+  final String altitudeRef;
+  final DateTime? startsAt;
+  final DateTime? endsAt;
+  final double? bufferMeters;
+  final String? volumeType;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  factory OperationalVolume.fromJson(Map<String, dynamic> json) {
+    return OperationalVolume(
+      id: asString(json['id']),
+      operatorId: asNullableString(json['operator_id']),
+      intentId: asString(json['intent_id']),
+      intentVersion: asInt(json['intent_version']),
+      sequence: asInt(json['sequence']),
+      geometryUri: asNullableString(json['geometry_uri']),
+      geoJson: asNullableString(json['geojson']),
+      minAltitudeM: asDouble(json['min_altitude_m']),
+      maxAltitudeM: asDouble(json['max_altitude_m']),
+      altitudeRef: asString(json['altitude_ref']),
+      startsAt: asDate(json['starts_at']),
+      endsAt: asDate(json['ends_at']),
+      bufferMeters: asNullableDouble(json['buffer_meters']),
+      volumeType: asNullableString(json['volume_type']),
+      createdAt: asDate(json['created_at']),
       updatedAt: asDate(json['updated_at']),
     );
   }

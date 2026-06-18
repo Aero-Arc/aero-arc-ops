@@ -5,7 +5,9 @@ import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
 
 class AgentsPage extends StatelessWidget {
-  const AgentsPage({super.key});
+  const AgentsPage({super.key, this.load});
+
+  final Future<AircraftListResponse> Function()? load;
 
   @override
   Widget build(BuildContext context) {
@@ -13,16 +15,13 @@ class AgentsPage extends StatelessWidget {
       title: 'Aircraft',
       subtitle:
           'Durable aircraft identity, acceptance, live state, telemetry, maintenance, and readiness.',
-      load: AeroArcApiClient().aircraft,
+      load: load ?? AeroArcApiClient().aircraft,
       builder: (context, data) => [
         _FleetMetrics(aircraft: data.aircraft),
         const SizedBox(height: 18),
         _AircraftTable(aircraft: data.aircraft),
         const SizedBox(height: 18),
-        TwoColumn(
-          left: _LiveStatePanel(aircraft: data.aircraft),
-          right: _ReadinessReasonsPanel(aircraft: data.aircraft),
-        ),
+        _ReadinessReasonsPanel(aircraft: data.aircraft),
       ],
     );
   }
@@ -88,126 +87,93 @@ class _AircraftTable extends StatelessWidget {
       title: 'Fleet Registry',
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-            headingTextStyle: const TextStyle(
-              color: Color(0xFF7D8DB4),
-              fontWeight: FontWeight.w600,
-            ),
-            dataTextStyle: const TextStyle(
-              color: Color(0xFFC4D0EE),
-              fontSize: 14,
-            ),
-            columns: const [
-              DataColumn(label: Text('Aircraft')),
-              DataColumn(label: Text('Tail')),
-              DataColumn(label: Text('Model')),
-              DataColumn(label: Text('Acceptance')),
-              DataColumn(label: Text('Remote ID')),
-              DataColumn(label: Text('Battery')),
-              DataColumn(label: Text('Live')),
-              DataColumn(label: Text('Readiness')),
-            ],
-            rows: [
-              for (final item in aircraft)
-                DataRow(
-                  onSelectChanged: (_) => _showAircraftDetails(context, item),
-                  cells: [
-                    DataCell(
-                      Text(
-                        item.aircraft.displayName,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                child: DataTable(
+                  headingTextStyle: const TextStyle(
+                    color: Color(0xFF7D8DB4),
+                    fontWeight: FontWeight.w600,
+                  ),
+                  dataTextStyle: const TextStyle(
+                    color: Color(0xFFC4D0EE),
+                    fontSize: 14,
+                  ),
+                  columns: const [
+                    DataColumn(label: Text('Aircraft')),
+                    DataColumn(label: Text('Tail')),
+                    DataColumn(label: Text('Model')),
+                    DataColumn(label: Text('Acceptance')),
+                    DataColumn(label: Text('Remote ID')),
+                    DataColumn(label: Text('Battery')),
+                    DataColumn(label: Text('Latitude')),
+                    DataColumn(label: Text('Longitude')),
+                    DataColumn(label: Text('Relay')),
+                    DataColumn(label: Text('Last Seen')),
+                    DataColumn(label: Text('Readiness')),
+                  ],
+                  rows: [
+                    for (final item in aircraft)
+                      DataRow(
+                        onSelectChanged: (_) => _openAircraftMap(
+                          context,
+                          item,
+                        ),
+                        cells: [
+                          DataCell(
+                            Text(
+                              item.aircraft.displayName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          DataCell(
+                            Text(
+                              item.aircraft.tailNumber.isEmpty
+                                  ? item.aircraft.registration ??
+                                        'Not provided'
+                                  : item.aircraft.tailNumber,
+                            ),
+                          ),
+                          DataCell(
+                            Text(
+                              item.aircraft.model.isEmpty
+                                  ? 'Not provided'
+                                  : item.aircraft.model,
+                            ),
+                          ),
+                          DataCell(
+                            StatusBadge(label: item.aircraft.acceptanceStatus),
+                          ),
+                          DataCell(
+                            StatusBadge(label: item.aircraft.remoteIdStatus),
+                          ),
+                          DataCell(
+                            Text(
+                              formatPercent(item.activeBattery?.stateOfHealth),
+                            ),
+                          ),
+                          DataCell(Text(formatLatitude(item.latestTelemetry))),
+                          DataCell(Text(formatLongitude(item.latestTelemetry))),
+                          DataCell(
+                            Text(
+                              item.liveState?.relayId ?? 'No relay placement',
+                            ),
+                          ),
+                          DataCell(_LastSeenBadge(item: item)),
+                          DataCell(StatusBadge(label: item.readiness.status)),
+                        ],
                       ),
-                    ),
-                    DataCell(
-                      Text(
-                        item.aircraft.tailNumber.isEmpty
-                            ? item.aircraft.registration ?? 'Not provided'
-                            : item.aircraft.tailNumber,
-                      ),
-                    ),
-                    DataCell(
-                      Text(
-                        item.aircraft.model.isEmpty
-                            ? 'Not provided'
-                            : item.aircraft.model,
-                      ),
-                    ),
-                    DataCell(
-                      StatusBadge(label: item.aircraft.acceptanceStatus),
-                    ),
-                    DataCell(StatusBadge(label: item.aircraft.remoteIdStatus)),
-                    DataCell(
-                      Text(formatPercent(item.activeBattery?.stateOfHealth)),
-                    ),
-                    DataCell(
-                      StatusBadge(
-                        label: item.liveStateAvailable
-                            ? 'connected'
-                            : 'offline',
-                      ),
-                    ),
-                    DataCell(StatusBadge(label: item.readiness.status)),
                   ],
                 ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LiveStatePanel extends StatelessWidget {
-  const _LiveStatePanel({required this.aircraft});
-
-  final List<AircraftDashboard> aircraft;
-
-  @override
-  Widget build(BuildContext context) {
-    return Panel(
-      title: 'Live State',
-      child: RowList(
-        children: [
-          for (final item in aircraft.take(6))
-            ActionRow(
-              onTap: () => _showAircraftDetails(context, item),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.aircraft.displayName,
-                    style: const TextStyle(
-                      color: Color(0xFFD6E0FF),
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  DetailLine(
-                    label: 'Agent',
-                    value:
-                        item.liveState?.agentId ??
-                        item.aircraft.agentId ??
-                        'No live agent',
-                  ),
-                  DetailLine(
-                    label: 'Relay',
-                    value: item.liveState?.relayId ?? 'No relay placement',
-                  ),
-                  DetailLine(
-                    label: 'Heartbeat',
-                    value: formatDate(item.liveState?.lastHeartbeatAt),
-                  ),
-                  DetailLine(
-                    label: 'Latest telemetry',
-                    value: item.latestTelemetry == null
-                        ? 'No latest telemetry'
-                        : '${item.latestTelemetry!.latitude.toStringAsFixed(5)}, ${item.latestTelemetry!.longitude.toStringAsFixed(5)}',
-                  ),
-                ],
               ),
-            ),
-        ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -227,7 +193,7 @@ class _ReadinessReasonsPanel extends StatelessWidget {
           for (final item
               in aircraft.where((a) => a.readiness.reasons.isNotEmpty).take(8))
             ActionRow(
-              onTap: () => _showAircraftDetails(context, item),
+              onTap: () => _openAircraftMap(context, item),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -251,114 +217,78 @@ class _ReadinessReasonsPanel extends StatelessWidget {
   }
 }
 
-void _showAircraftDetails(BuildContext context, AircraftDashboard item) {
-  final aircraft = item.aircraft;
-  final battery = item.activeBattery;
-  final telemetry = item.latestTelemetry;
-  final live = item.liveState;
-  showDetailsSheet(
-    context,
-    title: aircraft.displayName,
-    status: StatusBadge(label: item.readiness.status),
-    children: [
-      detailSection('Why This Aircraft Has This Status', [
-        DetailLine(
-          label: 'Readiness',
-          value: displayEnum(item.readiness.status),
-        ),
-        DetailLine(
-          label: 'Reasons',
-          value: item.readiness.reasons.isEmpty
-              ? 'No blockers or warnings reported by the API.'
-              : item.readiness.reasons.join('\n'),
-        ),
-        DetailLine(
-          label: 'Live state available',
-          value: yesNo(item.liveStateAvailable),
-        ),
-        DetailLine(
-          label: 'Open maintenance',
-          value:
-              '${item.maintenanceEvents.where((e) => e.resolvedAt == null && e.status != 'closed').length}',
-        ),
-      ]),
-      detailSection('Aircraft', [
-        DetailLine(label: 'Aircraft ID', value: aircraft.id),
-        DetailLine(
-          label: 'Tail / registration',
-          value:
-              '${aircraft.tailNumber} / ${aircraft.registration ?? 'Not provided'}',
-        ),
-        DetailLine(
-          label: 'Model',
-          value: '${aircraft.manufacturer} ${aircraft.model}',
-        ),
-        DetailLine(
-          label: 'Serial',
-          value: aircraft.serialNumber ?? 'Not provided',
-        ),
-        DetailLine(
-          label: 'Acceptance',
-          value: displayEnum(aircraft.acceptanceStatus),
-        ),
-        DetailLine(
-          label: 'Remote ID',
-          value:
-              '${displayEnum(aircraft.remoteIdStatus)} ${aircraft.remoteIdSerial ?? ''}',
-        ),
-        DetailLine(
-          label: 'Config/software',
-          value:
-              '${aircraft.configVersion ?? 'No config'} / ${aircraft.softwareVersion ?? 'No software'}',
-        ),
-      ]),
-      detailSection('Battery And Live State', [
-        DetailLine(
-          label: 'Battery',
-          value: battery == null
-              ? 'No active battery'
-              : '${battery.serialNumber} ${formatPercent(battery.stateOfHealth)} SOH, ${battery.cycleCount} cycles',
-        ),
-        DetailLine(
-          label: 'Battery status',
-          value: battery == null ? 'Not provided' : displayEnum(battery.status),
-        ),
-        DetailLine(
-          label: 'Agent',
-          value: live?.agentId ?? aircraft.agentId ?? 'No live agent',
-        ),
-        DetailLine(
-          label: 'Relay',
-          value: live?.relayId ?? 'No relay placement',
-        ),
-        DetailLine(
-          label: 'Heartbeat',
-          value: formatDate(live?.lastHeartbeatAt),
-        ),
-        DetailLine(
-          label: 'Telemetry',
-          value: telemetry == null
-              ? 'No latest telemetry'
-              : '${telemetry.latitude.toStringAsFixed(5)}, ${telemetry.longitude.toStringAsFixed(5)} at ${formatMeters(telemetry.altitudeM)}',
-        ),
-        DetailLine(
-          label: 'Telemetry battery',
-          value: formatPercent(telemetry?.batteryPct),
-        ),
-      ]),
-      detailSection('Maintenance Events', [
-        if (item.maintenanceEvents.isEmpty)
-          const DetailLine(
-            label: 'Events',
-            value: 'No maintenance events reported.',
+void _openAircraftMap(BuildContext context, AircraftDashboard item) {
+  Navigator.of(context).pushNamed('/aircraft/${item.aircraft.id}/map');
+}
+
+String formatLatitude(TelemetrySample? telemetry) {
+  if (telemetry == null) return 'No telemetry';
+  return telemetry.latitude.toStringAsFixed(5);
+}
+
+String formatLongitude(TelemetrySample? telemetry) {
+  if (telemetry == null) return 'No telemetry';
+  return telemetry.longitude.toStringAsFixed(5);
+}
+
+class _LastSeenBadge extends StatelessWidget {
+  const _LastSeenBadge({required this.item});
+
+  final AircraftDashboard item;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = formatHeartbeatAge(item.liveState);
+    final status = lastSeenStatus(item);
+    final color = statusColor(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.circle, size: 8, color: color),
+          const SizedBox(width: 7),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
           ),
-        for (final event in item.maintenanceEvents)
-          DetailLine(
-            label: event.title,
-            value:
-                '${displayEnum(event.severity)} / ${displayEnum(event.status)}\n${event.notes}\nOwner: ${event.owner ?? 'Unassigned'}\nDue: ${formatDate(event.dueAt)}',
-          ),
-      ]),
-    ],
-  );
+        ],
+      ),
+    );
+  }
+}
+
+String lastSeenStatus(AircraftDashboard item) {
+  final state = item.liveState;
+  if (!item.liveStateAvailable || state == null || !state.connected) {
+    return 'offline';
+  }
+  final heartbeatAge = liveHeartbeatAge(state);
+  if (heartbeatAge == null) return 'warning';
+  return heartbeatAge < const Duration(seconds: 2) ? 'ready' : 'warning';
+}
+
+String formatHeartbeatAge(LiveAircraftState? state) {
+  final age = liveHeartbeatAge(state);
+  if (age == null) return 'No heartbeat';
+  if (age.inSeconds < 60) return '${age.inSeconds}s ago';
+  if (age.inMinutes < 60) return '${age.inMinutes}m ago';
+  return '${age.inHours}h ago';
+}
+
+Duration? liveHeartbeatAge(LiveAircraftState? state) {
+  final heartbeat = state?.lastHeartbeatAt;
+  if (heartbeat == null) return null;
+  final age = DateTime.now().difference(heartbeat);
+  if (age.isNegative) return Duration.zero;
+  return age;
 }

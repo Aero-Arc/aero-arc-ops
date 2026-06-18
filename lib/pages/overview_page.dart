@@ -44,7 +44,7 @@ class _AircraftReadinessPanel extends StatelessWidget {
         children: [
           for (final item in aircraft.take(6))
             ActionRow(
-              onTap: () => _showAircraftOverviewDetails(context, item),
+              onTap: () => _openAircraftMap(context, item),
               child: Row(
                 children: [
                   Expanded(
@@ -229,36 +229,8 @@ class _ReportabilityPanel extends StatelessWidget {
   }
 }
 
-void _showAircraftOverviewDetails(
-  BuildContext context,
-  AircraftDashboard item,
-) {
-  showDetailsSheet(
-    context,
-    title: item.aircraft.displayName,
-    status: StatusBadge(label: item.readiness.status),
-    children: [
-      detailSection('Readiness', [
-        DetailLine(label: 'Status', value: displayEnum(item.readiness.status)),
-        DetailLine(
-          label: 'Reasons',
-          value: item.readiness.reasons.isEmpty
-              ? 'No readiness blockers reported.'
-              : item.readiness.reasons.join('\n'),
-        ),
-        DetailLine(
-          label: 'Battery',
-          value: item.activeBattery == null
-              ? 'No active battery'
-              : '${item.activeBattery!.serialNumber} ${formatPercent(item.activeBattery!.stateOfHealth)} SOH',
-        ),
-        DetailLine(
-          label: 'Live state',
-          value: item.liveStateAvailable ? 'Available' : 'Unavailable',
-        ),
-      ]),
-    ],
-  );
+void _openAircraftMap(BuildContext context, AircraftDashboard item) {
+  Navigator.of(context).pushNamed('/aircraft/${item.aircraft.id}/map');
 }
 
 void _showIntentOverviewDetails(

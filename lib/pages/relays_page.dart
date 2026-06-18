@@ -20,12 +20,16 @@ class RelaysPage extends StatelessWidget {
           children: [
             Text(
               'Relays',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontSize: 46),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineMedium?.copyWith(fontSize: 46),
             ),
             const SizedBox(height: 8),
             Text(
               'Manage and monitor relay infrastructure',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: const Color(0xFF7F90B6)),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyLarge?.copyWith(color: const Color(0xFF7F90B6)),
             ),
             const SizedBox(height: 20),
             LayoutBuilder(
@@ -34,7 +38,11 @@ class RelaysPage extends StatelessWidget {
                   final cardWidth = (constraints.maxWidth - 36) / 4;
                   return Row(
                     children: [
-                      _MetricCard(width: cardWidth, label: 'Total Relays', value: '12'),
+                      _MetricCard(
+                        width: cardWidth,
+                        label: 'Total Relays',
+                        value: '12',
+                      ),
                       const SizedBox(width: 12),
                       _MetricCard(
                         width: cardWidth,
@@ -65,9 +73,21 @@ class RelaysPage extends StatelessWidget {
                   runSpacing: 12,
                   children: const [
                     _MetricCard(label: 'Total Relays', value: '12'),
-                    _MetricCard(label: 'Healthy', value: '10', valueColor: Color(0xFF00CFA0)),
-                    _MetricCard(label: 'Degraded', value: '1', valueColor: Color(0xFFE4A100)),
-                    _MetricCard(label: 'Offline', value: '1', valueColor: Color(0xFFE14A5B)),
+                    _MetricCard(
+                      label: 'Healthy',
+                      value: '10',
+                      valueColor: Color(0xFF00CFA0),
+                    ),
+                    _MetricCard(
+                      label: 'Degraded',
+                      value: '1',
+                      valueColor: Color(0xFFE4A100),
+                    ),
+                    _MetricCard(
+                      label: 'Offline',
+                      value: '1',
+                      valueColor: Color(0xFFE14A5B),
+                    ),
                   ],
                 );
               },
@@ -131,7 +151,9 @@ class _MetricCard extends StatelessWidget {
         children: [
           Text(
             label,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 14),
+            style: Theme.of(
+              context,
+            ).textTheme.labelLarge?.copyWith(fontSize: 14),
           ),
           const SizedBox(height: 8),
           Text(
@@ -151,11 +173,46 @@ class _RelayStatusPanel extends StatelessWidget {
   const _RelayStatusPanel();
 
   static const _rows = [
-    _RelayRow('relay-us-west-2a', 'Healthy', 24, 'us-west-2a', '1.2k/s', '2s ago'),
-    _RelayRow('relay-us-east-1b', 'Healthy', 18, 'us-east-1b', '980/s', '1s ago'),
-    _RelayRow('relay-eu-central-1', 'Degraded', 12, 'eu-central-1', '450/s', '5s ago'),
-    _RelayRow('relay-ap-south-1a', 'Healthy', 16, 'ap-south-1a', '720/s', '1s ago'),
-    _RelayRow('relay-us-west-1c', 'Healthy', 21, 'us-west-1c', '1.1k/s', '2s ago'),
+    _RelayRow(
+      'relay-us-west-2a',
+      'Healthy',
+      24,
+      'us-west-2a',
+      '1.2k/s',
+      '2s ago',
+    ),
+    _RelayRow(
+      'relay-us-east-1b',
+      'Healthy',
+      18,
+      'us-east-1b',
+      '980/s',
+      '1s ago',
+    ),
+    _RelayRow(
+      'relay-eu-central-1',
+      'Degraded',
+      12,
+      'eu-central-1',
+      '450/s',
+      '5s ago',
+    ),
+    _RelayRow(
+      'relay-ap-south-1a',
+      'Healthy',
+      16,
+      'ap-south-1a',
+      '720/s',
+      '1s ago',
+    ),
+    _RelayRow(
+      'relay-us-west-1c',
+      'Healthy',
+      21,
+      'us-west-1c',
+      '1.1k/s',
+      '2s ago',
+    ),
     _RelayRow('relay-eu-west-2b', 'Offline', 0, 'eu-west-2b', '0/s', '5m ago'),
   ];
 
@@ -173,7 +230,10 @@ class _RelayStatusPanel extends StatelessWidget {
               fontWeight: FontWeight.w600,
               fontSize: 14,
             ),
-            dataTextStyle: const TextStyle(color: Color(0xFFC4D0EE), fontSize: 14),
+            dataTextStyle: const TextStyle(
+              color: Color(0xFFC4D0EE),
+              fontSize: 14,
+            ),
             horizontalMargin: 12,
             columnSpacing: 28,
             dividerThickness: 1,
@@ -192,13 +252,24 @@ class _RelayStatusPanel extends StatelessWidget {
               for (final row in _rows)
                 DataRow(
                   cells: [
-                    DataCell(Text(row.id, style: const TextStyle(fontFamily: 'monospace'))),
+                    DataCell(
+                      Text(
+                        row.id,
+                        style: const TextStyle(fontFamily: 'monospace'),
+                      ),
+                    ),
                     DataCell(_StatusBadge(status: row.status)),
                     DataCell(Text('${row.nodes}')),
                     DataCell(Text(row.region)),
                     DataCell(Text(row.rate)),
                     DataCell(Text(row.heartbeat)),
-                    const DataCell(Icon(Icons.chevron_right, color: Color(0xFF5E6FFF), size: 18)),
+                    const DataCell(
+                      Icon(
+                        Icons.chevron_right,
+                        color: Color(0xFF5E6FFF),
+                        size: 18,
+                      ),
+                    ),
                   ],
                 ),
             ],
@@ -222,9 +293,16 @@ class _RelayDetailsPanel extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: const [
-              Icon(Icons.settings_input_antenna, size: 58, color: Color(0xFF4A54E0)),
+              Icon(
+                Icons.settings_input_antenna,
+                size: 58,
+                color: Color(0xFF4A54E0),
+              ),
               SizedBox(height: 14),
-              Text('Select a relay to view details', style: TextStyle(color: Color(0xFF7D8DB4), fontSize: 18)),
+              Text(
+                'Select a relay to view details',
+                style: TextStyle(color: Color(0xFF7D8DB4), fontSize: 18),
+              ),
             ],
           ),
         ),
@@ -254,7 +332,10 @@ class _StatusBadge extends StatelessWidget {
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 8),
-        Text(status, style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+        Text(
+          status,
+          style: TextStyle(color: color, fontWeight: FontWeight.w600),
+        ),
       ],
     );
   }
@@ -281,7 +362,9 @@ class _Panel extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
             child: Text(
               title,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontSize: 33),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontSize: 33),
             ),
           ),
           Container(height: 1, color: const Color(0xFF10254D)),
@@ -293,7 +376,14 @@ class _Panel extends StatelessWidget {
 }
 
 class _RelayRow {
-  const _RelayRow(this.id, this.status, this.nodes, this.region, this.rate, this.heartbeat);
+  const _RelayRow(
+    this.id,
+    this.status,
+    this.nodes,
+    this.region,
+    this.rate,
+    this.heartbeat,
+  );
 
   final String id;
   final String status;

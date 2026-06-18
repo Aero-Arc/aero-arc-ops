@@ -9,7 +9,8 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return const SectionPage(
       title: 'Settings',
-      subtitle: 'Configure environment defaults, auth, and display preferences.',
+      subtitle:
+          'Configure environment defaults, auth, and display preferences.',
       icon: Icons.settings,
     );
   }

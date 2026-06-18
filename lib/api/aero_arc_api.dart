@@ -40,9 +40,25 @@ class AeroArcApiClient {
       _get('/api/v1/maintenance', MaintenanceDashboard.fromJson);
   Future<RecordsDashboard> records() =>
       _get('/api/v1/records', RecordsDashboard.fromJson);
+  Future<AircraftMapView> getAircraftMapView(
+    String aircraftId, {
+    int limit = 1000,
+  }) {
+    return _get(
+      '/api/v1/aircraft/$aircraftId/map',
+      AircraftMapView.fromJson,
+      queryParameters: {'limit': '$limit'},
+    );
+  }
 
-  Future<T> _get<T>(String path, T Function(Map<String, dynamic>) parse) async {
-    final response = await _http.get(_baseUri.replace(path: path));
+  Future<T> _get<T>(
+    String path,
+    T Function(Map<String, dynamic>) parse, {
+    Map<String, String>? queryParameters,
+  }) async {
+    final response = await _http.get(
+      _baseUri.replace(path: path, queryParameters: queryParameters),
+    );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw AeroArcApiException('API ${response.statusCode}: ${response.body}');
     }

@@ -85,4 +85,102 @@ void main() {
     expect(parsed.operationalIntents.single.conformanceRequired, isTrue);
     expect(parsed.operationalIntents.single.authorizationPath, 'permit');
   });
+
+  test('parses aircraft map view payload', () {
+    final parsed = AircraftMapView.fromJson({
+      'aircraft': {
+        'id': 'aircraft-1',
+        'tail_number': 'N100AA',
+        'name': 'Eagle 1',
+        'model': 'ArcRunner',
+        'manufacturer': 'Aero Arc',
+        'status': 'active',
+        'acceptance_status': 'accepted',
+        'remote_id_status': 'broadcasting',
+      },
+      'live_state': {
+        'aircraft_id': 'aircraft-1',
+        'agent_id': 'agent-1',
+        'relay_id': 'relay-1',
+        'connected': true,
+      },
+      'live_state_available': true,
+      'latest_telemetry': {
+        'id': 'sample-2',
+        'aircraft_id': 'aircraft-1',
+        'recorded_at': '2026-06-14T12:01:00Z',
+        'latitude': 35.2,
+        'longitude': -97.2,
+        'altitude_m': 92,
+        'velocity_mps': 12,
+        'heading_deg': 180,
+      },
+      'replay_samples': [
+        {
+          'id': 'sample-1',
+          'aircraft_id': 'aircraft-1',
+          'recorded_at': '2026-06-14T12:00:00Z',
+          'latitude': 35.1,
+          'longitude': -97.1,
+          'altitude_m': 90,
+          'velocity_mps': 12,
+          'heading_deg': 180,
+        },
+      ],
+      'active_intent': {
+        'id': 'intent-1',
+        'aircraft_id': 'aircraft-1',
+        'name': 'Pipeline patrol',
+        'summary': 'Inspect corridor',
+        'authorization_path': 'permit',
+        'population_category': 'cat_2',
+        'status': 'active',
+        'conformance_required': true,
+      },
+      'operational_volumes': [
+        {
+          'id': 'volume-1',
+          'intent_id': 'intent-1',
+          'intent_version': 1,
+          'sequence': 1,
+          'geojson':
+              '{"type":"Polygon","coordinates":[[[-98,35],[-97,35],[-97,36],[-98,36],[-98,35]]]}',
+          'min_altitude_m': 10,
+          'max_altitude_m': 120,
+          'altitude_ref': 'agl',
+        },
+      ],
+      'conformance_summary': {
+        'id': 'summary-1',
+        'intent_id': 'intent-1',
+        'intent_version': 1,
+        'aircraft_id': 'aircraft-1',
+        'status': 'conforming',
+        'alert_count': 1,
+        'reportability_status': 'review',
+      },
+      'conformance_events': [
+        {
+          'id': 'event-1',
+          'intent_id': 'intent-1',
+          'intent_version': 1,
+          'aircraft_id': 'aircraft-1',
+          'severity': 'warning',
+          'event_code': 'intent_exit',
+          'message': 'outside volume',
+          'latitude': 35.3,
+          'longitude': -97.3,
+        },
+      ],
+    });
+
+    expect(parsed.aircraft.displayName, 'Eagle 1');
+    expect(parsed.liveState?.relayId, 'relay-1');
+    expect(parsed.latestTelemetry?.id, 'sample-2');
+    expect(parsed.replaySamples, hasLength(1));
+    expect(parsed.activeIntent?.id, 'intent-1');
+    expect(parsed.operationalVolumes.single.id, 'volume-1');
+    expect(parsed.conformanceSummary?.alertCount, 1);
+    expect(parsed.conformanceEvents.single.eventCode, 'intent_exit');
+  });
 }
