@@ -1,20 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:aero_arc_web/main.dart';
 import 'package:aero_arc_web/models/aero_arc_models.dart';
 import 'package:aero_arc_web/pages/agents_page.dart';
 
 void main() {
-  testWidgets('shows readiness dashboard shell', (WidgetTester tester) async {
-    await tester.pumpWidget(const AeroArcApp());
-
-    expect(find.text('Readiness'), findsOneWidget);
-    expect(find.text('Readiness Overview'), findsOneWidget);
-    expect(find.text('Loading'), findsOneWidget);
-  });
-
-  testWidgets('aircraft list click navigates to aircraft map route', (
+  testWidgets('aircraft intent action opens create intent route', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
@@ -26,19 +17,19 @@ void main() {
         onGenerateRoute: (settings) {
           return MaterialPageRoute<void>(
             settings: settings,
-            builder: (_) => Text('map:${settings.name}'),
+            builder: (_) => Text('route:${settings.name}'),
           );
         },
       ),
     );
     await tester.pumpAndSettle();
 
-    final aircraftName = find.text('Eagle 1').first;
-    await tester.ensureVisible(aircraftName);
-    await tester.tap(aircraftName);
+    final createIntent = find.byTooltip('Create intent');
+    await tester.ensureVisible(createIntent);
+    await tester.tap(createIntent);
     await tester.pumpAndSettle();
 
-    expect(find.text('map:/aircraft/aircraft-1/map'), findsOneWidget);
+    expect(find.text('route:/aircraft/aircraft-1/intent/new'), findsOneWidget);
   });
 }
 

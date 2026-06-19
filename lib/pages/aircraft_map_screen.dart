@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
+import 'intent_workflow_page.dart';
 
 class AircraftMapScreen extends StatefulWidget {
   const AircraftMapScreen({
@@ -339,6 +340,13 @@ class _DetailPanel extends StatelessWidget {
       children: [
         Panel(
           title: 'Operation',
+          trailing: intent == null
+              ? null
+              : IconButton.filledTonal(
+                  tooltip: 'Modify intent',
+                  onPressed: () => _confirmModifyIntent(context, view),
+                  icon: const Icon(Icons.edit_location_alt_outlined),
+                ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
             child: Column(
@@ -449,6 +457,66 @@ class _DetailPanel extends StatelessWidget {
       ],
     );
   }
+}
+
+Future<void> _confirmModifyIntent(
+  BuildContext context,
+  AircraftMapView view,
+) async {
+  final intent = view.activeIntent;
+  if (intent == null) return;
+  if (intent.status == 'active') {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Active plan cannot be modified'),
+          content: Text(
+            'Intent ${intent.id} v${intent.version} is active. End or supersede the active plan before modifying it.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+    return;
+  }
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('Modify intent?'),
+        content: Text(
+          'This will modify intent ${intent.id} v${intent.version}. Accepted intents create a new draft version.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Modify'),
+          ),
+        ],
+      );
+    },
+  );
+  if (confirmed != true || !context.mounted) return;
+  Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => IntentWorkflowPage(
+        aircraftId: view.aircraft.id,
+        initialIntent: intent,
+        initialVolumes: view.operationalVolumes,
+      ),
+    ),
+  );
 }
 
 LatLng mapCenterFor(AircraftMapView view) {

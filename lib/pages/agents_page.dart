@@ -114,14 +114,12 @@ class _AircraftTable extends StatelessWidget {
                     DataColumn(label: Text('Relay')),
                     DataColumn(label: Text('Last Seen')),
                     DataColumn(label: Text('Readiness')),
+                    DataColumn(label: Text('Intent')),
                   ],
                   rows: [
                     for (final item in aircraft)
                       DataRow(
-                        onSelectChanged: (_) => _openAircraftMap(
-                          context,
-                          item,
-                        ),
+                        onSelectChanged: (_) => _openAircraftMap(context, item),
                         cells: [
                           DataCell(
                             Text(
@@ -134,8 +132,7 @@ class _AircraftTable extends StatelessWidget {
                           DataCell(
                             Text(
                               item.aircraft.tailNumber.isEmpty
-                                  ? item.aircraft.registration ??
-                                        'Not provided'
+                                  ? item.aircraft.registration ?? 'Not provided'
                                   : item.aircraft.tailNumber,
                             ),
                           ),
@@ -166,6 +163,15 @@ class _AircraftTable extends StatelessWidget {
                           ),
                           DataCell(_LastSeenBadge(item: item)),
                           DataCell(StatusBadge(label: item.readiness.status)),
+                          DataCell(
+                            IconButton(
+                              tooltip: 'Create intent',
+                              icon: const Icon(Icons.add_task),
+                              color: const Color(0xFFC4D0EE),
+                              onPressed: () =>
+                                  _openAircraftIntentCreation(context, item),
+                            ),
+                          ),
                         ],
                       ),
                   ],
@@ -219,6 +225,10 @@ class _ReadinessReasonsPanel extends StatelessWidget {
 
 void _openAircraftMap(BuildContext context, AircraftDashboard item) {
   Navigator.of(context).pushNamed('/aircraft/${item.aircraft.id}/map');
+}
+
+void _openAircraftIntentCreation(BuildContext context, AircraftDashboard item) {
+  Navigator.of(context).pushNamed('/aircraft/${item.aircraft.id}/intent/new');
 }
 
 String formatLatitude(TelemetrySample? telemetry) {

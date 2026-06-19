@@ -281,7 +281,7 @@ class Panel extends StatelessWidget {
                     ).textTheme.titleMedium?.copyWith(fontSize: 26),
                   ),
                 ),
-                if (trailing != null) trailing!,
+                ?trailing,
               ],
             ),
           ),
@@ -369,7 +369,11 @@ Future<void> showDetailsSheet(
                         ),
                       ),
                     ),
-                    if (status != null) ...[const SizedBox(width: 12), status],
+                    Visibility(
+                      visible: status != null,
+                      child: const SizedBox(width: 12),
+                    ),
+                    ?status,
                     const SizedBox(width: 8),
                     IconButton(
                       tooltip: 'Close',

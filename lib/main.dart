@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'pages/agents_page.dart';
 import 'pages/aircraft_map_screen.dart';
 import 'pages/events_page.dart';
+import 'pages/intent_workflow_page.dart';
 import 'pages/maintenance_page.dart';
 import 'pages/nodes_page.dart';
 import 'pages/overview_page.dart';
@@ -57,6 +58,7 @@ class AeroArcApp extends StatelessWidget {
           builder: (_) => AppShell(
             section: route.section,
             aircraftMapId: route.aircraftMapId,
+            intentAircraftId: route.intentAircraftId,
           ),
         );
       },
@@ -65,29 +67,48 @@ class AeroArcApp extends StatelessWidget {
 }
 
 class AppShell extends StatelessWidget {
-  const AppShell({super.key, required this.section, this.aircraftMapId});
+  const AppShell({
+    super.key,
+    required this.section,
+    this.aircraftMapId,
+    this.intentAircraftId,
+  });
 
   final AppSection section;
   final String? aircraftMapId;
+  final String? intentAircraftId;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth < 980) {
-          return _MobileShell(section: section, aircraftMapId: aircraftMapId);
+          return _MobileShell(
+            section: section,
+            aircraftMapId: aircraftMapId,
+            intentAircraftId: intentAircraftId,
+          );
         }
-        return _DesktopShell(section: section, aircraftMapId: aircraftMapId);
+        return _DesktopShell(
+          section: section,
+          aircraftMapId: aircraftMapId,
+          intentAircraftId: intentAircraftId,
+        );
       },
     );
   }
 }
 
 class _DesktopShell extends StatelessWidget {
-  const _DesktopShell({required this.section, this.aircraftMapId});
+  const _DesktopShell({
+    required this.section,
+    this.aircraftMapId,
+    this.intentAircraftId,
+  });
 
   final AppSection section;
   final String? aircraftMapId;
+  final String? intentAircraftId;
 
   @override
   Widget build(BuildContext context) {
@@ -160,7 +181,9 @@ class _DesktopShell extends StatelessWidget {
                     ),
                   ),
                 ),
-                Expanded(child: _sectionPage(section, aircraftMapId)),
+                Expanded(
+                  child: _sectionPage(section, aircraftMapId, intentAircraftId),
+                ),
               ],
             ),
           ),
@@ -307,10 +330,15 @@ class _SidebarItem extends StatelessWidget {
 }
 
 class _MobileShell extends StatelessWidget {
-  const _MobileShell({required this.section, this.aircraftMapId});
+  const _MobileShell({
+    required this.section,
+    this.aircraftMapId,
+    this.intentAircraftId,
+  });
 
   final AppSection section;
   final String? aircraftMapId;
+  final String? intentAircraftId;
 
   @override
   Widget build(BuildContext context) {
@@ -343,7 +371,7 @@ class _MobileShell extends StatelessWidget {
           ),
         ),
       ),
-      body: _sectionPage(section, aircraftMapId),
+      body: _sectionPage(section, aircraftMapId, intentAircraftId),
     );
   }
 }
@@ -353,9 +381,16 @@ void _navigateTo(BuildContext context, AppSection next) {
   Navigator.of(context).pushReplacementNamed(next.route);
 }
 
-Widget _sectionPage(AppSection section, String? aircraftMapId) {
+Widget _sectionPage(
+  AppSection section,
+  String? aircraftMapId,
+  String? intentAircraftId,
+) {
   if (aircraftMapId != null) {
     return AircraftMapScreen(aircraftId: aircraftMapId);
+  }
+  if (intentAircraftId != null) {
+    return IntentWorkflowPage(aircraftId: intentAircraftId);
   }
   return switch (section) {
     AppSection.overview => const OverviewPage(),
@@ -380,6 +415,16 @@ _ResolvedRoute _resolveRoute(String? location) {
       aircraftMapId: segments[1],
     );
   }
+  if (segments.length == 4 &&
+      segments[0] == 'aircraft' &&
+      segments[2] == 'intent' &&
+      segments[3] == 'new') {
+    return _ResolvedRoute(
+      section: AppSection.aircraft,
+      name: '/aircraft/${segments[1]}/intent/new',
+      intentAircraftId: segments[1],
+    );
+  }
   final section = AppSection.fromLocation(location);
   return _ResolvedRoute(section: section, name: section.route);
 }
@@ -389,11 +434,13 @@ class _ResolvedRoute {
     required this.section,
     required this.name,
     this.aircraftMapId,
+    this.intentAircraftId,
   });
 
   final AppSection section;
   final String name;
   final String? aircraftMapId;
+  final String? intentAircraftId;
 }
 
 String _formattedNow() {
