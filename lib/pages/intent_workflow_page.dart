@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -8,6 +9,18 @@ import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
 
+class IntentWorkflowRouteArguments {
+  const IntentWorkflowRouteArguments({
+    this.initialIntent,
+    this.initialVolumes = const [],
+    this.initialVolumeCenter,
+  });
+
+  final OperationalIntent? initialIntent;
+  final List<OperationalVolume> initialVolumes;
+  final LatLng? initialVolumeCenter;
+}
+
 class IntentWorkflowPage extends StatefulWidget {
   const IntentWorkflowPage({
     super.key,
@@ -15,12 +28,14 @@ class IntentWorkflowPage extends StatefulWidget {
     this.apiClient,
     this.initialIntent,
     this.initialVolumes = const [],
+    this.initialVolumeCenter,
   });
 
   final String aircraftId;
   final AeroArcApiClient? apiClient;
   final OperationalIntent? initialIntent;
   final List<OperationalVolume> initialVolumes;
+  final LatLng? initialVolumeCenter;
 
   @override
   State<IntentWorkflowPage> createState() => _IntentWorkflowPageState();
@@ -39,8 +54,6 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   final _bufferMeters = TextEditingController(text: '15');
 
   late final AeroArcApiClient _apiClient;
-  late final TextEditingController _plannedStart;
-  late final TextEditingController _plannedEnd;
 
   bool _conformanceRequired = true;
   bool _busy = false;
@@ -48,6 +61,10 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   String _populationCategory = 'cat_1';
   String _altitudeRef = 'agl';
   String _volumeType = 'loiter';
+  String _volumeShapeMode = 'box';
+  late DateTime _plannedDate;
+  late String _plannedStartSlot;
+  late String _plannedEndSlot;
   String? _error;
   OperationalIntent? _sourceIntent;
   OperationalIntent? _intent;
@@ -57,17 +74,19 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   DeconflictionResult? _deconfliction;
   OperationalIntent? _acceptedIntent;
   OperationalIntent? _activatedIntent;
-  List<LatLng> _volumePoints = _defaultVolumePoints();
+  late final LatLng? _initialVolumeCenter;
+  late List<LatLng> _volumePoints;
 
   @override
   void initState() {
     super.initState();
     _apiClient = widget.apiClient ?? AeroArcApiClient();
-    final now = DateTime.now().add(const Duration(minutes: 15));
-    _plannedStart = TextEditingController(text: _formatInputDate(now));
-    _plannedEnd = TextEditingController(
-      text: _formatInputDate(now.add(const Duration(hours: 1))),
-    );
+    final now = _roundUpToSlot(DateTime.now().add(const Duration(minutes: 15)));
+    _plannedDate = DateTime(now.year, now.month, now.day);
+    _plannedStartSlot = _slotForTime(now);
+    _plannedEndSlot = _slotForTime(now.add(const Duration(hours: 1)));
+    _initialVolumeCenter = widget.initialVolumeCenter;
+    _volumePoints = _defaultRoutePoints(center: _initialVolumeCenter);
     _sourceIntent = widget.initialIntent;
     _hydrateFromInitialIntent(now);
   }
@@ -83,15 +102,23 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     _minAltitudeFt.dispose();
     _maxAltitudeFt.dispose();
     _bufferMeters.dispose();
-    _plannedStart.dispose();
-    _plannedEnd.dispose();
     super.dispose();
   }
 
   Future<void> _saveAndCheck() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_volumePoints.length < 3) {
-      setState(() => _error = 'Draw at least three volume points on the map.');
+    final timeWindowError = _validateTimeWindow();
+    if (timeWindowError != null) {
+      setState(() => _error = timeWindowError);
+      return;
+    }
+    if (_volumePoints.length < 2) {
+      setState(() => _error = 'Add at least two route points on the map.');
+      return;
+    }
+    final volumePolygon = _derivedVolumePolygon();
+    if (volumePolygon.length < 3) {
+      setState(() => _error = 'Route points could not create a valid volume.');
       return;
     }
     await _runWorkflowAction(() async {
@@ -189,8 +216,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       populationCategory: _populationCategory,
       conformanceRequired: _conformanceRequired,
       routeSummary: _emptyToNull(_routeSummary.text),
-      plannedStartAt: _parseInputDate(_plannedStart.text),
-      plannedEndAt: _parseInputDate(_plannedEnd.text),
+      plannedStartAt: _plannedStartAt(),
+      plannedEndAt: _plannedEndAt(),
       minAltitudeFtAgl: double.parse(_minAltitudeFt.text.trim()),
       maxAltitudeFtAgl: double.parse(_maxAltitudeFt.text.trim()),
       supervisorId: _emptyToNull(_supervisorId.text),
@@ -203,12 +230,12 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     final maxFt = double.parse(_maxAltitudeFt.text.trim());
     return AddOperationalVolumeRequest(
       sequence: 1,
-      geoJson: _polygonGeoJson(_volumePoints),
+      geoJson: _polygonGeoJson(_derivedVolumePolygon()),
       minAltitudeM: _feetToMeters(minFt),
       maxAltitudeM: _feetToMeters(maxFt),
       altitudeRef: _altitudeRef,
-      startsAt: _parseInputDate(_plannedStart.text),
-      endsAt: _parseInputDate(_plannedEnd.text),
+      startsAt: _plannedStartAt(),
+      endsAt: _plannedEndAt(),
       bufferMeters: double.tryParse(_bufferMeters.text.trim()),
       volumeType: _volumeType,
     );
@@ -225,8 +252,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         populationCategory: _populationCategory,
         conformanceRequired: _conformanceRequired,
         routeSummary: _emptyToNull(_routeSummary.text),
-        plannedStartAt: _parseInputDate(_plannedStart.text),
-        plannedEndAt: _parseInputDate(_plannedEnd.text),
+        plannedStartAt: _plannedStartAt(),
+        plannedEndAt: _plannedEndAt(),
         minAltitudeFtAgl: double.parse(_minAltitudeFt.text.trim()),
         maxAltitudeFtAgl: double.parse(_maxAltitudeFt.text.trim()),
         supervisorId: _emptyToNull(_supervisorId.text),
@@ -252,12 +279,18 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     _supervisorId.text = intent?.supervisorId ?? '';
     _coordinatorId.text = intent?.flightCoordinatorId ?? '';
     if (intent?.plannedStartAt != null) {
-      _plannedStart.text = _formatInputDate(intent!.plannedStartAt!.toLocal());
+      final plannedStart = intent!.plannedStartAt!.toLocal();
+      _plannedDate = DateTime(
+        plannedStart.year,
+        plannedStart.month,
+        plannedStart.day,
+      );
+      _plannedStartSlot = _slotForTime(plannedStart);
     }
     if (intent?.plannedEndAt != null) {
-      _plannedEnd.text = _formatInputDate(intent!.plannedEndAt!.toLocal());
+      _plannedEndSlot = _slotForTime(intent!.plannedEndAt!.toLocal());
     } else if (intent?.plannedStartAt == null) {
-      _plannedEnd.text = _formatInputDate(
+      _plannedEndSlot = _slotForTime(
         fallbackStart.add(const Duration(hours: 1)),
       );
     }
@@ -292,6 +325,29 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     if (points.length >= 3) _volumePoints = points;
   }
 
+  DateTime _plannedStartAt() =>
+      _combinePlannedDateAndSlot(_plannedDate, _plannedStartSlot).toUtc();
+
+  DateTime _plannedEndAt() => _combinePlannedEnd(
+    _plannedDate,
+    startSlot: _plannedStartSlot,
+    endSlot: _plannedEndSlot,
+  ).toUtc();
+
+  String? _validateTimeWindow() {
+    if (!_plannedEndAt().isAfter(_plannedStartAt())) {
+      return 'Planned end must be after planned start.';
+    }
+    return null;
+  }
+
+  List<LatLng> _derivedVolumePolygon() {
+    final widthMeters = double.tryParse(_bufferMeters.text.trim()) ?? 15;
+    return _volumeShapeMode == 'precise'
+        ? _preciseRouteVolume(_volumePoints, widthMeters)
+        : _boxRouteVolume(_volumePoints, widthMeters);
+  }
+
   bool get _checksClear {
     final preflight = _preflight;
     final deconfliction = _deconfliction;
@@ -309,36 +365,86 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     final editingLocked = _editingLocked;
     return Container(
       decoration: const BoxDecoration(gradient: aeroPageGradient),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _Header(
-                aircraftId: widget.aircraftId,
-                modifying: _sourceIntent != null,
-                busy: _busy,
-                onRunChecks: _saveAndCheck,
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 14),
-                ErrorPanel(error: _error!, onRetry: _saveAndCheck),
-              ],
-              const SizedBox(height: 18),
-              TwoColumn(
-                breakpoint: 1180,
-                left: Column(
-                  children: [
-                    _MissionPanel(
+      child: Stack(
+        children: [
+          SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _Header(
+                    aircraftId: widget.aircraftId,
+                    modifying: _sourceIntent != null,
+                  ),
+                  const SizedBox(height: 12),
+                  _IntentContextBanner(
+                    aircraftId: widget.aircraftId,
+                    sourceIntent: _sourceIntent,
+                  ),
+                  const SizedBox(height: 18),
+                  _VolumesPanel(
+                    points: _volumePoints,
+                    deconfliction: _deconfliction,
+                    bufferMeters: _bufferMeters,
+                    altitudeRef: _altitudeRef,
+                    volumeType: _volumeType,
+                    volumeShapeMode: _volumeShapeMode,
+                    locked: editingLocked,
+                    onLoadDefault: () {
+                      setState(
+                        () => _volumePoints = _defaultRoutePoints(
+                          center: _initialVolumeCenter,
+                        ),
+                      );
+                    },
+                    onAddPoint: (point) {
+                      setState(() => _volumePoints = [..._volumePoints, point]);
+                    },
+                    onRemovePoint: (index) {
+                      setState(() {
+                        _volumePoints = [
+                          for (var i = 0; i < _volumePoints.length; i++)
+                            if (i != index) _volumePoints[i],
+                        ];
+                      });
+                    },
+                    onUndoPoint: () {
+                      if (_volumePoints.isEmpty) return;
+                      setState(() {
+                        _volumePoints = _volumePoints
+                            .take(_volumePoints.length - 1)
+                            .toList();
+                      });
+                    },
+                    onAltitudeRefChanged: (value) {
+                      if (value != null) setState(() => _altitudeRef = value);
+                    },
+                    onVolumeTypeChanged: (value) {
+                      if (value != null) setState(() => _volumeType = value);
+                    },
+                    onShapeModeChanged: (value) {
+                      if (value != null) {
+                        setState(() => _volumeShapeMode = value);
+                      }
+                    },
+                    onBufferMetersChanged: (_) {
+                      setState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 18),
+                  TwoColumn(
+                    breakpoint: 1180,
+                    left: _MissionPanel(
                       aircraftId: widget.aircraftId,
                       missionName: _missionName,
                       summary: _summary,
                       useCase: _useCase,
                       routeSummary: _routeSummary,
-                      plannedStart: _plannedStart,
-                      plannedEnd: _plannedEnd,
+                      plannedDate: _plannedDate,
+                      plannedStartSlot: _plannedStartSlot,
+                      plannedEndSlot: _plannedEndSlot,
                       minAltitude: _minAltitudeFt,
                       maxAltitude: _maxAltitudeFt,
                       supervisorId: _supervisorId,
@@ -357,80 +463,153 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           setState(() => _populationCategory = value);
                         }
                       },
+                      onDateChanged: (value) {
+                        setState(() => _plannedDate = value);
+                      },
+                      onStartSlotChanged: (value) {
+                        if (value != null) {
+                          setState(() => _plannedStartSlot = value);
+                        }
+                      },
+                      onEndSlotChanged: (value) {
+                        if (value != null) {
+                          setState(() => _plannedEndSlot = value);
+                        }
+                      },
                       onConformanceChanged: (value) {
                         setState(() => _conformanceRequired = value);
                       },
                     ),
-                    const SizedBox(height: 18),
-                    _VolumesPanel(
-                      points: _volumePoints,
-                      deconfliction: _deconfliction,
-                      bufferMeters: _bufferMeters,
-                      altitudeRef: _altitudeRef,
-                      volumeType: _volumeType,
-                      locked: editingLocked,
-                      onLoadDefault: () {
-                        setState(() => _volumePoints = _defaultVolumePoints());
-                      },
-                      onAddPoint: (point) {
-                        setState(
-                          () => _volumePoints = [..._volumePoints, point],
-                        );
-                      },
-                      onRemovePoint: (index) {
-                        setState(() {
-                          _volumePoints = [
-                            for (var i = 0; i < _volumePoints.length; i++)
-                              if (i != index) _volumePoints[i],
-                          ];
-                        });
-                      },
-                      onUndoPoint: () {
-                        if (_volumePoints.isEmpty) return;
-                        setState(() {
-                          _volumePoints = _volumePoints
-                              .take(_volumePoints.length - 1)
-                              .toList();
-                        });
-                      },
-                      onAltitudeRefChanged: (value) {
-                        if (value != null) setState(() => _altitudeRef = value);
-                      },
-                      onVolumeTypeChanged: (value) {
-                        if (value != null) setState(() => _volumeType = value);
-                      },
+                    right: Column(
+                      children: [
+                        _ChecksPanel(
+                          busy: _busy,
+                          sourceIntent: _sourceIntent,
+                          modifyResult: _modifyResult,
+                          intent: _intent,
+                          volume: _volume,
+                          preflight: _preflight,
+                          deconfliction: _deconfliction,
+                          onRunChecks: _saveAndCheck,
+                        ),
+                        const SizedBox(height: 18),
+                        _ReviewPanel(
+                          aircraftId: widget.aircraftId,
+                          intent: _intent,
+                          volume: _volume,
+                          preflight: _preflight,
+                          deconfliction: _deconfliction,
+                          activatedIntent: _activatedIntent,
+                          checksClear: _checksClear,
+                          busy: _busy,
+                          onRunChecks: _saveAndCheck,
+                          onAccept: _acceptIntent,
+                          onActivate: _activateIntent,
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                right: Column(
-                  children: [
-                    _ChecksPanel(
-                      busy: _busy,
-                      sourceIntent: _sourceIntent,
-                      modifyResult: _modifyResult,
-                      intent: _intent,
-                      volume: _volume,
-                      preflight: _preflight,
-                      deconfliction: _deconfliction,
-                      onRunChecks: _saveAndCheck,
-                    ),
-                    const SizedBox(height: 18),
-                    _ReviewPanel(
-                      aircraftId: widget.aircraftId,
-                      intent: _intent,
-                      volume: _volume,
-                      preflight: _preflight,
-                      deconfliction: _deconfliction,
-                      activatedIntent: _activatedIntent,
-                      checksClear: _checksClear,
-                      busy: _busy,
-                      onAccept: _acceptIntent,
-                      onActivate: _activateIntent,
-                    ),
-                  ],
-                ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_error != null)
+            Positioned(
+              left: 22,
+              right: 22,
+              top: 14,
+              child: _WorkflowErrorBanner(
+                message: _error!,
+                onDismiss: () {
+                  setState(() => _error = null);
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkflowErrorBanner extends StatelessWidget {
+  const _WorkflowErrorBanner({required this.message, required this.onDismiss});
+
+  final String message;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      tween: Tween(begin: 0, end: 1),
+      builder: (context, value, child) {
+        return Opacity(
+          opacity: value,
+          child: Transform.translate(
+            offset: Offset(0, -18 * (1 - value)),
+            child: child,
+          ),
+        );
+      },
+      child: Material(
+        color: Colors.transparent,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xFF171E34),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFE4A100)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x99000000),
+                blurRadius: 22,
+                offset: Offset(0, 10),
               ),
             ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  color: Color(0xFFE4A100),
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Needs attention',
+                        style: TextStyle(
+                          color: Color(0xFFF0C15A),
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        message,
+                        style: const TextStyle(
+                          color: Color(0xFFD8E0F4),
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Dismiss',
+                  onPressed: onDismiss,
+                  icon: const Icon(Icons.close),
+                  color: const Color(0xFFC8D2EE),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -439,56 +618,93 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({
-    required this.aircraftId,
-    required this.modifying,
-    required this.busy,
-    required this.onRunChecks,
-  });
+  const _Header({required this.aircraftId, required this.modifying});
 
   final String aircraftId;
   final bool modifying;
-  final bool busy;
-  final VoidCallback onRunChecks;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                modifying ? 'Modify Mission Intent' : 'New Mission Intent',
-                style: Theme.of(
-                  context,
-                ).textTheme.headlineMedium?.copyWith(fontSize: 42),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Aircraft $aircraftId',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyLarge?.copyWith(color: const Color(0xFF7F90B6)),
-              ),
-            ],
-          ),
+        Text(
+          modifying ? 'Modify Mission Intent' : 'New Mission Intent',
+          style: Theme.of(
+            context,
+          ).textTheme.headlineMedium?.copyWith(fontSize: 42),
         ),
-        const SizedBox(width: 12),
-        FilledButton.icon(
-          onPressed: busy ? null : onRunChecks,
-          icon: busy
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.fact_check_outlined),
-          label: const Text('Save & check'),
+        const SizedBox(height: 8),
+        Text(
+          'Aircraft $aircraftId',
+          style: Theme.of(
+            context,
+          ).textTheme.bodyLarge?.copyWith(color: const Color(0xFF7F90B6)),
         ),
       ],
+    );
+  }
+}
+
+class _IntentContextBanner extends StatelessWidget {
+  const _IntentContextBanner({
+    required this.aircraftId,
+    required this.sourceIntent,
+  });
+
+  final String aircraftId;
+  final OperationalIntent? sourceIntent;
+
+  @override
+  Widget build(BuildContext context) {
+    final intent = sourceIntent;
+    final title = intent == null
+        ? 'Creating new intent'
+        : 'Modifying assigned intent';
+    final detail = intent == null
+        ? 'Aircraft $aircraftId'
+        : '${intent.name} v${intent.version} - Aircraft $aircraftId';
+    final icon = intent == null
+        ? Icons.add_task_outlined
+        : Icons.assignment_returned_outlined;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF151D33),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF293654)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Row(
+          children: [
+            Icon(icon, color: const Color(0xFF8EA2FF), size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Color(0xFFD6E0FF),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    detail,
+                    style: const TextStyle(
+                      color: Color(0xFF93A3C7),
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -500,8 +716,9 @@ class _MissionPanel extends StatelessWidget {
     required this.summary,
     required this.useCase,
     required this.routeSummary,
-    required this.plannedStart,
-    required this.plannedEnd,
+    required this.plannedDate,
+    required this.plannedStartSlot,
+    required this.plannedEndSlot,
     required this.minAltitude,
     required this.maxAltitude,
     required this.supervisorId,
@@ -512,6 +729,9 @@ class _MissionPanel extends StatelessWidget {
     required this.locked,
     required this.onAuthorizationChanged,
     required this.onPopulationChanged,
+    required this.onDateChanged,
+    required this.onStartSlotChanged,
+    required this.onEndSlotChanged,
     required this.onConformanceChanged,
   });
 
@@ -520,8 +740,9 @@ class _MissionPanel extends StatelessWidget {
   final TextEditingController summary;
   final TextEditingController useCase;
   final TextEditingController routeSummary;
-  final TextEditingController plannedStart;
-  final TextEditingController plannedEnd;
+  final DateTime plannedDate;
+  final String plannedStartSlot;
+  final String plannedEndSlot;
   final TextEditingController minAltitude;
   final TextEditingController maxAltitude;
   final TextEditingController supervisorId;
@@ -532,6 +753,9 @@ class _MissionPanel extends StatelessWidget {
   final bool locked;
   final ValueChanged<String?> onAuthorizationChanged;
   final ValueChanged<String?> onPopulationChanged;
+  final ValueChanged<DateTime> onDateChanged;
+  final ValueChanged<String?> onStartSlotChanged;
+  final ValueChanged<String?> onEndSlotChanged;
   final ValueChanged<bool> onConformanceChanged;
 
   @override
@@ -582,17 +806,27 @@ class _MissionPanel extends StatelessWidget {
             const SizedBox(height: 12),
             _ResponsiveFields(
               children: [
-                _TextField(
-                  controller: plannedStart,
-                  label: 'Planned start',
+                _DateField(
+                  label: 'Mission date',
+                  value: plannedDate,
                   enabled: !locked,
-                  validator: _dateTime,
+                  onChanged: onDateChanged,
                 ),
-                _TextField(
-                  controller: plannedEnd,
-                  label: 'Planned end',
+                _SelectField(
+                  label: 'Start time',
+                  value: plannedStartSlot,
                   enabled: !locked,
-                  validator: _dateTime,
+                  options: _timeSlotOptions,
+                  formatOption: _formatTimeSlot,
+                  onChanged: onStartSlotChanged,
+                ),
+                _SelectField(
+                  label: 'End time',
+                  value: plannedEndSlot,
+                  enabled: !locked,
+                  options: _timeSlotOptions,
+                  formatOption: _formatTimeSlot,
+                  onChanged: onEndSlotChanged,
                 ),
               ],
             ),
@@ -676,6 +910,7 @@ class _VolumesPanel extends StatelessWidget {
     required this.bufferMeters,
     required this.altitudeRef,
     required this.volumeType,
+    required this.volumeShapeMode,
     required this.locked,
     required this.onLoadDefault,
     required this.onAddPoint,
@@ -683,6 +918,8 @@ class _VolumesPanel extends StatelessWidget {
     required this.onUndoPoint,
     required this.onAltitudeRefChanged,
     required this.onVolumeTypeChanged,
+    required this.onShapeModeChanged,
+    required this.onBufferMetersChanged,
   });
 
   final List<LatLng> points;
@@ -690,6 +927,7 @@ class _VolumesPanel extends StatelessWidget {
   final TextEditingController bufferMeters;
   final String altitudeRef;
   final String volumeType;
+  final String volumeShapeMode;
   final bool locked;
   final VoidCallback onLoadDefault;
   final ValueChanged<LatLng> onAddPoint;
@@ -697,12 +935,18 @@ class _VolumesPanel extends StatelessWidget {
   final VoidCallback onUndoPoint;
   final ValueChanged<String?> onAltitudeRefChanged;
   final ValueChanged<String?> onVolumeTypeChanged;
+  final ValueChanged<String?> onShapeModeChanged;
+  final ValueChanged<String> onBufferMetersChanged;
 
   @override
   Widget build(BuildContext context) {
     final center = points.isEmpty
         ? const LatLng(35.4676, -97.5164)
         : points.first;
+    final widthMeters = double.tryParse(bufferMeters.text.trim()) ?? 15;
+    final volumePolygon = volumeShapeMode == 'precise'
+        ? _preciseRouteVolume(points, widthMeters)
+        : _boxRouteVolume(points, widthMeters);
     final conflictBoxes = _conflictingBoundingBoxes(deconfliction);
     final conflictsWithoutGeometry = _conflictingFindings(
       deconfliction,
@@ -718,7 +962,7 @@ class _VolumesPanel extends StatelessWidget {
             icon: const Icon(Icons.undo),
           ),
           IconButton.filledTonal(
-            tooltip: 'Reset polygon',
+            tooltip: 'Reset route start',
             onPressed: locked ? null : onLoadDefault,
             icon: const Icon(Icons.polyline_outlined),
           ),
@@ -736,6 +980,13 @@ class _VolumesPanel extends StatelessWidget {
               ),
             _ResponsiveFields(
               children: [
+                _SelectField(
+                  label: 'Volume shape',
+                  value: volumeShapeMode,
+                  enabled: !locked,
+                  options: const ['box', 'precise'],
+                  onChanged: onShapeModeChanged,
+                ),
                 _SelectField(
                   label: 'Altitude ref',
                   value: altitudeRef,
@@ -769,11 +1020,11 @@ class _VolumesPanel extends StatelessWidget {
                           'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                       userAgentPackageName: 'aero_arc_web',
                     ),
-                    if (points.length >= 3)
+                    if (volumePolygon.length >= 3)
                       PolygonLayer(
                         polygons: [
                           Polygon(
-                            points: points,
+                            points: volumePolygon,
                             color: const Color(
                               0xFF5A6BFF,
                             ).withValues(alpha: 0.20),
@@ -827,9 +1078,10 @@ class _VolumesPanel extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 StatusBadge(
-                  label: points.length >= 3 ? 'ready' : 'draft',
+                  label: volumePolygon.length >= 3 ? 'ready' : 'draft',
                   icon: Icons.polyline_outlined,
                 ),
+                StatusBadge(label: volumeShapeMode, icon: Icons.route),
                 if (conflictBoxes.isNotEmpty)
                   const StatusBadge(
                     label: 'potential_conflict',
@@ -840,9 +1092,11 @@ class _VolumesPanel extends StatelessWidget {
                   style: const TextStyle(color: Color(0xFF93A3C7)),
                 ),
                 if (!locked)
-                  const Text(
-                    'Click the map to add points. Use point buttons to remove vertices.',
-                    style: TextStyle(color: Color(0xFF7F90B6)),
+                  Text(
+                    volumeShapeMode == 'precise'
+                        ? 'Click route points. Precise mode buffers the route by the width below.'
+                        : 'Click route points. Box mode wraps the route in one expanded box.',
+                    style: const TextStyle(color: Color(0xFF7F90B6)),
                   ),
                 if (conflictsWithoutGeometry > 0)
                   Text(
@@ -860,9 +1114,12 @@ class _VolumesPanel extends StatelessWidget {
             const SizedBox(height: 12),
             _TextField(
               controller: bufferMeters,
-              label: 'Buffer meters',
+              label: volumeShapeMode == 'precise'
+                  ? 'Route width meters'
+                  : 'Box padding meters',
               keyboardType: TextInputType.number,
               enabled: !locked,
+              onChanged: onBufferMetersChanged,
               validator: _optionalNumber,
             ),
           ],
@@ -1093,6 +1350,7 @@ class _ReviewPanel extends StatelessWidget {
     required this.activatedIntent,
     required this.checksClear,
     required this.busy,
+    required this.onRunChecks,
     required this.onAccept,
     required this.onActivate,
   });
@@ -1105,12 +1363,25 @@ class _ReviewPanel extends StatelessWidget {
   final OperationalIntent? activatedIntent;
   final bool checksClear;
   final bool busy;
+  final VoidCallback onRunChecks;
   final VoidCallback onAccept;
   final VoidCallback onActivate;
 
   @override
   Widget build(BuildContext context) {
     final accepted = intent?.status == 'accepted' || intent?.status == 'active';
+    final activationBlockers = _activationBlockers(
+      intent: intent,
+      preflight: preflight,
+      deconfliction: deconfliction,
+      accepted: accepted,
+    );
+    final acceptanceBlockedReason = _acceptanceBlockedReason(
+      intent: intent,
+      preflight: preflight,
+      deconfliction: deconfliction,
+      accepted: accepted,
+    );
     return Panel(
       title: 'Review',
       child: Padding(
@@ -1151,21 +1422,41 @@ class _ReviewPanel extends StatelessWidget {
                   ? 'Not run'
                   : displayEnum(deconfliction!.posture),
             ),
-            DetailLine(
+            _ActionDetailLine(
               label: 'Activation',
-              value: activatedIntent == null
-                  ? checksClear
-                        ? 'Ready after acceptance'
-                        : 'Blocked until checks are clear'
-                  : 'Active',
+              value: activatedIntent != null
+                  ? 'Active'
+                  : acceptanceBlockedReason == null || accepted
+                  ? 'Ready after acceptance'
+                  : acceptanceBlockedReason,
+              onPressed:
+                  activatedIntent == null && activationBlockers.isNotEmpty
+                  ? () => _showActivationBlockersDialog(
+                      context,
+                      activationBlockers,
+                    )
+                  : null,
             ),
             const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: busy ? null : onRunChecks,
+                icon: busy
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.fact_check_outlined),
+                label: const Text('Save & check'),
+              ),
+            ),
+            const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed:
-                        busy || intent == null || !checksClear || accepted
+                    onPressed: busy || acceptanceBlockedReason != null
                         ? null
                         : onAccept,
                     icon: const Icon(Icons.check_circle_outline),
@@ -1186,6 +1477,65 @@ class _ReviewPanel extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ActionDetailLine extends StatelessWidget {
+  const _ActionDetailLine({
+    required this.label,
+    required this.value,
+    this.onPressed,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final displayValue = value.isEmpty ? 'Not provided' : value;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 140,
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF7D8DB4),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: onPressed == null
+                ? Text(
+                    displayValue,
+                    style: const TextStyle(
+                      color: Color(0xFFC4D0EE),
+                      height: 1.35,
+                    ),
+                  )
+                : Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: onPressed,
+                      icon: const Icon(Icons.info_outline, size: 18),
+                      label: Text(displayValue),
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFFE4A100),
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        alignment: Alignment.centerLeft,
+                      ),
+                    ),
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -1232,6 +1582,7 @@ class _TextField extends StatelessWidget {
     this.keyboardType,
     this.minLines = 1,
     this.maxLines = 1,
+    this.onChanged,
   });
 
   final TextEditingController controller;
@@ -1241,6 +1592,7 @@ class _TextField extends StatelessWidget {
   final TextInputType? keyboardType;
   final int minLines;
   final int maxLines;
+  final ValueChanged<String>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1251,6 +1603,7 @@ class _TextField extends StatelessWidget {
       keyboardType: keyboardType,
       minLines: minLines,
       maxLines: maxLines,
+      onChanged: onChanged,
       style: const TextStyle(color: Color(0xFFC9D5F4)),
       decoration: InputDecoration(
         labelText: label,
@@ -1262,12 +1615,69 @@ class _TextField extends StatelessWidget {
   }
 }
 
+class _DateField extends StatelessWidget {
+  const _DateField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    this.enabled = true,
+  });
+
+  final String label;
+  final DateTime value;
+  final ValueChanged<DateTime> onChanged;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return FormField<DateTime>(
+      initialValue: value,
+      builder: (field) {
+        return InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: enabled
+              ? () async {
+                  final selected = await showDatePicker(
+                    context: context,
+                    initialDate: value,
+                    firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (selected == null) return;
+                  field.didChange(selected);
+                  onChanged(selected);
+                }
+              : null,
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: label,
+              enabled: enabled,
+              filled: true,
+              fillColor: const Color(0xFF06122C),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(child: Text(_formatDateOnly(value))),
+                const Icon(Icons.calendar_month),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _SelectField extends StatelessWidget {
   const _SelectField({
     required this.label,
     required this.value,
     required this.options,
     required this.onChanged,
+    this.formatOption,
     this.enabled = true,
   });
 
@@ -1275,6 +1685,7 @@ class _SelectField extends StatelessWidget {
   final String value;
   final List<String> options;
   final ValueChanged<String?> onChanged;
+  final String Function(String value)? formatOption;
   final bool enabled;
 
   @override
@@ -1283,7 +1694,10 @@ class _SelectField extends StatelessWidget {
       initialValue: value,
       items: [
         for (final option in options)
-          DropdownMenuItem(value: option, child: Text(displayEnum(option))),
+          DropdownMenuItem(
+            value: option,
+            child: Text(formatOption?.call(option) ?? displayEnum(option)),
+          ),
       ],
       onChanged: enabled ? onChanged : null,
       decoration: InputDecoration(
@@ -1312,17 +1726,241 @@ String? _optionalNumber(String? value) {
   return double.tryParse(value.trim()) == null ? 'Enter a number' : null;
 }
 
-String? _dateTime(String? value) {
-  final required = _required(value);
-  if (required != null) return required;
-  return _parseInputDate(value!) == null
-      ? 'Use yyyy-mm-dd hh:mm or ISO time'
-      : null;
+String? _acceptanceBlockedReason({
+  required OperationalIntent? intent,
+  required PreflightEvaluationResult? preflight,
+  required DeconflictionResult? deconfliction,
+  required bool accepted,
+}) {
+  if (intent == null) return 'Save and run checks before acceptance';
+  if (accepted) return 'Already accepted';
+  if (preflight == null) return 'Run preflight checks before acceptance';
+  if (preflight.blocked) return _preflightBlockedReason(preflight);
+  if (deconfliction == null) return 'Run deconfliction before acceptance';
+  if (!deconfliction.clear) {
+    return 'Deconfliction posture is ${displayEnum(deconfliction.posture)}';
+  }
+  return null;
 }
 
-DateTime? _parseInputDate(String value) {
-  final normalized = value.trim().replaceFirst(' ', 'T');
-  return DateTime.tryParse(normalized)?.toUtc();
+List<_ActivationBlocker> _activationBlockers({
+  required OperationalIntent? intent,
+  required PreflightEvaluationResult? preflight,
+  required DeconflictionResult? deconfliction,
+  required bool accepted,
+}) {
+  final blockers = <_ActivationBlocker>[];
+  if (intent == null) {
+    blockers.add(
+      const _ActivationBlocker(
+        title: 'Intent not created',
+        detail: 'Save and run checks before acceptance.',
+        status: 'missing',
+      ),
+    );
+    return blockers;
+  }
+  if (preflight == null) {
+    blockers.add(
+      const _ActivationBlocker(
+        title: 'Preflight not run',
+        detail: 'Run preflight checks before acceptance.',
+        status: 'not_run',
+      ),
+    );
+  } else {
+    final blockingChecks =
+        preflight.checks.where((check) => check.blocking).toList()
+          ..sort((left, right) {
+            final leftPriority = _preflightBlockerPriority(left);
+            final rightPriority = _preflightBlockerPriority(right);
+            if (leftPriority != rightPriority) {
+              return leftPriority - rightPriority;
+            }
+            return left.summary.compareTo(right.summary);
+          });
+    for (final check in blockingChecks) {
+      final code =
+          check.requirementCode == null || check.requirementCode!.isEmpty
+          ? displayEnum(check.category)
+          : check.requirementCode!;
+      blockers.add(
+        _ActivationBlocker(
+          title: code,
+          detail: check.summary,
+          status: check.status,
+          metadata: [displayEnum(check.category), displayEnum(check.source)],
+        ),
+      );
+    }
+  }
+  if (deconfliction == null) {
+    blockers.add(
+      const _ActivationBlocker(
+        title: 'Deconfliction not run',
+        detail: 'Run deconfliction before acceptance.',
+        status: 'not_run',
+      ),
+    );
+  } else if (!deconfliction.clear) {
+    final blockingFindings = deconfliction.findings
+        .where((finding) => finding.blocking)
+        .toList();
+    if (blockingFindings.isEmpty) {
+      blockers.add(
+        _ActivationBlocker(
+          title: 'Deconfliction posture',
+          detail: 'Posture is ${displayEnum(deconfliction.posture)}.',
+          status: deconfliction.posture,
+        ),
+      );
+    } else {
+      for (final finding in blockingFindings) {
+        blockers.add(
+          _ActivationBlocker(
+            title: 'Deconfliction finding',
+            detail: finding.message,
+            status: finding.status,
+            metadata: [
+              if (finding.conflictingIntentId != null)
+                'Intent ${finding.conflictingIntentId}',
+              if (finding.conflictingVolumeId != null)
+                'Volume ${finding.conflictingVolumeId}',
+            ],
+          ),
+        );
+      }
+    }
+  }
+  if (!accepted && blockers.isEmpty) {
+    blockers.add(
+      const _ActivationBlocker(
+        title: 'Intent not accepted',
+        detail: 'Accept the intent before activation.',
+        status: 'pending',
+      ),
+    );
+  }
+  return blockers;
+}
+
+void _showActivationBlockersDialog(
+  BuildContext context,
+  List<_ActivationBlocker> blockers,
+) {
+  showDialog<void>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('Activation blockers'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: SingleChildScrollView(
+            child: RowList(
+              children: [
+                for (final blocker in blockers)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      StatusBadge(label: blocker.status),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              blocker.title,
+                              style: const TextStyle(
+                                color: Color(0xFFD6E0FF),
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              blocker.detail,
+                              style: const TextStyle(
+                                color: Color(0xFFC4D0EE),
+                                height: 1.35,
+                              ),
+                            ),
+                            if (blocker.metadata.isNotEmpty) ...[
+                              const SizedBox(height: 5),
+                              Text(
+                                blocker.metadata.join(' / '),
+                                style: const TextStyle(
+                                  color: Color(0xFF7F90B6),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+class _ActivationBlocker {
+  const _ActivationBlocker({
+    required this.title,
+    required this.detail,
+    required this.status,
+    this.metadata = const [],
+  });
+
+  final String title;
+  final String detail;
+  final String status;
+  final List<String> metadata;
+}
+
+String _preflightBlockedReason(PreflightEvaluationResult preflight) {
+  final blocking = preflight.checks.where((check) => check.blocking).toList();
+  if (blocking.isEmpty) return 'Preflight is blocked';
+  blocking.sort((left, right) {
+    final leftPriority = _preflightBlockerPriority(left);
+    final rightPriority = _preflightBlockerPriority(right);
+    if (leftPriority != rightPriority) return leftPriority - rightPriority;
+    return left.summary.compareTo(right.summary);
+  });
+  final first = blocking.first;
+  final code = first.requirementCode == null || first.requirementCode!.isEmpty
+      ? displayEnum(first.category)
+      : first.requirementCode!;
+  if (blocking.length == 1) return '$code: ${first.summary}';
+  return '$code: ${first.summary} (+${blocking.length - 1} more)';
+}
+
+int _preflightBlockerPriority(PreflightCheck check) {
+  return switch (check.requirementCode) {
+    'BATTERY-SOH-80' => 0,
+    'BATTERY-SOH-KNOWN' => 1,
+    'BATTERY-INSTALLED' => 2,
+    'MX-CRITICAL-OPEN' => 3,
+    'RID-ONLINE' => 4,
+    'AIRCRAFT-STATUS' => 5,
+    'AIRCRAFT-EXISTS' => 6,
+    'VOLUME-EXISTS' => 7,
+    'VOLUME-WINDOW' => 8,
+    'VOLUME-IN-INTENT' => 9,
+    'VOLUME-ALTITUDE' => 10,
+    'VOLUME-GEOJSON' => 11,
+    'INTENT-WINDOW' => 12,
+    _ => 100,
+  };
 }
 
 String? _emptyToNull(String value) {
@@ -1333,10 +1971,55 @@ String? _emptyToNull(String value) {
 double _feetToMeters(double feet) => feet * 0.3048;
 double _metersToFeet(double meters) => meters / 0.3048;
 
-String _formatInputDate(DateTime value) {
-  String two(int n) => n.toString().padLeft(2, '0');
-  return '${value.year}-${two(value.month)}-${two(value.day)} ${two(value.hour)}:${two(value.minute)}';
+final List<String> _timeSlotOptions = List.generate(96, (index) {
+  final totalMinutes = index * 15;
+  final hour = totalMinutes ~/ 60;
+  final minute = totalMinutes % 60;
+  return '${_twoDigits(hour)}:${_twoDigits(minute)}';
+});
+
+DateTime _roundUpToSlot(DateTime value) {
+  final minute = ((value.minute + 14) ~/ 15) * 15;
+  return DateTime(value.year, value.month, value.day, value.hour, minute);
 }
+
+String _slotForTime(DateTime value) {
+  final rounded = _roundUpToSlot(value);
+  return '${_twoDigits(rounded.hour)}:${_twoDigits(rounded.minute)}';
+}
+
+DateTime _combinePlannedDateAndSlot(DateTime date, String slot) {
+  final parts = slot.split(':');
+  final hour = int.parse(parts[0]);
+  final minute = int.parse(parts[1]);
+  return DateTime(date.year, date.month, date.day, hour, minute);
+}
+
+DateTime _combinePlannedEnd(
+  DateTime date, {
+  required String startSlot,
+  required String endSlot,
+}) {
+  final start = _combinePlannedDateAndSlot(date, startSlot);
+  final end = _combinePlannedDateAndSlot(date, endSlot);
+  return end.isAfter(start) ? end : end.add(const Duration(days: 1));
+}
+
+String _formatTimeSlot(String slot) {
+  final parts = slot.split(':');
+  final hour = int.parse(parts[0]);
+  final minute = int.parse(parts[1]);
+  final suffix = hour >= 12 ? 'PM' : 'AM';
+  var displayHour = hour % 12;
+  if (displayHour == 0) displayHour = 12;
+  return '$displayHour:${_twoDigits(minute)} $suffix';
+}
+
+String _formatDateOnly(DateTime value) {
+  return '${value.year}-${_twoDigits(value.month)}-${_twoDigits(value.day)}';
+}
+
+String _twoDigits(int value) => value.toString().padLeft(2, '0');
 
 List<LatLng> _pointsFromGeoJson(String? geoJson) {
   if (geoJson == null || geoJson.trim().isEmpty) return const [];
@@ -1418,16 +2101,87 @@ String _conflictFindingDetail(ConflictFinding finding) {
   return parts.join('\n');
 }
 
-List<LatLng> _defaultVolumePoints() {
-  const centerLat = 35.4676;
-  const centerLon = -97.5164;
-  const delta = 0.004;
-  return const [
-    LatLng(centerLat - delta, centerLon - delta),
-    LatLng(centerLat - delta, centerLon + delta),
-    LatLng(centerLat + delta, centerLon + delta),
-    LatLng(centerLat + delta, centerLon - delta),
+List<LatLng> _defaultRoutePoints({LatLng? center}) {
+  final centerLat = center?.latitude ?? 35.4676;
+  final centerLon = center?.longitude ?? -97.5164;
+  return [LatLng(centerLat, centerLon)];
+}
+
+List<LatLng> _boxRouteVolume(List<LatLng> route, double paddingMeters) {
+  if (route.length < 2) return const [];
+  final minLat = route.map((point) => point.latitude).reduce(math.min);
+  final maxLat = route.map((point) => point.latitude).reduce(math.max);
+  final minLon = route.map((point) => point.longitude).reduce(math.min);
+  final maxLon = route.map((point) => point.longitude).reduce(math.max);
+  final centerLat = (minLat + maxLat) / 2;
+  final latPadding = _metersToLatitudeDegrees(paddingMeters);
+  final lonPadding = _metersToLongitudeDegrees(paddingMeters, centerLat);
+  return [
+    LatLng(minLat - latPadding, minLon - lonPadding),
+    LatLng(minLat - latPadding, maxLon + lonPadding),
+    LatLng(maxLat + latPadding, maxLon + lonPadding),
+    LatLng(maxLat + latPadding, minLon - lonPadding),
   ];
+}
+
+List<LatLng> _preciseRouteVolume(List<LatLng> route, double widthMeters) {
+  if (route.length < 2) return const [];
+  final halfWidth = math.max(widthMeters / 2, 1);
+  final left = <LatLng>[];
+  final right = <LatLng>[];
+  for (var i = 0; i < route.length; i++) {
+    final previous = i == 0 ? route[i] : route[i - 1];
+    final next = i == route.length - 1 ? route[i] : route[i + 1];
+    final vector = _meterVector(previous, next);
+    final length = math.sqrt(vector.dx * vector.dx + vector.dy * vector.dy);
+    if (length == 0) continue;
+    final normalX = -vector.dy / length;
+    final normalY = vector.dx / length;
+    left.add(_offsetPoint(route[i], normalX * halfWidth, normalY * halfWidth));
+    right.add(
+      _offsetPoint(route[i], -normalX * halfWidth, -normalY * halfWidth),
+    );
+  }
+  if (left.length < 2 || right.length < 2) {
+    return _boxRouteVolume(route, widthMeters);
+  }
+  return [...left, ...right.reversed];
+}
+
+_MeterVector _meterVector(LatLng from, LatLng to) {
+  final averageLat = (from.latitude + to.latitude) / 2;
+  return _MeterVector(
+    (to.longitude - from.longitude) * _metersPerLongitudeDegree(averageLat),
+    (to.latitude - from.latitude) * _metersPerLatitudeDegree,
+  );
+}
+
+LatLng _offsetPoint(LatLng point, double eastMeters, double northMeters) {
+  return LatLng(
+    point.latitude + _metersToLatitudeDegrees(northMeters),
+    point.longitude + _metersToLongitudeDegrees(eastMeters, point.latitude),
+  );
+}
+
+const double _metersPerLatitudeDegree = 111320;
+
+double _metersPerLongitudeDegree(double latitude) {
+  final scale = math.cos(latitude * math.pi / 180).abs();
+  return _metersPerLatitudeDegree * math.max(scale, 0.01);
+}
+
+double _metersToLatitudeDegrees(double meters) =>
+    meters / _metersPerLatitudeDegree;
+
+double _metersToLongitudeDegrees(double meters, double latitude) {
+  return meters / _metersPerLongitudeDegree(latitude);
+}
+
+class _MeterVector {
+  const _MeterVector(this.dx, this.dy);
+
+  final double dx;
+  final double dy;
 }
 
 String _polygonGeoJson(List<LatLng> points) {

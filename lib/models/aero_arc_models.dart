@@ -180,6 +180,7 @@ class AircraftDashboard {
     this.liveState,
     required this.liveStateAvailable,
     required this.readiness,
+    this.currentIntent,
   });
 
   final Aircraft aircraft;
@@ -189,6 +190,7 @@ class AircraftDashboard {
   final LiveAircraftState? liveState;
   final bool liveStateAvailable;
   final Readiness readiness;
+  final OperationalIntent? currentIntent;
 
   factory AircraftDashboard.fromJson(Map<String, dynamic> json) {
     return AircraftDashboard(
@@ -205,6 +207,10 @@ class AircraftDashboard {
       liveState: optional(json['live_state'], LiveAircraftState.fromJson),
       liveStateAvailable: asBool(json['live_state_available']),
       readiness: Readiness.fromJson(asMap(json['readiness'])),
+      currentIntent: optional(
+        json['current_intent'],
+        OperationalIntent.fromJson,
+      ),
     );
   }
 }

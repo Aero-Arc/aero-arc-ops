@@ -57,9 +57,14 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(22, 20, 22, 24),
-              child: LoadingPanel(),
+            return const Stack(
+              children: [
+                SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(22, 20, 22, 24),
+                  child: LoadingPanel(),
+                ),
+                _MapLoadingIndicator(),
+              ],
             );
           }
           if (snapshot.hasError) {
@@ -85,6 +90,39 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             renderTiles: widget.renderTiles,
           );
         },
+      ),
+    );
+  }
+}
+
+class _MapLoadingIndicator extends StatelessWidget {
+  const _MapLoadingIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      right: 18,
+      bottom: 18,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF07132E),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF12254F)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 16,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: const Padding(
+          padding: EdgeInsets.all(10),
+          child: SizedBox.square(
+            dimension: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
       ),
     );
   }
@@ -341,11 +379,18 @@ class _DetailPanel extends StatelessWidget {
         Panel(
           title: 'Operation',
           trailing: intent == null
-              ? null
-              : IconButton.filledTonal(
-                  tooltip: 'Modify intent',
-                  onPressed: () => _confirmModifyIntent(context, view),
-                  icon: const Icon(Icons.edit_location_alt_outlined),
+              ? IconButton.filledTonal(
+                  tooltip: 'Create intent',
+                  onPressed: () => _openCreateIntent(context, view),
+                  icon: const Icon(Icons.add_task),
+                )
+              : TextButton.icon(
+                  onPressed: () => _openAssignedIntent(context, view),
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Open intent'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF91A0FF),
+                  ),
                 ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
@@ -459,62 +504,23 @@ class _DetailPanel extends StatelessWidget {
   }
 }
 
-Future<void> _confirmModifyIntent(
-  BuildContext context,
-  AircraftMapView view,
-) async {
+void _openAssignedIntent(BuildContext context, AircraftMapView view) {
   final intent = view.activeIntent;
   if (intent == null) return;
-  if (intent.status == 'active') {
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Active plan cannot be modified'),
-          content: Text(
-            'Intent ${intent.id} v${intent.version} is active. End or supersede the active plan before modifying it.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-    return;
-  }
-
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (context) {
-      return AlertDialog(
-        title: const Text('Modify intent?'),
-        content: Text(
-          'This will modify intent ${intent.id} v${intent.version}. Accepted intents create a new draft version.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Modify'),
-          ),
-        ],
-      );
-    },
+  Navigator.of(context).pushNamed(
+    '/aircraft/${view.aircraft.id}/intent/new',
+    arguments: IntentWorkflowRouteArguments(
+      initialIntent: intent,
+      initialVolumes: view.operationalVolumes,
+    ),
   );
-  if (confirmed != true || !context.mounted) return;
-  Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => IntentWorkflowPage(
-        aircraftId: view.aircraft.id,
-        initialIntent: intent,
-        initialVolumes: view.operationalVolumes,
-      ),
+}
+
+void _openCreateIntent(BuildContext context, AircraftMapView view) {
+  Navigator.of(context).pushNamed(
+    '/aircraft/${view.aircraft.id}/intent/new',
+    arguments: IntentWorkflowRouteArguments(
+      initialVolumeCenter: mapCenterFor(view),
     ),
   );
 }

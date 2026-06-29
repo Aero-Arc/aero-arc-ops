@@ -53,16 +53,60 @@ class AeroArcApp extends StatelessWidget {
       initialRoute: AppSection.overview.route,
       onGenerateRoute: (settings) {
         final route = _resolveRoute(settings.name);
-        return MaterialPageRoute<void>(
+        final intentArgs = settings.arguments is IntentWorkflowRouteArguments
+            ? settings.arguments as IntentWorkflowRouteArguments
+            : null;
+        return _NoTransitionPageRoute(
           settings: RouteSettings(name: route.name),
-          builder: (_) => AppShell(
+          child: AppShell(
             section: route.section,
             aircraftMapId: route.aircraftMapId,
             intentAircraftId: route.intentAircraftId,
+            intentArgs: intentArgs,
           ),
         );
       },
     );
+  }
+}
+
+class _NoTransitionPageRoute extends PageRoute<void> {
+  _NoTransitionPageRoute({required super.settings, required this.child});
+
+  final Widget child;
+
+  @override
+  Color? get barrierColor => null;
+
+  @override
+  String? get barrierLabel => null;
+
+  @override
+  bool get maintainState => true;
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Duration get reverseTransitionDuration => Duration.zero;
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    return child;
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    return child;
   }
 }
 
@@ -72,11 +116,13 @@ class AppShell extends StatelessWidget {
     required this.section,
     this.aircraftMapId,
     this.intentAircraftId,
+    this.intentArgs,
   });
 
   final AppSection section;
   final String? aircraftMapId;
   final String? intentAircraftId;
+  final IntentWorkflowRouteArguments? intentArgs;
 
   @override
   Widget build(BuildContext context) {
@@ -87,12 +133,14 @@ class AppShell extends StatelessWidget {
             section: section,
             aircraftMapId: aircraftMapId,
             intentAircraftId: intentAircraftId,
+            intentArgs: intentArgs,
           );
         }
         return _DesktopShell(
           section: section,
           aircraftMapId: aircraftMapId,
           intentAircraftId: intentAircraftId,
+          intentArgs: intentArgs,
         );
       },
     );
@@ -104,11 +152,13 @@ class _DesktopShell extends StatelessWidget {
     required this.section,
     this.aircraftMapId,
     this.intentAircraftId,
+    this.intentArgs,
   });
 
   final AppSection section;
   final String? aircraftMapId;
   final String? intentAircraftId;
+  final IntentWorkflowRouteArguments? intentArgs;
 
   @override
   Widget build(BuildContext context) {
@@ -182,7 +232,12 @@ class _DesktopShell extends StatelessWidget {
                   ),
                 ),
                 Expanded(
-                  child: _sectionPage(section, aircraftMapId, intentAircraftId),
+                  child: _sectionPage(
+                    section,
+                    aircraftMapId,
+                    intentAircraftId,
+                    intentArgs,
+                  ),
                 ),
               ],
             ),
@@ -217,11 +272,14 @@ class _Sidebar extends StatelessWidget {
                 children: [
                   const Icon(Icons.bolt, size: 20, color: Color(0xFF5A6BFF)),
                   const SizedBox(width: 8),
-                  Text(
-                    'Aero Arc',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontSize: 32,
-                      color: const Color(0xFF5E6FFF),
+                  Expanded(
+                    child: Text(
+                      'Aero Arc',
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontSize: 32,
+                        color: const Color(0xFF5E6FFF),
+                      ),
                     ),
                   ),
                 ],
@@ -287,9 +345,7 @@ class _SidebarItem extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
+        child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
@@ -334,11 +390,13 @@ class _MobileShell extends StatelessWidget {
     required this.section,
     this.aircraftMapId,
     this.intentAircraftId,
+    this.intentArgs,
   });
 
   final AppSection section;
   final String? aircraftMapId;
   final String? intentAircraftId;
+  final IntentWorkflowRouteArguments? intentArgs;
 
   @override
   Widget build(BuildContext context) {
@@ -371,7 +429,7 @@ class _MobileShell extends StatelessWidget {
           ),
         ),
       ),
-      body: _sectionPage(section, aircraftMapId, intentAircraftId),
+      body: _sectionPage(section, aircraftMapId, intentAircraftId, intentArgs),
     );
   }
 }
@@ -385,12 +443,18 @@ Widget _sectionPage(
   AppSection section,
   String? aircraftMapId,
   String? intentAircraftId,
+  IntentWorkflowRouteArguments? intentArgs,
 ) {
   if (aircraftMapId != null) {
     return AircraftMapScreen(aircraftId: aircraftMapId);
   }
   if (intentAircraftId != null) {
-    return IntentWorkflowPage(aircraftId: intentAircraftId);
+    return IntentWorkflowPage(
+      aircraftId: intentAircraftId,
+      initialIntent: intentArgs?.initialIntent,
+      initialVolumes: intentArgs?.initialVolumes ?? const [],
+      initialVolumeCenter: intentArgs?.initialVolumeCenter,
+    );
   }
   return switch (section) {
     AppSection.overview => const OverviewPage(),
