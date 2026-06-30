@@ -132,7 +132,12 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         );
         intent = modified.intent;
         volume = modified.volumes.isEmpty ? null : modified.volumes.first;
-        _modifyResult = modified;
+        if (!mounted) return;
+        setState(() {
+          _intent = intent;
+          _volume = volume;
+          _modifyResult = modified;
+        });
       } else if (intent == null && source != null) {
         final modified = await _apiClient.modifyOperationalIntent(
           source.id,
@@ -140,20 +145,37 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         );
         intent = modified.intent;
         volume = modified.volumes.isEmpty ? null : modified.volumes.first;
-        _modifyResult = modified;
+        if (!mounted) return;
+        setState(() {
+          _intent = intent;
+          _volume = volume;
+          _modifyResult = modified;
+        });
       } else {
-        intent ??= await _apiClient.createOperationalIntent(_intentRequest());
-        volume ??= await _apiClient.addOperationalIntentVolume(
-          intent.id,
-          _volumeRequest(),
-        );
+        if (intent == null) {
+          intent = await _apiClient.createOperationalIntent(_intentRequest());
+          if (!mounted) return;
+          setState(() => _intent = intent);
+        }
+        if (volume == null) {
+          volume = await _apiClient.addOperationalIntentVolume(
+            intent.id,
+            _volumeRequest(),
+          );
+          if (!mounted) return;
+          setState(() => _volume = volume);
+        }
       }
       final submitted = intent.status == 'draft'
           ? await _apiClient.submitOperationalIntent(intent.id)
           : intent;
+      if (!mounted) return;
+      setState(() => _intent = submitted);
       final preflight = await _apiClient.evaluateOperationalIntentPreflight(
         submitted.id,
       );
+      if (!mounted) return;
+      setState(() => _preflight = preflight);
       final deconfliction = await _apiClient
           .checkOperationalIntentDeconfliction(submitted.id);
       setState(() {

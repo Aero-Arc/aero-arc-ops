@@ -201,6 +201,74 @@ void main() {
     );
   });
 
+  testWidgets('created intent is reused when follow-up checks fail', (
+    WidgetTester tester,
+  ) async {
+    var createCount = 0;
+    var volumeCount = 0;
+    var modifyCount = 0;
+    final apiClient = AeroArcApiClient(
+      baseUri: Uri.parse('http://api.test'),
+      httpClient: MockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/operational-intents') {
+          createCount += 1;
+          return _jsonResponse(_intentJson(status: 'draft'));
+        }
+        if (path == '/api/v1/operational-intents/intent-1/volumes') {
+          volumeCount += 1;
+          return _jsonResponse(_volumeJson());
+        }
+        if (path == '/api/v1/operational-intents/intent-1/submit') {
+          return _jsonResponse(_intentJson(status: 'submitted'));
+        }
+        if (path == '/api/v1/operational-intents/intent-1/modify') {
+          modifyCount += 1;
+          return _jsonResponse({
+            'intent': _intentJson(status: 'submitted'),
+            'volumes': [_volumeJson()],
+            'supersedes_intent_id': 'intent-1',
+            'supersedes_version': 1,
+          });
+        }
+        if (path == '/api/v1/operational-intents/intent-1/preflight/evaluate') {
+          return http.Response('preflight unavailable', 503);
+        }
+        return http.Response('unexpected ${request.method} $path', 404);
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(useMaterial3: false),
+        home: Scaffold(
+          body: IntentWorkflowPage(
+            aircraftId: 'aircraft-1',
+            apiClient: apiClient,
+            initialVolumes: [_volumeModel()],
+          ),
+        ),
+      ),
+    );
+
+    final saveAndCheck = find.widgetWithText(FilledButton, 'Save & check');
+    await tester.ensureVisible(saveAndCheck);
+    tester.widget<FilledButton>(saveAndCheck).onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(createCount, 1);
+    expect(volumeCount, 1);
+    expect(modifyCount, 0);
+
+    await tester.ensureVisible(saveAndCheck);
+    tester.widget<FilledButton>(saveAndCheck).onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(createCount, 1);
+    expect(volumeCount, 1);
+    expect(modifyCount, 1);
+  });
+
   testWidgets('volume width edits update the map preview immediately', (
     WidgetTester tester,
   ) async {
