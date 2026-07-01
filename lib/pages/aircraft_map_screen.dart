@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
+import 'intent_workflow_page.dart';
 
 class AircraftMapScreen extends StatefulWidget {
   const AircraftMapScreen({
@@ -56,9 +57,14 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(22, 20, 22, 24),
-              child: LoadingPanel(),
+            return const Stack(
+              children: [
+                SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(22, 20, 22, 24),
+                  child: LoadingPanel(),
+                ),
+                _MapLoadingIndicator(),
+              ],
             );
           }
           if (snapshot.hasError) {
@@ -84,6 +90,39 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             renderTiles: widget.renderTiles,
           );
         },
+      ),
+    );
+  }
+}
+
+class _MapLoadingIndicator extends StatelessWidget {
+  const _MapLoadingIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      right: 18,
+      bottom: 18,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF07132E),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF12254F)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 16,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: const Padding(
+          padding: EdgeInsets.all(10),
+          child: SizedBox.square(
+            dimension: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
       ),
     );
   }
@@ -339,6 +378,20 @@ class _DetailPanel extends StatelessWidget {
       children: [
         Panel(
           title: 'Operation',
+          trailing: intent == null
+              ? IconButton.filledTonal(
+                  tooltip: 'Create intent',
+                  onPressed: () => _openCreateIntent(context, view),
+                  icon: const Icon(Icons.add_task),
+                )
+              : TextButton.icon(
+                  onPressed: () => _openAssignedIntent(context, view),
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Open intent'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF91A0FF),
+                  ),
+                ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
             child: Column(
@@ -449,6 +502,27 @@ class _DetailPanel extends StatelessWidget {
       ],
     );
   }
+}
+
+void _openAssignedIntent(BuildContext context, AircraftMapView view) {
+  final intent = view.activeIntent;
+  if (intent == null) return;
+  Navigator.of(context).pushNamed(
+    '/aircraft/${view.aircraft.id}/intent/new',
+    arguments: IntentWorkflowRouteArguments(
+      initialIntent: intent,
+      initialVolumes: view.operationalVolumes,
+    ),
+  );
+}
+
+void _openCreateIntent(BuildContext context, AircraftMapView view) {
+  Navigator.of(context).pushNamed(
+    '/aircraft/${view.aircraft.id}/intent/new',
+    arguments: IntentWorkflowRouteArguments(
+      initialVolumeCenter: mapCenterFor(view),
+    ),
+  );
 }
 
 LatLng mapCenterFor(AircraftMapView view) {

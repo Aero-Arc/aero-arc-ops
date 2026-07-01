@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aero_arc_web/models/aero_arc_models.dart';
 import 'package:aero_arc_web/pages/aircraft_map_screen.dart';
+import 'package:aero_arc_web/pages/intent_workflow_page.dart';
 
 void main() {
   testWidgets('AircraftMapScreen renders aircraft header data', (tester) async {
@@ -23,9 +26,10 @@ void main() {
     expect(find.text('Conformance'), findsOneWidget);
   });
 
-  testWidgets('AircraftMapScreen renders no active intent empty state', (
+  testWidgets('AircraftMapScreen opens create route with no active intent', (
     tester,
   ) async {
+    Object? routeArguments;
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
@@ -34,28 +38,82 @@ void main() {
           load: () async => sampleMapView(includeActiveIntent: false),
           renderTiles: false,
         ),
+        onGenerateRoute: (settings) {
+          routeArguments = settings.arguments;
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => Text('route:${settings.name}'),
+          );
+        },
       ),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('No active operational intent.'), findsOneWidget);
+    final createIntent = find.byTooltip('Create intent');
+    await tester.ensureVisible(createIntent);
+    await tester.tap(createIntent);
+    await tester.pumpAndSettle();
+
+    expect(find.text('route:/aircraft/aircraft-1/intent/new'), findsOneWidget);
+    final args = routeArguments as IntentWorkflowRouteArguments;
+    expect(args.initialVolumeCenter?.latitude, 35.2);
+    expect(args.initialVolumeCenter?.longitude, -97.2);
   });
 
-  testWidgets('AircraftMapScreen handles loading and error state', (
+  testWidgets('AircraftMapScreen opens assigned intent workflow', (
     tester,
   ) async {
+    Object? routeArguments;
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
         home: AircraftMapScreen(
           aircraftId: 'aircraft-1',
-          load: () => Future<AircraftMapView>.error('offline'),
+          load: () async => sampleMapView(),
+          renderTiles: false,
+        ),
+        onGenerateRoute: (settings) {
+          routeArguments = settings.arguments;
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => Text('route:${settings.name}'),
+          );
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final openIntent = find.text('Open intent');
+    await tester.ensureVisible(openIntent);
+    await tester.tap(openIntent);
+    await tester.pumpAndSettle();
+
+    expect(find.text('route:/aircraft/aircraft-1/intent/new'), findsOneWidget);
+    final args = routeArguments as IntentWorkflowRouteArguments;
+    expect(args.initialIntent?.id, 'intent-1');
+    expect(args.initialVolumes, hasLength(1));
+  });
+
+  testWidgets('AircraftMapScreen handles loading and error state', (
+    tester,
+  ) async {
+    final pendingLoad = Completer<AircraftMapView>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () => pendingLoad.future,
           renderTiles: false,
         ),
       ),
     );
 
-    expect(find.text('Loading'), findsOneWidget);
+    expect(find.text('Loading'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    pendingLoad.completeError('offline');
     await tester.pumpAndSettle();
     expect(find.text('API unavailable'), findsOneWidget);
     expect(find.textContaining('offline'), findsOneWidget);

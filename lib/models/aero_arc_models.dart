@@ -180,6 +180,7 @@ class AircraftDashboard {
     this.liveState,
     required this.liveStateAvailable,
     required this.readiness,
+    this.currentIntent,
   });
 
   final Aircraft aircraft;
@@ -189,6 +190,7 @@ class AircraftDashboard {
   final LiveAircraftState? liveState;
   final bool liveStateAvailable;
   final Readiness readiness;
+  final OperationalIntent? currentIntent;
 
   factory AircraftDashboard.fromJson(Map<String, dynamic> json) {
     return AircraftDashboard(
@@ -205,6 +207,10 @@ class AircraftDashboard {
       liveState: optional(json['live_state'], LiveAircraftState.fromJson),
       liveStateAvailable: asBool(json['live_state_available']),
       readiness: Readiness.fromJson(asMap(json['readiness'])),
+      currentIntent: optional(
+        json['current_intent'],
+        OperationalIntent.fromJson,
+      ),
     );
   }
 }
@@ -587,6 +593,71 @@ class OperationalIntent {
   }
 }
 
+class CreateOperationalIntentRequest {
+  const CreateOperationalIntentRequest({
+    this.id,
+    this.operatorId,
+    required this.aircraftId,
+    this.authorizationId,
+    required this.name,
+    required this.summary,
+    this.useCase,
+    required this.authorizationPath,
+    required this.populationCategory,
+    required this.conformanceRequired,
+    this.operatingAreaId,
+    this.routeSummary,
+    this.plannedStartAt,
+    this.plannedEndAt,
+    this.minAltitudeFtAgl,
+    this.maxAltitudeFtAgl,
+    this.supervisorId,
+    this.flightCoordinatorId,
+  });
+
+  final String? id;
+  final String? operatorId;
+  final String aircraftId;
+  final String? authorizationId;
+  final String name;
+  final String summary;
+  final String? useCase;
+  final String authorizationPath;
+  final String populationCategory;
+  final bool conformanceRequired;
+  final String? operatingAreaId;
+  final String? routeSummary;
+  final DateTime? plannedStartAt;
+  final DateTime? plannedEndAt;
+  final double? minAltitudeFtAgl;
+  final double? maxAltitudeFtAgl;
+  final String? supervisorId;
+  final String? flightCoordinatorId;
+
+  Map<String, dynamic> toJson() {
+    return withoutNullValues({
+      'id': id,
+      'operator_id': operatorId,
+      'aircraft_id': aircraftId,
+      'authorization_id': authorizationId,
+      'name': name,
+      'summary': summary,
+      'use_case': useCase,
+      'authorization_path': authorizationPath,
+      'population_category': populationCategory,
+      'conformance_required': conformanceRequired,
+      'operating_area_id': operatingAreaId,
+      'route_summary': routeSummary,
+      'planned_start_at': plannedStartAt?.toIso8601String(),
+      'planned_end_at': plannedEndAt?.toIso8601String(),
+      'min_altitude_ft_agl': minAltitudeFtAgl,
+      'max_altitude_ft_agl': maxAltitudeFtAgl,
+      'supervisor_id': supervisorId,
+      'flight_coordinator_id': flightCoordinatorId,
+    });
+  }
+}
+
 class OperationalVolume {
   const OperationalVolume({
     required this.id,
@@ -646,6 +717,149 @@ class OperationalVolume {
   }
 }
 
+class AddOperationalVolumeRequest {
+  const AddOperationalVolumeRequest({
+    this.id,
+    required this.sequence,
+    this.geometryUri,
+    this.geoJson,
+    required this.minAltitudeM,
+    required this.maxAltitudeM,
+    required this.altitudeRef,
+    this.startsAt,
+    this.endsAt,
+    this.bufferMeters,
+    this.volumeType,
+  });
+
+  final String? id;
+  final int sequence;
+  final String? geometryUri;
+  final String? geoJson;
+  final double minAltitudeM;
+  final double maxAltitudeM;
+  final String altitudeRef;
+  final DateTime? startsAt;
+  final DateTime? endsAt;
+  final double? bufferMeters;
+  final String? volumeType;
+
+  Map<String, dynamic> toJson() {
+    return withoutNullValues({
+      'id': id,
+      'sequence': sequence,
+      'geometry_uri': geometryUri,
+      'geojson': geoJson,
+      'min_altitude_m': minAltitudeM,
+      'max_altitude_m': maxAltitudeM,
+      'altitude_ref': altitudeRef,
+      'starts_at': startsAt?.toIso8601String(),
+      'ends_at': endsAt?.toIso8601String(),
+      'buffer_meters': bufferMeters,
+      'volume_type': volumeType,
+    });
+  }
+}
+
+class ModifyOperationalIntentRequest {
+  const ModifyOperationalIntentRequest({
+    required this.expectedVersion,
+    required this.intent,
+    required this.volumes,
+    this.reason = 'operator_adjustment',
+  });
+
+  final int expectedVersion;
+  final ModifyOperationalIntentFields intent;
+  final List<AddOperationalVolumeRequest> volumes;
+  final String reason;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'reason': reason,
+      'expected_version': expectedVersion,
+      'intent': intent.toJson(),
+      'volumes': [for (final volume in volumes) volume.toJson()],
+    };
+  }
+}
+
+class ModifyOperationalIntentFields {
+  const ModifyOperationalIntentFields({
+    this.name,
+    this.summary,
+    this.useCase,
+    this.authorizationPath,
+    this.populationCategory,
+    this.conformanceRequired,
+    this.operatingAreaId,
+    this.routeSummary,
+    this.plannedStartAt,
+    this.plannedEndAt,
+    this.minAltitudeFtAgl,
+    this.maxAltitudeFtAgl,
+    this.supervisorId,
+    this.flightCoordinatorId,
+  });
+
+  final String? name;
+  final String? summary;
+  final String? useCase;
+  final String? authorizationPath;
+  final String? populationCategory;
+  final bool? conformanceRequired;
+  final String? operatingAreaId;
+  final String? routeSummary;
+  final DateTime? plannedStartAt;
+  final DateTime? plannedEndAt;
+  final double? minAltitudeFtAgl;
+  final double? maxAltitudeFtAgl;
+  final String? supervisorId;
+  final String? flightCoordinatorId;
+
+  Map<String, dynamic> toJson() {
+    return withoutNullValues({
+      'name': name,
+      'summary': summary,
+      'use_case': useCase,
+      'authorization_path': authorizationPath,
+      'population_category': populationCategory,
+      'conformance_required': conformanceRequired,
+      'operating_area_id': operatingAreaId,
+      'route_summary': routeSummary,
+      'planned_start_at': plannedStartAt?.toIso8601String(),
+      'planned_end_at': plannedEndAt?.toIso8601String(),
+      'min_altitude_ft_agl': minAltitudeFtAgl,
+      'max_altitude_ft_agl': maxAltitudeFtAgl,
+      'supervisor_id': supervisorId,
+      'flight_coordinator_id': flightCoordinatorId,
+    });
+  }
+}
+
+class ModifyOperationalIntentResult {
+  const ModifyOperationalIntentResult({
+    required this.intent,
+    required this.volumes,
+    this.supersedesIntentId,
+    this.supersedesVersion,
+  });
+
+  final OperationalIntent intent;
+  final List<OperationalVolume> volumes;
+  final String? supersedesIntentId;
+  final int? supersedesVersion;
+
+  factory ModifyOperationalIntentResult.fromJson(Map<String, dynamic> json) {
+    return ModifyOperationalIntentResult(
+      intent: OperationalIntent.fromJson(asMap(json['intent'])),
+      volumes: listOf(json['volumes'], OperationalVolume.fromJson),
+      supersedesIntentId: asNullableString(json['supersedes_intent_id']),
+      supersedesVersion: nullableInt(json['supersedes_version']),
+    );
+  }
+}
+
 class PreflightCheck {
   const PreflightCheck({
     required this.id,
@@ -699,6 +913,191 @@ class PreflightCheck {
       evidenceRecordId: asNullableString(json['evidence_record_id']),
       capturedAt: asDate(json['captured_at']),
     );
+  }
+}
+
+class PreflightEvaluationResult {
+  const PreflightEvaluationResult({
+    this.intent,
+    required this.checks,
+    required this.blocked,
+  });
+
+  final OperationalIntent? intent;
+  final List<PreflightCheck> checks;
+  final bool blocked;
+
+  factory PreflightEvaluationResult.fromJson(Map<String, dynamic> json) {
+    return PreflightEvaluationResult(
+      intent: optional(json['intent'], OperationalIntent.fromJson),
+      checks: listOf(json['checks'], PreflightCheck.fromJson),
+      blocked: asBool(json['blocked']),
+    );
+  }
+}
+
+class DeconflictionResult {
+  const DeconflictionResult({
+    required this.intent,
+    required this.posture,
+    required this.findings,
+    this.checkedAt,
+    this.ruleVersion,
+  });
+
+  final OperationalIntent intent;
+  final String posture;
+  final List<ConflictFinding> findings;
+  final DateTime? checkedAt;
+  final String? ruleVersion;
+
+  bool get clear => posture == 'clear';
+  bool get blocked => findings.any((finding) => finding.blocking);
+
+  factory DeconflictionResult.fromJson(Map<String, dynamic> json) {
+    return DeconflictionResult(
+      intent: OperationalIntent.fromJson(asMap(json['intent'])),
+      posture: asString(json['posture']),
+      findings: listOf(json['findings'], ConflictFinding.fromJson),
+      checkedAt: asDate(json['checked_at']),
+      ruleVersion: asNullableString(json['rule_version']),
+    );
+  }
+}
+
+class ConflictFindingsResponse {
+  const ConflictFindingsResponse({required this.findings});
+
+  final List<ConflictFinding> findings;
+
+  factory ConflictFindingsResponse.fromJson(Map<String, dynamic> json) {
+    return ConflictFindingsResponse(
+      findings: listOf(json['findings'], ConflictFinding.fromJson),
+    );
+  }
+}
+
+class ConflictFinding {
+  const ConflictFinding({
+    required this.id,
+    this.operatorId,
+    required this.intentId,
+    required this.intentVersion,
+    this.aircraftId,
+    this.volumeId,
+    this.conflictingIntentId,
+    this.conflictingVersion,
+    this.conflictingVolumeId,
+    required this.sourceType,
+    this.sourceId,
+    required this.status,
+    required this.severity,
+    required this.blocking,
+    required this.message,
+    this.timeOverlapStart,
+    this.timeOverlapEnd,
+    this.altitudeOverlapMin,
+    this.altitudeOverlapMax,
+    this.conflictingBounds,
+    this.ruleVersion,
+    this.provenance,
+    this.evaluatedAt,
+  });
+
+  final String id;
+  final String? operatorId;
+  final String intentId;
+  final int intentVersion;
+  final String? aircraftId;
+  final String? volumeId;
+  final String? conflictingIntentId;
+  final int? conflictingVersion;
+  final String? conflictingVolumeId;
+  final String sourceType;
+  final String? sourceId;
+  final String status;
+  final String severity;
+  final bool blocking;
+  final String message;
+  final DateTime? timeOverlapStart;
+  final DateTime? timeOverlapEnd;
+  final double? altitudeOverlapMin;
+  final double? altitudeOverlapMax;
+  final GeoBounds? conflictingBounds;
+  final String? ruleVersion;
+  final String? provenance;
+  final DateTime? evaluatedAt;
+
+  factory ConflictFinding.fromJson(Map<String, dynamic> json) {
+    return ConflictFinding(
+      id: asString(json['id']),
+      operatorId: asNullableString(json['operator_id']),
+      intentId: asString(json['intent_id']),
+      intentVersion: asInt(json['intent_version']),
+      aircraftId: asNullableString(json['aircraft_id']),
+      volumeId: asNullableString(json['volume_id']),
+      conflictingIntentId: asNullableString(json['conflicting_intent_id']),
+      conflictingVersion: nullableInt(json['conflicting_version']),
+      conflictingVolumeId: asNullableString(json['conflicting_volume_id']),
+      sourceType: asString(json['source_type']),
+      sourceId: asNullableString(json['source_id']),
+      status: asString(json['status']),
+      severity: asString(json['severity']),
+      blocking: asBool(json['blocking']),
+      message: asString(json['message']),
+      timeOverlapStart: asDate(json['time_overlap_start']),
+      timeOverlapEnd: asDate(json['time_overlap_end']),
+      altitudeOverlapMin: asNullableDouble(json['altitude_overlap_min']),
+      altitudeOverlapMax: asNullableDouble(json['altitude_overlap_max']),
+      conflictingBounds: GeoBounds.fromAny(
+        json['conflicting_bounds'] ??
+            json['conflicting_bbox'] ??
+            json['conflicting_volume_bounds'] ??
+            json['conflicting_volume_bbox'],
+      ),
+      ruleVersion: asNullableString(json['rule_version']),
+      provenance: asNullableString(json['provenance']),
+      evaluatedAt: asDate(json['evaluated_at']),
+    );
+  }
+}
+
+class GeoBounds {
+  const GeoBounds({
+    required this.minLatitude,
+    required this.minLongitude,
+    required this.maxLatitude,
+    required this.maxLongitude,
+  });
+
+  final double minLatitude;
+  final double minLongitude;
+  final double maxLatitude;
+  final double maxLongitude;
+
+  factory GeoBounds.fromJson(Map<String, dynamic> json) {
+    return GeoBounds(
+      minLatitude: asDouble(json['min_lat'] ?? json['min_latitude']),
+      minLongitude: asDouble(json['min_lon'] ?? json['min_longitude']),
+      maxLatitude: asDouble(json['max_lat'] ?? json['max_latitude']),
+      maxLongitude: asDouble(json['max_lon'] ?? json['max_longitude']),
+    );
+  }
+
+  static GeoBounds? fromAny(Object? value) {
+    if (value is Map<String, dynamic>) {
+      return GeoBounds.fromJson(value);
+    }
+    if (value is List && value.length >= 4) {
+      final values = value.map(asDouble).toList();
+      return GeoBounds(
+        minLongitude: values[0],
+        minLatitude: values[1],
+        maxLongitude: values[2],
+        maxLatitude: values[3],
+      );
+    }
+    return null;
   }
 }
 
@@ -926,6 +1325,7 @@ String? asNullableString(Object? value) {
 bool asBool(Object? value) => value == true;
 int asInt(Object? value) =>
     value is num ? value.toInt() : int.tryParse(asString(value)) ?? 0;
+int? nullableInt(Object? value) => value == null ? null : asInt(value);
 double asDouble(Object? value) =>
     value is num ? value.toDouble() : double.tryParse(asString(value)) ?? 0;
 double? asNullableDouble(Object? value) =>
@@ -935,6 +1335,10 @@ DateTime? asDate(Object? value) =>
 
 Map<String, dynamic> asMap(Object? value) {
   return value is Map<String, dynamic> ? value : const <String, dynamic>{};
+}
+
+Map<String, dynamic>? nullableMap(Object? value) {
+  return value is Map<String, dynamic> ? value : null;
 }
 
 T? optional<T>(Object? value, T Function(Map<String, dynamic>) parse) {
@@ -965,4 +1369,11 @@ String firstNonEmpty(List<String?> values) {
     }
   }
   return 'Unknown';
+}
+
+Map<String, dynamic> withoutNullValues(Map<String, dynamic> values) {
+  return {
+    for (final entry in values.entries)
+      if (entry.value != null) entry.key: entry.value,
+  };
 }

@@ -46,6 +46,7 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
       child: FutureBuilder<T>(
         future: _future,
         builder: (context, snapshot) {
+          final isLoading = snapshot.connectionState == ConnectionState.waiting;
           final children = <Widget>[
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -80,7 +81,7 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
             const SizedBox(height: 20),
           ];
 
-          if (snapshot.connectionState == ConnectionState.waiting) {
+          if (isLoading) {
             children.add(const LoadingPanel());
           } else if (snapshot.hasError) {
             children.add(
@@ -90,14 +91,52 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
             children.addAll(widget.builder(context, snapshot.data as T));
           }
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: children,
-            ),
+          return Stack(
+            children: [
+              SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: children,
+                ),
+              ),
+              if (isLoading) const _PageLoadingIndicator(),
+            ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _PageLoadingIndicator extends StatelessWidget {
+  const _PageLoadingIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      right: 18,
+      bottom: 18,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF07132E),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF12254F)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 16,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: const Padding(
+          padding: EdgeInsets.all(10),
+          child: SizedBox.square(
+            dimension: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
       ),
     );
   }
@@ -108,26 +147,26 @@ class LoadingPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Panel(
-      title: 'Loading',
-      child: Padding(
-        padding: EdgeInsets.all(20),
-        child: LinearProgressIndicator(minHeight: 4),
-      ),
-    );
+    return const SizedBox.shrink();
   }
 }
 
 class ErrorPanel extends StatelessWidget {
-  const ErrorPanel({super.key, required this.error, required this.onRetry});
+  const ErrorPanel({
+    super.key,
+    required this.error,
+    required this.onRetry,
+    this.title = 'API unavailable',
+  });
 
+  final String title;
   final String error;
   final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
     return Panel(
-      title: 'API unavailable',
+      title: title,
       trailing: IconButton.filledTonal(
         onPressed: onRetry,
         icon: const Icon(Icons.refresh),
@@ -281,7 +320,7 @@ class Panel extends StatelessWidget {
                     ).textTheme.titleMedium?.copyWith(fontSize: 26),
                   ),
                 ),
-                if (trailing != null) trailing!,
+                ?trailing,
               ],
             ),
           ),
@@ -369,7 +408,11 @@ Future<void> showDetailsSheet(
                         ),
                       ),
                     ),
-                    if (status != null) ...[const SizedBox(width: 12), status],
+                    Visibility(
+                      visible: status != null,
+                      child: const SizedBox(width: 12),
+                    ),
+                    ?status,
                     const SizedBox(width: 8),
                     IconButton(
                       tooltip: 'Close',

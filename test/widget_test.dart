@@ -11,14 +11,19 @@ void main() {
 
     expect(find.text('Readiness'), findsOneWidget);
     expect(find.text('Readiness Overview'), findsOneWidget);
-    expect(find.text('Loading'), findsOneWidget);
+    expect(find.text('Loading'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });
 
-  testWidgets('aircraft list click navigates to aircraft map route', (
+  testWidgets('aircraft map action navigates to aircraft map route', (
     WidgetTester tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(2400, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(useMaterial3: false),
         home: Scaffold(
           body: AgentsPage(load: () async => sampleAircraftList()),
         ),
@@ -32,12 +37,40 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final aircraftName = find.text('Eagle 1').first;
-    await tester.ensureVisible(aircraftName);
-    await tester.tap(aircraftName);
+    final mapAction = find.byTooltip('Open aircraft map').first;
+    await tester.ensureVisible(mapAction);
+    await tester.tap(mapAction);
     await tester.pumpAndSettle();
 
     expect(find.text('map:/aircraft/aircraft-1/map'), findsOneWidget);
+  });
+
+  testWidgets('intent workflow route keeps desktop sidebar', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: const AppShell(
+          section: AppSection.aircraft,
+          intentAircraftId: 'aircraft-1',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Aero Arc'), findsOneWidget);
+    expect(find.text('Aircraft'), findsWidgets);
+    expect(find.text('New Mission Intent'), findsOneWidget);
+    expect(
+      find.widgetWithText(TextFormField, 'Mission aircraft-1'),
+      findsOneWidget,
+    );
   });
 }
 
