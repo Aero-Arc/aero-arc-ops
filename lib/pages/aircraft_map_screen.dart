@@ -357,10 +357,7 @@ class _MapPanel extends StatelessWidget {
     final path = replayPath(view.replaySamples);
     final polygons = volumePolygons(view.operationalVolumes);
     final livePosition = liveState?.telemetry.position;
-    final livePositionAvailable =
-        livePosition != null &&
-        liveState?.connection.status == 'connected' &&
-        livePosition.status == 'fresh';
+    final livePositionAvailable = livePosition?.status == 'fresh';
     final markers = <Marker>[
       if (path.isNotEmpty)
         Marker(

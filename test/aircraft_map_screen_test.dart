@@ -58,6 +58,68 @@ void main() {
     );
   });
 
+  for (final connectionStatus in ['stale', 'offline', 'unmapped']) {
+    testWidgets(
+      'fresh position renders navigation marker with $connectionStatus connection',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(useMaterial3: true),
+            home: AircraftMapScreen(
+              aircraftId: 'aircraft-1',
+              load: () async => sampleMapView(),
+              loadState: () async =>
+                  sampleLiveState(connectionStatus: connectionStatus),
+              renderTiles: false,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byIcon(Icons.navigation), findsOneWidget);
+        expect(find.byIcon(Icons.question_mark_rounded), findsNothing);
+      },
+    );
+  }
+
+  testWidgets('stale position renders uncertain marker', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async => sampleLiveState(positionStatus: 'stale'),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.navigation), findsNothing);
+    expect(find.byIcon(Icons.question_mark_rounded), findsOneWidget);
+  });
+
+  testWidgets('missing live position keeps historical marker uncertain', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async => sampleLiveState(includePosition: false),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.navigation), findsNothing);
+    expect(find.byIcon(Icons.question_mark_rounded), findsOneWidget);
+  });
+
   testWidgets('live-state failure preserves map and operation content', (
     tester,
   ) async {
@@ -311,7 +373,11 @@ TelemetrySample sampleTelemetry(String id, double lat, double lon) {
   );
 }
 
-AircraftLiveState sampleLiveState() {
+AircraftLiveState sampleLiveState({
+  String connectionStatus = 'connected',
+  String positionStatus = 'fresh',
+  bool includePosition = true,
+}) {
   return AircraftLiveState(
     aircraftId: 'aircraft-1',
     agentId: 'agent-1',
@@ -319,20 +385,22 @@ AircraftLiveState sampleLiveState() {
       aircraftId: 'aircraft-1',
       agentId: 'agent-1',
       relayId: 'relay-central-1',
-      connected: true,
-      status: 'connected',
+      connected: connectionStatus == 'connected',
+      status: connectionStatus,
       lastHeartbeatAt: DateTime(2099, 8, 11, 12),
     ),
     telemetry: AircraftTelemetryState(
       status: 'fresh',
       lastObservedAt: DateTime(2099, 8, 11, 12),
-      position: PositionTelemetry(
-        status: 'fresh',
-        recordedAt: DateTime(2099, 8, 11, 12),
-        latitudeDeg: 29.7604,
-        longitudeDeg: -95.3698,
-        relativeAltitudeM: 21.2,
-      ),
+      position: includePosition
+          ? PositionTelemetry(
+              status: positionStatus,
+              recordedAt: DateTime(2099, 8, 11, 12),
+              latitudeDeg: 29.7604,
+              longitudeDeg: -95.3698,
+              relativeAltitudeM: 21.2,
+            )
+          : null,
       battery: BatteryTelemetry(
         status: 'stale',
         recordedAt: DateTime(2099, 8, 11, 11, 59),
