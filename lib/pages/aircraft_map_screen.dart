@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -30,7 +31,11 @@ class AircraftMapScreen extends StatefulWidget {
 }
 
 class _AircraftMapScreenState extends State<AircraftMapScreen> {
-  late Future<_AircraftMapData> _future;
+  late Future<AircraftMapView> _future;
+  AircraftLiveState? _liveState;
+  Object? _liveStateError;
+  bool _liveStateLoading = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -38,39 +43,58 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
     _future = _load();
   }
 
-  Future<_AircraftMapData> _load() async {
+  Future<AircraftMapView> _load() {
+    final generation = ++_loadGeneration;
     final custom = widget.load;
     final client = AeroArcApiClient();
     final mapFuture = custom != null
-        ? custom()
-        : client.getAircraftMapView(widget.aircraftId, limit: widget.limit);
-    final stateFuture = widget.loadState != null
-        ? widget.loadState!()
-        : custom == null
-        ? client.getAircraftState(widget.aircraftId)
-        : null;
-    final stateResultFuture = stateFuture == null
-        ? null
-        : _captureLiveState(stateFuture);
-    final view = await mapFuture;
-    if (stateResultFuture == null) return _AircraftMapData(view: view);
-    final stateResult = await stateResultFuture;
-    return _AircraftMapData(
-      view: view,
-      liveState: stateResult.state,
-      liveStateError: stateResult.error,
-    );
+        ? Future<AircraftMapView>.sync(custom)
+        : Future<AircraftMapView>.sync(
+            () => client.getAircraftMapView(
+              widget.aircraftId,
+              limit: widget.limit,
+            ),
+          );
+    final stateLoader =
+        widget.loadState ??
+        (custom == null
+            ? () => client.getAircraftState(widget.aircraftId)
+            : null);
+    _liveStateLoading = stateLoader != null;
+    if (stateLoader != null) {
+      unawaited(
+        _loadLiveState(Future<AircraftLiveState>.sync(stateLoader), generation),
+      );
+    }
+    return mapFuture;
+  }
+
+  Future<void> _loadLiveState(
+    Future<AircraftLiveState> future,
+    int generation,
+  ) async {
+    final result = await _captureLiveState(future);
+    if (!mounted || generation != _loadGeneration) return;
+    setState(() {
+      _liveState = result.state;
+      _liveStateError = result.error;
+      _liveStateLoading = false;
+    });
   }
 
   void _refresh() {
-    setState(() => _future = _load());
+    setState(() {
+      _liveState = null;
+      _liveStateError = null;
+      _future = _load();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(gradient: aeroPageGradient),
-      child: FutureBuilder<_AircraftMapData>(
+      child: FutureBuilder<AircraftMapView>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -93,8 +117,8 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
               ),
             );
           }
-          final data = snapshot.data;
-          if (data == null) {
+          final view = snapshot.data;
+          if (view == null) {
             return const SingleChildScrollView(
               padding: EdgeInsets.fromLTRB(22, 20, 22, 24),
               child: EmptyPanel(message: 'No aircraft map data is available.'),
@@ -102,9 +126,10 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
           }
 
           return _AircraftMapContent(
-            view: data.view,
-            liveState: data.liveState,
-            liveStateError: data.liveStateError,
+            view: view,
+            liveState: _liveState,
+            liveStateError: _liveStateError,
+            liveStateLoading: _liveStateLoading,
             onRefresh: _refresh,
             renderTiles: widget.renderTiles,
           );
@@ -129,18 +154,6 @@ class _LiveStateResult {
 
   final AircraftLiveState? state;
   final Object? error;
-}
-
-class _AircraftMapData {
-  const _AircraftMapData({
-    required this.view,
-    this.liveState,
-    this.liveStateError,
-  });
-
-  final AircraftMapView view;
-  final AircraftLiveState? liveState;
-  final Object? liveStateError;
 }
 
 class _MapLoadingIndicator extends StatelessWidget {
@@ -181,6 +194,7 @@ class _AircraftMapContent extends StatelessWidget {
     required this.view,
     required this.liveState,
     required this.liveStateError,
+    required this.liveStateLoading,
     required this.onRefresh,
     required this.renderTiles,
   });
@@ -188,6 +202,7 @@ class _AircraftMapContent extends StatelessWidget {
   final AircraftMapView view;
   final AircraftLiveState? liveState;
   final Object? liveStateError;
+  final bool liveStateLoading;
   final VoidCallback onRefresh;
   final bool renderTiles;
 
@@ -203,7 +218,7 @@ class _AircraftMapContent extends StatelessWidget {
           _MapHeader(
             view: view,
             liveState: liveState,
-            liveStateError: liveStateError,
+            liveStateLoading: liveStateLoading,
             onRefresh: onRefresh,
           ),
           const SizedBox(height: 18),
@@ -229,6 +244,7 @@ class _AircraftMapContent extends StatelessWidget {
                         view: view,
                         liveState: liveState,
                         liveStateError: liveStateError,
+                        liveStateLoading: liveStateLoading,
                       ),
                     ),
                   ],
@@ -247,6 +263,7 @@ class _AircraftMapContent extends StatelessWidget {
                     view: view,
                     liveState: liveState,
                     liveStateError: liveStateError,
+                    liveStateLoading: liveStateLoading,
                   ),
                 ],
               );
@@ -262,13 +279,13 @@ class _MapHeader extends StatelessWidget {
   const _MapHeader({
     required this.view,
     required this.liveState,
-    required this.liveStateError,
+    required this.liveStateLoading,
     required this.onRefresh,
   });
 
   final AircraftMapView view;
   final AircraftLiveState? liveState;
-  final Object? liveStateError;
+  final bool liveStateLoading;
   final VoidCallback onRefresh;
 
   @override
@@ -304,9 +321,7 @@ class _MapHeader extends StatelessWidget {
                   StatusBadge(
                     label:
                         liveState?.connection.status ??
-                        (liveStateError == null && view.liveStateAvailable
-                            ? 'connected'
-                            : 'unavailable'),
+                        (liveStateLoading ? 'loading' : 'unavailable'),
                   ),
                 ],
               ),
@@ -391,6 +406,7 @@ class _MapPanel extends StatelessWidget {
       child: SizedBox(
         height: 560,
         child: FlutterMap(
+          key: ValueKey('${center.latitude},${center.longitude}'),
           options: MapOptions(initialCenter: center, initialZoom: 15),
           children: [
             if (renderTiles)
@@ -453,11 +469,13 @@ class _DetailPanel extends StatelessWidget {
     required this.view,
     required this.liveState,
     required this.liveStateError,
+    required this.liveStateLoading,
   });
 
   final AircraftMapView view;
   final AircraftLiveState? liveState;
   final Object? liveStateError;
+  final bool liveStateLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -470,7 +488,11 @@ class _DetailPanel extends StatelessWidget {
 
     return Column(
       children: [
-        _AircraftLiveStatePanel(state: liveState, error: liveStateError),
+        _AircraftLiveStatePanel(
+          state: liveState,
+          error: liveStateError,
+          loading: liveStateLoading,
+        ),
         const SizedBox(height: 18),
         Panel(
           title: 'Operation',
@@ -601,10 +623,15 @@ class _DetailPanel extends StatelessWidget {
 }
 
 class _AircraftLiveStatePanel extends StatelessWidget {
-  const _AircraftLiveStatePanel({required this.state, required this.error});
+  const _AircraftLiveStatePanel({
+    required this.state,
+    required this.error,
+    required this.loading,
+  });
 
   final AircraftLiveState? state;
   final Object? error;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
@@ -617,10 +644,12 @@ class _AircraftLiveStatePanel extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const StatusBadge(label: 'unavailable'),
+              StatusBadge(label: loading ? 'loading' : 'unavailable'),
               const SizedBox(height: 10),
               Text(
-                error == null
+                loading
+                    ? 'Live state is loading. Map history and operation data remain available.'
+                    : error == null
                     ? 'Live state was not requested for this view.'
                     : 'Registry or telemetry state could not be loaded. Map history and operation data remain available.',
                 style: const TextStyle(color: Color(0xFF93A3C7)),

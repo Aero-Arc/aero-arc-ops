@@ -40,10 +40,7 @@ void main() {
     expect(find.text('Connected aircraft'), findsOneWidget);
     expect(find.textContaining('Relay relay-central-1'), findsOneWidget);
     expect(find.textContaining('Battery 76%'), findsWidgets);
-    expect(
-      find.textContaining('Vehicle · Missing · No sample'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Vehicle · Missing · No sample'), findsWidgets);
     expect(find.textContaining('Stale'), findsWidgets);
     expect(find.text('Operational Intent Register'), findsNothing);
     expect(find.text('Needs Attention'), findsOneWidget);

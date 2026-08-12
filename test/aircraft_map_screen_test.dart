@@ -76,12 +76,43 @@ void main() {
 
     expect(find.text('Eagle 1'), findsOneWidget);
     expect(find.text('Operation'), findsOneWidget);
-    expect(find.text('Unavailable'), findsOneWidget);
+    expect(find.text('Unavailable'), findsWidgets);
     expect(find.text('Connected'), findsNothing);
     expect(
       find.textContaining('Map history and operation data remain available'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('pending live state does not block map content', (tester) async {
+    final pendingState = Completer<AircraftLiveState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () => pendingState.future,
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Eagle 1'), findsOneWidget);
+    expect(find.text('Operation'), findsOneWidget);
+    expect(find.text('Conformance'), findsOneWidget);
+    expect(
+      find.text(
+        'Live state is loading. Map history and operation data remain available.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    pendingState.complete(sampleLiveState());
+    await tester.pump();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('AircraftMapScreen opens create route with no active intent', (
