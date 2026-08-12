@@ -912,11 +912,14 @@ class _MissionPanel extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Conformance monitoring required'),
-              value: conformanceRequired,
-              onChanged: locked ? null : onConformanceChanged,
+            Material(
+              color: Colors.transparent,
+              child: SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Conformance monitoring required'),
+                value: conformanceRequired,
+                onChanged: locked ? null : onConformanceChanged,
+              ),
             ),
           ],
         ),
