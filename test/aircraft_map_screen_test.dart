@@ -49,6 +49,8 @@ void main() {
     expect(find.text('Position sample'), findsOneWidget);
     expect(find.text('Battery sample'), findsOneWidget);
     expect(find.textContaining('76%'), findsOneWidget);
+    expect(find.textContaining('Drop 0.4%'), findsOneWidget);
+    expect(find.textContaining('Drop 40%'), findsNothing);
     expect(find.textContaining('Stale'), findsOneWidget);
     expect(
       mapCenterFor(sampleMapView(), liveState: sampleLiveState()).latitude,
@@ -75,6 +77,7 @@ void main() {
     expect(find.text('Eagle 1'), findsOneWidget);
     expect(find.text('Operation'), findsOneWidget);
     expect(find.text('Unavailable'), findsOneWidget);
+    expect(find.text('Connected'), findsNothing);
     expect(
       find.textContaining('Map history and operation data remain available'),
       findsOneWidget,
@@ -311,6 +314,12 @@ AircraftLiveState sampleLiveState() {
         recordedAt: DateTime(2099, 8, 11, 12),
         baseMode: 'mav_mode_flag_safety_armed',
         systemStatus: 'mav_state_active',
+      ),
+      system: SystemTelemetry(
+        status: 'fresh',
+        recordedAt: DateTime(2099, 8, 11, 12),
+        mainloopLoadPct: 43.2,
+        communicationDropRatePct: 0.4,
       ),
     ),
   );

@@ -4,6 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aero_arc_web/widgets/dashboard_ui.dart';
 
 void main() {
+  test('percentage-point formatting does not scale sub-one values', () {
+    expect(formatPercentagePoints(0.4), '0.4%');
+    expect(formatPercentagePoints(0.04), '0.04%');
+    expect(formatPercentagePoints(43.2), '43.2%');
+    expect(formatPercentagePoints(76), '76%');
+    expect(formatPercentagePoints(null), 'Not provided');
+  });
+
   test('statusColor maps critical backend enum values', () {
     expect(statusColor('ready'), const Color(0xFF00CFA0));
     expect(statusColor('non_conforming'), const Color(0xFFE14A5B));

@@ -656,6 +656,21 @@ String formatPercent(double? value) {
   return '${pct.toStringAsFixed(0)}%';
 }
 
+/// Formats values whose API field is already expressed in percentage points.
+///
+/// Unlike [formatPercent], this must not interpret values at or below one as a
+/// ratio. For example, a `communication_drop_rate_pct` of `0.4` is `0.4%`.
+String formatPercentagePoints(double? value) {
+  if (value == null) {
+    return 'Not provided';
+  }
+  final formatted = value
+      .toStringAsFixed(2)
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
+  return '$formatted%';
+}
+
 String formatMeters(double? value) =>
     value == null ? 'Not provided' : '${value.toStringAsFixed(1)} m';
 String formatFeetRange(double? min, double? max) => min == null && max == null

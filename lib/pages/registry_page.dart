@@ -160,17 +160,17 @@ class _LiveAircraftRow extends StatelessWidget {
             ),
             _StateChip(
               label: 'Position',
-              status: telemetry.position?.status ?? telemetry.status,
+              status: telemetry.position?.status ?? 'missing',
               detail: _ageLabel(telemetry.position?.recordedAt),
             ),
             _StateChip(
               label: _batteryLabel(telemetry.battery),
-              status: telemetry.battery?.status ?? telemetry.status,
+              status: telemetry.battery?.status ?? 'missing',
               detail: _ageLabel(telemetry.battery?.recordedAt),
             ),
             _StateChip(
               label: _vehicleLabel(telemetry.vehicle),
-              status: telemetry.vehicle?.status ?? telemetry.status,
+              status: telemetry.vehicle?.status ?? 'missing',
               detail: _ageLabel(telemetry.vehicle?.recordedAt),
             ),
           ],
@@ -246,24 +246,16 @@ class _ConnectionCell extends StatelessWidget {
 }
 
 class _TelemetryGroupCell extends StatelessWidget {
-  const _TelemetryGroupCell({
-    required this.label,
-    required this.group,
-    required this.telemetryStatus,
-  });
+  const _TelemetryGroupCell({required this.label, required this.group});
 
   final String label;
   final TelemetryGroup? group;
-  final String? telemetryStatus;
 
   @override
   Widget build(BuildContext context) {
     final group = this.group;
     if (group == null) {
-      return Text(
-        displayEnum(telemetryStatus ?? 'missing'),
-        style: TextStyle(color: statusColor(telemetryStatus ?? 'missing')),
-      );
+      return const Text('Missing', style: TextStyle(color: Color(0xFF7F90B6)));
     }
     return Tooltip(
       message: '$label recorded ${formatDate(group.recordedAt)}',
@@ -287,11 +279,7 @@ class _BatteryCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final battery = state?.telemetry.battery;
     if (battery == null) {
-      return _TelemetryGroupCell(
-        label: 'Battery',
-        group: null,
-        telemetryStatus: state?.telemetry.status,
-      );
+      return _TelemetryGroupCell(label: 'Battery', group: null);
     }
     return Tooltip(
       message:
@@ -386,7 +374,7 @@ void _showLiveAircraftDetails(BuildContext context, AircraftLiveState state) {
       _telemetryGroupDetails('Battery', telemetry.battery, [
         DetailLine(
           label: 'Remaining',
-          value: formatPercent(telemetry.battery?.remainingPct),
+          value: formatPercentagePoints(telemetry.battery?.remainingPct),
         ),
         DetailLine(
           label: 'Voltage',
@@ -422,11 +410,13 @@ void _showLiveAircraftDetails(BuildContext context, AircraftLiveState state) {
       _telemetryGroupDetails('System', telemetry.system, [
         DetailLine(
           label: 'Mainloop load',
-          value: formatPercent(telemetry.system?.mainloopLoadPct),
+          value: formatPercentagePoints(telemetry.system?.mainloopLoadPct),
         ),
         DetailLine(
           label: 'Communication drop rate',
-          value: formatPercent(telemetry.system?.communicationDropRatePct),
+          value: formatPercentagePoints(
+            telemetry.system?.communicationDropRatePct,
+          ),
         ),
         DetailLine(
           label: 'Communication errors',
@@ -644,10 +634,6 @@ class _IntentTableState extends State<_IntentTable> {
                                     group: liveByAircraft[intent.aircraftId]
                                         ?.telemetry
                                         .position,
-                                    telemetryStatus:
-                                        liveByAircraft[intent.aircraftId]
-                                            ?.telemetry
-                                            .status,
                                   ),
                                 ),
                                 DataCell(

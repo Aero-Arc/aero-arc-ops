@@ -200,7 +200,12 @@ class _AircraftMapContent extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _MapHeader(view: view, liveState: liveState, onRefresh: onRefresh),
+          _MapHeader(
+            view: view,
+            liveState: liveState,
+            liveStateError: liveStateError,
+            onRefresh: onRefresh,
+          ),
           const SizedBox(height: 18),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -257,11 +262,13 @@ class _MapHeader extends StatelessWidget {
   const _MapHeader({
     required this.view,
     required this.liveState,
+    required this.liveStateError,
     required this.onRefresh,
   });
 
   final AircraftMapView view;
   final AircraftLiveState? liveState;
+  final Object? liveStateError;
   final VoidCallback onRefresh;
 
   @override
@@ -297,7 +304,9 @@ class _MapHeader extends StatelessWidget {
                   StatusBadge(
                     label:
                         liveState?.connection.status ??
-                        (view.liveStateAvailable ? 'connected' : 'unavailable'),
+                        (liveStateError == null && view.liveStateAvailable
+                            ? 'connected'
+                            : 'unavailable'),
                   ),
                 ],
               ),
@@ -551,7 +560,7 @@ class _DetailPanel extends StatelessWidget {
                 ),
                 DetailLine(
                   label: 'Battery',
-                  value: formatPercent(telemetry?.batteryPct),
+                  value: formatPercentagePoints(telemetry?.batteryPct),
                 ),
               ],
             ),
@@ -651,7 +660,7 @@ class _AircraftLiveStatePanel extends StatelessWidget {
               label: 'Battery sample',
               value: telemetry.battery == null
                   ? 'Missing'
-                  : '${displayEnum(telemetry.battery!.status)} · ${_mapTimestamp(telemetry.battery!.recordedAt)}\n${formatPercent(telemetry.battery!.remainingPct)} · ${_mapUnit(telemetry.battery!.voltageV, 'V')} · ${_mapUnit(telemetry.battery!.currentA, 'A')}',
+                  : '${displayEnum(telemetry.battery!.status)} · ${_mapTimestamp(telemetry.battery!.recordedAt)}\n${formatPercentagePoints(telemetry.battery!.remainingPct)} · ${_mapUnit(telemetry.battery!.voltageV, 'V')} · ${_mapUnit(telemetry.battery!.currentA, 'A')}',
             ),
             DetailLine(
               label: 'Vehicle heartbeat',
@@ -667,7 +676,7 @@ class _AircraftLiveStatePanel extends StatelessWidget {
               label: 'System sample',
               value: telemetry.system == null
                   ? 'Missing'
-                  : '${displayEnum(telemetry.system!.status)} · ${_mapTimestamp(telemetry.system!.recordedAt)}\nLoad ${formatPercent(telemetry.system!.mainloopLoadPct)} · Drop ${formatPercent(telemetry.system!.communicationDropRatePct)}',
+                  : '${displayEnum(telemetry.system!.status)} · ${_mapTimestamp(telemetry.system!.recordedAt)}\nLoad ${formatPercentagePoints(telemetry.system!.mainloopLoadPct)} · Drop ${formatPercentagePoints(telemetry.system!.communicationDropRatePct)}',
             ),
             DetailLine(
               label: 'HUD sample',

@@ -126,7 +126,7 @@ class _BatteryPanel extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    formatPercent(battery.stateOfHealth),
+                    formatPercentagePoints(battery.stateOfHealth),
                     style: TextStyle(
                       color: statusColor(battery.status),
                       fontWeight: FontWeight.w800,
@@ -252,7 +252,7 @@ void _showBatteryDetails(BuildContext context, Battery battery) {
         DetailLine(label: 'Model', value: battery.model),
         DetailLine(
           label: 'State of health',
-          value: formatPercent(battery.stateOfHealth),
+          value: formatPercentagePoints(battery.stateOfHealth),
         ),
         DetailLine(label: 'Cycles', value: '${battery.cycleCount}'),
         DetailLine(label: 'Status', value: displayEnum(battery.status)),
