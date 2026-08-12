@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/aero_arc_models.dart';
@@ -15,12 +17,14 @@ class DashboardPage<T> extends StatefulWidget {
     required this.subtitle,
     required this.load,
     required this.builder,
+    this.autoRefreshInterval,
   });
 
   final String title;
   final String subtitle;
   final Future<T> Function() load;
   final List<Widget> Function(BuildContext context, T data) builder;
+  final Duration? autoRefreshInterval;
 
   @override
   State<DashboardPage<T>> createState() => _DashboardPageState<T>();
@@ -28,15 +32,54 @@ class DashboardPage<T> extends StatefulWidget {
 
 class _DashboardPageState<T> extends State<DashboardPage<T>> {
   late Future<T> _future;
+  Timer? _refreshTimer;
+  var _isRefreshing = false;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.load();
+    _future = _load();
+    _scheduleRefresh();
   }
 
   void _refresh() {
-    setState(() => _future = widget.load());
+    if (_isRefreshing) return;
+    setState(() {
+      _future = _load();
+    });
+  }
+
+  Future<T> _load() async {
+    _isRefreshing = true;
+    try {
+      return await widget.load();
+    } finally {
+      _isRefreshing = false;
+    }
+  }
+
+  void _scheduleRefresh() {
+    _refreshTimer?.cancel();
+    final interval = widget.autoRefreshInterval;
+    if (interval != null) {
+      _refreshTimer = Timer.periodic(interval, (_) {
+        if (mounted) _refresh();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardPage<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.autoRefreshInterval != widget.autoRefreshInterval) {
+      _scheduleRefresh();
+    }
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -81,7 +124,7 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
             const SizedBox(height: 20),
           ];
 
-          if (isLoading) {
+          if (isLoading && !snapshot.hasData) {
             children.add(const LoadingPanel());
           } else if (snapshot.hasError) {
             children.add(
@@ -634,6 +677,8 @@ Color statusColor(String status) {
     'conforming' ||
     'exported' ||
     'closed' ||
+    'connected' ||
+    'fresh' ||
     'no' => const Color(0xFF00CFA0),
     'review' ||
     'submitted' ||
@@ -643,6 +688,7 @@ Color statusColor(String status) {
     'contingent' ||
     'draft' ||
     'open' ||
+    'stale' ||
     'action' => const Color(0xFFE4A100),
     'blocked' ||
     'critical' ||
@@ -653,6 +699,7 @@ Color statusColor(String status) {
     'offline' ||
     'rejected' ||
     'expired' => const Color(0xFFE14A5B),
+    'missing' || 'unmapped' || 'unavailable' => const Color(0xFF7F90B6),
     _ => const Color(0xFF6B75FF),
   };
 }

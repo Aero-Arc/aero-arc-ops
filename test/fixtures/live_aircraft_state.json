@@ -1,0 +1,109 @@
+{
+  "aircraft_id": "aircraft-1",
+  "operator_id": "operator-1",
+  "agent_id": "agent-1",
+  "connection": {
+    "aircraft_id": "aircraft-1",
+    "operator_id": "operator-1",
+    "agent_id": "agent-1",
+    "relay_id": "relay-central-1",
+    "connected": true,
+    "connection_status": "connected",
+    "last_connected_at": "2026-08-11T12:00:00Z",
+    "last_heartbeat_at": "2026-08-11T12:00:29Z",
+    "placement_last_updated_at": "2026-08-11T12:00:28Z"
+  },
+  "telemetry": {
+    "status": "fresh",
+    "last_observed_at": "2026-08-11T12:00:30Z",
+    "position": {
+      "status": "fresh",
+      "recorded_at": "2026-08-11T12:00:30Z",
+      "frame_id": "agent-1:100",
+      "relay_id": "relay-central-1",
+      "session_id": "session-1",
+      "timestamp_source": "agent_capture",
+      "latitude_deg": 29.7604,
+      "longitude_deg": -95.3698,
+      "altitude_msl_m": 62.5,
+      "relative_altitude_m": 21.2,
+      "velocity_north_mps": 4.1,
+      "velocity_east_mps": 2.3,
+      "velocity_down_mps": -0.2,
+      "groundspeed_mps": 4.7,
+      "heading_deg": 120.5
+    },
+    "battery": {
+      "status": "stale",
+      "recorded_at": "2026-08-11T11:59:50Z",
+      "battery_id": 0,
+      "battery_function": "mav_battery_function_all",
+      "battery_type": "mav_battery_type_lipo",
+      "battery_charge_state": "mav_battery_charge_state_ok",
+      "battery_mode": "mav_battery_mode_auto_discharging",
+      "battery_temperature_c": 31.5,
+      "battery_voltage_v": 22.4,
+      "battery_current_a": 8.2,
+      "battery_consumed_mah": 1200,
+      "battery_consumed_wh": 26.8,
+      "battery_remaining_pct": 76,
+      "battery_time_remaining_s": 840
+    },
+    "vehicle": {
+      "status": "fresh",
+      "recorded_at": "2026-08-11T12:00:29Z",
+      "vehicle_type": "mav_type_quadrotor",
+      "autopilot_type": "mav_autopilot_ardupilotmega",
+      "base_mode": "mav_mode_flag_custom_mode_enabled|mav_mode_flag_safety_armed",
+      "custom_mode": 4,
+      "system_status": "mav_state_active",
+      "mavlink_version": 3
+    },
+    "system": {
+      "status": "fresh",
+      "recorded_at": "2026-08-11T12:00:27Z",
+      "mainloop_load_pct": 43.2,
+      "communication_drop_rate_pct": 0.4,
+      "communication_error_count": 2,
+      "autopilot_error_count_1": 0,
+      "sensors_present": "gyro|gps",
+      "sensors_enabled": "gyro|gps",
+      "sensors_health": "gyro|gps"
+    },
+    "hud": {
+      "status": "fresh",
+      "recorded_at": "2026-08-11T12:00:26Z",
+      "airspeed_mps": 5.1,
+      "groundspeed_mps": 4.7,
+      "heading_deg": 120,
+      "throttle_pct": 42,
+      "altitude_msl_m": 62.5,
+      "climb_rate_mps": 0.2
+    },
+    "extended_state": {
+      "status": "fresh",
+      "recorded_at": "2026-08-11T12:00:25Z",
+      "vtol_state": "mav_vtol_state_mc",
+      "landed_state": "mav_landed_state_in_air"
+    },
+    "gps": {
+      "status": "fresh",
+      "recorded_at": "2026-08-11T12:00:24Z",
+      "gps_fix_type": "gps_fix_type_3d_fix",
+      "gps_latitude_deg": 29.7604,
+      "gps_longitude_deg": -95.3698,
+      "gps_altitude_msl_m": 62.5,
+      "gps_altitude_ellipsoid_m": 35.1,
+      "gps_hdop": 0.8,
+      "gps_vdop": 1.1,
+      "gps_groundspeed_mps": 4.7,
+      "gps_course_over_ground_deg": 120.5,
+      "gps_satellites_visible": 14,
+      "gps_horizontal_accuracy_m": 0.7,
+      "gps_vertical_accuracy_m": 1.2,
+      "gps_speed_accuracy_mps": 0.1,
+      "gps_heading_accuracy_deg": 1.5,
+      "gps_yaw_deg": 120.5
+    }
+  }
+}

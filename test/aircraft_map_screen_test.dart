@@ -26,6 +26,61 @@ void main() {
     expect(find.text('Conformance'), findsOneWidget);
   });
 
+  testWidgets('AircraftMapScreen renders independently aged live groups', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1500, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async => sampleLiveState(),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Live Aircraft State'), findsOneWidget);
+    expect(find.text('relay-central-1'), findsOneWidget);
+    expect(find.text('Position sample'), findsOneWidget);
+    expect(find.text('Battery sample'), findsOneWidget);
+    expect(find.textContaining('76%'), findsOneWidget);
+    expect(find.textContaining('Stale'), findsOneWidget);
+    expect(
+      mapCenterFor(sampleMapView(), liveState: sampleLiveState()).latitude,
+      29.7604,
+    );
+  });
+
+  testWidgets('live-state failure preserves map and operation content', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async => throw Exception('registry unavailable'),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Eagle 1'), findsOneWidget);
+    expect(find.text('Operation'), findsOneWidget);
+    expect(find.text('Unavailable'), findsOneWidget);
+    expect(
+      find.textContaining('Map history and operation data remain available'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('AircraftMapScreen opens create route with no active intent', (
     tester,
   ) async {
@@ -219,5 +274,44 @@ TelemetrySample sampleTelemetry(String id, double lat, double lon) {
     altitudeM: 90,
     velocityMps: 12,
     headingDeg: 180,
+  );
+}
+
+AircraftLiveState sampleLiveState() {
+  return AircraftLiveState(
+    aircraftId: 'aircraft-1',
+    agentId: 'agent-1',
+    connection: AircraftConnectionState(
+      aircraftId: 'aircraft-1',
+      agentId: 'agent-1',
+      relayId: 'relay-central-1',
+      connected: true,
+      status: 'connected',
+      lastHeartbeatAt: DateTime(2099, 8, 11, 12),
+    ),
+    telemetry: AircraftTelemetryState(
+      status: 'fresh',
+      lastObservedAt: DateTime(2099, 8, 11, 12),
+      position: PositionTelemetry(
+        status: 'fresh',
+        recordedAt: DateTime(2099, 8, 11, 12),
+        latitudeDeg: 29.7604,
+        longitudeDeg: -95.3698,
+        relativeAltitudeM: 21.2,
+      ),
+      battery: BatteryTelemetry(
+        status: 'stale',
+        recordedAt: DateTime(2099, 8, 11, 11, 59),
+        batteryId: 0,
+        remainingPct: 76,
+        voltageV: 22.4,
+      ),
+      vehicle: VehicleTelemetry(
+        status: 'fresh',
+        recordedAt: DateTime(2099, 8, 11, 12),
+        baseMode: 'mav_mode_flag_safety_armed',
+        systemStatus: 'mav_state_active',
+      ),
+    ),
   );
 }
