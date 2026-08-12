@@ -34,6 +34,8 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
   late Future<T> _future;
   Timer? _refreshTimer;
   var _isRefreshing = false;
+  T? _lastData;
+  var _hasLastData = false;
 
   @override
   void initState() {
@@ -52,7 +54,10 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
   Future<T> _load() async {
     _isRefreshing = true;
     try {
-      return await widget.load();
+      final data = await widget.load();
+      _lastData = data;
+      _hasLastData = true;
+      return data;
     } finally {
       _isRefreshing = false;
     }
@@ -124,14 +129,25 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
             const SizedBox(height: 20),
           ];
 
-          if (isLoading && !snapshot.hasData) {
+          if (isLoading && !_hasLastData) {
             children.add(const LoadingPanel());
-          } else if (snapshot.hasError) {
+          } else if (snapshot.hasError && !_hasLastData) {
             children.add(
               ErrorPanel(error: snapshot.error.toString(), onRetry: _refresh),
             );
-          } else if (snapshot.hasData) {
-            children.addAll(widget.builder(context, snapshot.data as T));
+          } else if (_hasLastData) {
+            if (snapshot.hasError) {
+              children
+                ..add(
+                  ErrorPanel(
+                    title: 'Refresh failed',
+                    error: snapshot.error.toString(),
+                    onRetry: _refresh,
+                  ),
+                )
+                ..add(const SizedBox(height: 18));
+            }
+            children.addAll(widget.builder(context, _lastData as T));
           }
 
           return Stack(

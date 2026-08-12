@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -64,5 +66,49 @@ void main() {
 
     expect(calls, 2);
     expect(find.text('load-2'), findsOneWidget);
+  });
+
+  testWidgets('refresh failure preserves data and later success replaces it', (
+    tester,
+  ) async {
+    final loads = <Completer<String>>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardPage<String>(
+          title: 'Operations',
+          subtitle: 'Live state',
+          autoRefreshInterval: const Duration(seconds: 5),
+          load: () {
+            final load = Completer<String>();
+            loads.add(load);
+            return load.future;
+          },
+          builder: (context, data) => [Text(data)],
+        ),
+      ),
+    );
+
+    loads.single.complete('current operations');
+    await tester.pump();
+    expect(find.text('current operations'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 5));
+    expect(loads, hasLength(2));
+    loads[1].completeError(Exception('temporary registry outage'));
+    await tester.pump();
+
+    expect(find.text('current operations'), findsOneWidget);
+    expect(find.text('Refresh failed'), findsOneWidget);
+    expect(find.textContaining('temporary registry outage'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Refresh'));
+    await tester.pump();
+    expect(loads, hasLength(3));
+    loads[2].complete('recovered operations');
+    await tester.pump();
+
+    expect(find.text('recovered operations'), findsOneWidget);
+    expect(find.text('current operations'), findsNothing);
+    expect(find.text('Refresh failed'), findsNothing);
   });
 }
