@@ -1,8 +1,81 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aero_arc_web/models/aero_arc_models.dart';
 
 void main() {
+  test('parses independently timestamped live telemetry groups', () {
+    final json =
+        jsonDecode(
+              File('test/fixtures/live_aircraft_state.json').readAsStringSync(),
+            )
+            as Map<String, dynamic>;
+
+    final state = AircraftLiveState.fromJson(json);
+
+    expect(state.aircraftId, 'aircraft-1');
+    expect(state.connection.status, 'connected');
+    expect(state.telemetry.status, 'fresh');
+    expect(
+      state.telemetry.position?.recordedAt,
+      DateTime.parse('2026-08-11T12:00:30Z'),
+    );
+    expect(
+      state.telemetry.battery?.recordedAt,
+      DateTime.parse('2026-08-11T11:59:50Z'),
+    );
+    expect(state.telemetry.battery?.status, 'stale');
+    expect(state.telemetry.system?.mainloopLoadPct, 43.2);
+    expect(state.telemetry.hud?.climbRateMps, 0.2);
+    expect(
+      state.telemetry.extendedState?.landedState,
+      'mav_landed_state_in_air',
+    );
+    expect(state.telemetry.vehicle?.armed, isTrue);
+    expect(state.telemetry.gps?.fixType, 'gps_fix_type_3d_fix');
+  });
+
+  test('allows missing telemetry groups without inventing samples', () {
+    final state = AircraftLiveState.fromJson({
+      'aircraft_id': 'aircraft-2',
+      'connection': {
+        'aircraft_id': 'aircraft-2',
+        'connected': false,
+        'connection_status': 'unmapped',
+      },
+      'telemetry': {'status': 'missing'},
+    });
+
+    expect(state.connection.status, 'unmapped');
+    expect(state.telemetry.status, 'missing');
+    expect(state.telemetry.position, isNull);
+    expect(state.telemetry.battery, isNull);
+  });
+
+  test('rejects present telemetry groups without required sample identity', () {
+    expect(
+      () => AircraftLiveState.fromJson({
+        'aircraft_id': 'aircraft-2',
+        'connection': {
+          'aircraft_id': 'aircraft-2',
+          'connected': true,
+          'connection_status': 'connected',
+        },
+        'telemetry': {
+          'status': 'fresh',
+          'position': {
+            'status': 'fresh',
+            'latitude_deg': 29.7,
+            'longitude_deg': -95.3,
+          },
+        },
+      }),
+      throwsFormatException,
+    );
+  });
+
   test('parses aircraft dashboard response with snake case fields', () {
     final parsed = AircraftListResponse.fromJson({
       'aircraft': [

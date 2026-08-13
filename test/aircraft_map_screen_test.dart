@@ -26,6 +26,157 @@ void main() {
     expect(find.text('Conformance'), findsOneWidget);
   });
 
+  testWidgets('AircraftMapScreen renders independently aged live groups', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1500, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async => sampleLiveState(),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Live Aircraft State'), findsOneWidget);
+    expect(find.text('relay-central-1'), findsOneWidget);
+    expect(find.text('Position sample'), findsOneWidget);
+    expect(find.text('Battery sample'), findsOneWidget);
+    expect(find.textContaining('76%'), findsOneWidget);
+    expect(find.textContaining('Drop 0.4%'), findsOneWidget);
+    expect(find.textContaining('Drop 40%'), findsNothing);
+    expect(find.textContaining('Stale'), findsOneWidget);
+    expect(
+      mapCenterFor(sampleMapView(), liveState: sampleLiveState()).latitude,
+      29.7604,
+    );
+  });
+
+  for (final connectionStatus in ['stale', 'offline', 'unmapped']) {
+    testWidgets(
+      'fresh position renders navigation marker with $connectionStatus connection',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(useMaterial3: true),
+            home: AircraftMapScreen(
+              aircraftId: 'aircraft-1',
+              load: () async => sampleMapView(),
+              loadState: () async =>
+                  sampleLiveState(connectionStatus: connectionStatus),
+              renderTiles: false,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byIcon(Icons.navigation), findsOneWidget);
+        expect(find.byIcon(Icons.question_mark_rounded), findsNothing);
+      },
+    );
+  }
+
+  testWidgets('stale position renders uncertain marker', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async => sampleLiveState(positionStatus: 'stale'),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.navigation), findsNothing);
+    expect(find.byIcon(Icons.question_mark_rounded), findsOneWidget);
+  });
+
+  testWidgets('missing live position keeps historical marker uncertain', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async => sampleLiveState(includePosition: false),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.navigation), findsNothing);
+    expect(find.byIcon(Icons.question_mark_rounded), findsOneWidget);
+  });
+
+  testWidgets('live-state failure preserves map and operation content', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async => throw Exception('registry unavailable'),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Eagle 1'), findsOneWidget);
+    expect(find.text('Operation'), findsOneWidget);
+    expect(find.text('Unavailable'), findsWidgets);
+    expect(find.text('Connected'), findsNothing);
+    expect(
+      find.textContaining('Map history and operation data remain available'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('pending live state does not block map content', (tester) async {
+    final pendingState = Completer<AircraftLiveState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () => pendingState.future,
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Eagle 1'), findsOneWidget);
+    expect(find.text('Operation'), findsOneWidget);
+    expect(find.text('Conformance'), findsOneWidget);
+    expect(
+      find.text(
+        'Live state is loading. Map history and operation data remain available.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    pendingState.complete(sampleLiveState());
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('AircraftMapScreen opens create route with no active intent', (
     tester,
   ) async {
@@ -219,5 +370,56 @@ TelemetrySample sampleTelemetry(String id, double lat, double lon) {
     altitudeM: 90,
     velocityMps: 12,
     headingDeg: 180,
+  );
+}
+
+AircraftLiveState sampleLiveState({
+  String connectionStatus = 'connected',
+  String positionStatus = 'fresh',
+  bool includePosition = true,
+}) {
+  return AircraftLiveState(
+    aircraftId: 'aircraft-1',
+    agentId: 'agent-1',
+    connection: AircraftConnectionState(
+      aircraftId: 'aircraft-1',
+      agentId: 'agent-1',
+      relayId: 'relay-central-1',
+      connected: connectionStatus == 'connected',
+      status: connectionStatus,
+      lastHeartbeatAt: DateTime(2099, 8, 11, 12),
+    ),
+    telemetry: AircraftTelemetryState(
+      status: 'fresh',
+      lastObservedAt: DateTime(2099, 8, 11, 12),
+      position: includePosition
+          ? PositionTelemetry(
+              status: positionStatus,
+              recordedAt: DateTime(2099, 8, 11, 12),
+              latitudeDeg: 29.7604,
+              longitudeDeg: -95.3698,
+              relativeAltitudeM: 21.2,
+            )
+          : null,
+      battery: BatteryTelemetry(
+        status: 'stale',
+        recordedAt: DateTime(2099, 8, 11, 11, 59),
+        batteryId: 0,
+        remainingPct: 76,
+        voltageV: 22.4,
+      ),
+      vehicle: VehicleTelemetry(
+        status: 'fresh',
+        recordedAt: DateTime(2099, 8, 11, 12),
+        baseMode: 'mav_mode_flag_safety_armed',
+        systemStatus: 'mav_state_active',
+      ),
+      system: SystemTelemetry(
+        status: 'fresh',
+        recordedAt: DateTime(2099, 8, 11, 12),
+        mainloopLoadPct: 43.2,
+        communicationDropRatePct: 0.4,
+      ),
+    ),
   );
 }

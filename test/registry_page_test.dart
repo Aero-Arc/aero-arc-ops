@@ -31,11 +31,17 @@ void main() {
 
     expect(
       find.text(
-        'Assigned intents, launch posture, active windows, and conformance attention.',
+        'Live aircraft connectivity, telemetry freshness, assigned intents, and conformance attention.',
       ),
       findsOneWidget,
     );
     expect(find.text('Intent Register'), findsOneWidget);
+    expect(find.text('Live Aircraft'), findsOneWidget);
+    expect(find.text('Connected aircraft'), findsOneWidget);
+    expect(find.textContaining('Relay relay-central-1'), findsOneWidget);
+    expect(find.textContaining('Battery 76%'), findsWidgets);
+    expect(find.textContaining('Vehicle · Missing · No sample'), findsWidgets);
+    expect(find.textContaining('Stale'), findsWidgets);
     expect(find.text('Operational Intent Register'), findsNothing);
     expect(find.text('Needs Attention'), findsOneWidget);
     expect(find.text('Conformance Attention'), findsOneWidget);
@@ -58,7 +64,7 @@ void main() {
     await tester.tap(find.text('All'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(TextButton, 'Pipeline v2'));
+    await tester.tap(find.text('Pipeline v2'));
     await tester.pumpAndSettle();
 
     expect(find.text('route:/aircraft/aircraft-1/intent/new'), findsOneWidget);
@@ -69,7 +75,7 @@ void main() {
     ).pop();
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(TextButton, 'aircraft-2'));
+    await tester.tap(find.byIcon(Icons.map_outlined).last);
     await tester.pumpAndSettle();
 
     expect(find.text('route:/aircraft/aircraft-2/map'), findsOneWidget);
@@ -77,7 +83,7 @@ void main() {
 }
 
 OperationsDashboard sampleOperationsDashboard() {
-  return const OperationsDashboard(
+  return OperationsDashboard(
     metrics: [
       DashboardMetric(label: 'Active intents', value: '1', status: 'ready'),
     ],
@@ -114,6 +120,45 @@ OperationsDashboard sampleOperationsDashboard() {
         status: 'deviating',
         alertCount: 2,
         reportabilityStatus: 'review',
+      ),
+    ],
+    liveAircraft: [
+      AircraftLiveState(
+        aircraftId: 'aircraft-1',
+        agentId: 'agent-1',
+        connection: AircraftConnectionState(
+          aircraftId: 'aircraft-1',
+          agentId: 'agent-1',
+          relayId: 'relay-central-1',
+          connected: true,
+          status: 'connected',
+          lastHeartbeatAt: DateTime(2099, 8, 11, 12, 0, 29),
+        ),
+        telemetry: AircraftTelemetryState(
+          status: 'stale',
+          lastObservedAt: DateTime(2099, 8, 11, 12, 0, 30),
+          position: PositionTelemetry(
+            status: 'fresh',
+            recordedAt: DateTime(2099, 8, 11, 12, 0, 30),
+            latitudeDeg: 29.7604,
+            longitudeDeg: -95.3698,
+          ),
+          battery: BatteryTelemetry(
+            status: 'stale',
+            recordedAt: DateTime(2099, 8, 11, 11, 59, 50),
+            batteryId: 0,
+            remainingPct: 76,
+          ),
+        ),
+      ),
+      AircraftLiveState(
+        aircraftId: 'aircraft-2',
+        connection: AircraftConnectionState(
+          aircraftId: 'aircraft-2',
+          connected: false,
+          status: 'offline',
+        ),
+        telemetry: AircraftTelemetryState(status: 'missing'),
       ),
     ],
   );

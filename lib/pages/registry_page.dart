@@ -15,14 +15,18 @@ class RegistryPage extends StatelessWidget {
     return DashboardPage<OperationsDashboard>(
       title: 'Operations',
       subtitle:
-          'Assigned intents, launch posture, active windows, and conformance attention.',
+          'Live aircraft connectivity, telemetry freshness, assigned intents, and conformance attention.',
       load: load ?? AeroArcApiClient().operations,
+      autoRefreshInterval: const Duration(seconds: 10),
       builder: (context, data) => [
         MetricGrid(metrics: data.metrics),
+        const SizedBox(height: 18),
+        _LiveAircraftPanel(states: data.liveAircraft),
         const SizedBox(height: 18),
         _IntentTable(
           intents: data.operationalIntents,
           conformance: data.conformance,
+          liveAircraft: data.liveAircraft,
         ),
         const SizedBox(height: 18),
         TwoColumn(
@@ -36,6 +40,466 @@ class RegistryPage extends StatelessWidget {
     );
   }
 }
+
+class _LiveAircraftPanel extends StatelessWidget {
+  const _LiveAircraftPanel({required this.states});
+
+  final List<AircraftLiveState> states;
+
+  @override
+  Widget build(BuildContext context) {
+    if (states.isEmpty) {
+      return const EmptyPanel(
+        message:
+            'No live aircraft state is available. Aircraft and intent records remain usable while registry or telemetry data is unavailable.',
+      );
+    }
+    final connected = states
+        .where((state) => state.connection.status == 'connected')
+        .length;
+    final staleConnections = states
+        .where((state) => state.connection.status == 'stale')
+        .length;
+    final freshTelemetry = states
+        .where((state) => state.telemetry.status == 'fresh')
+        .length;
+    final missingTelemetry = states
+        .where(
+          (state) =>
+              const {'missing', 'unavailable'}.contains(state.telemetry.status),
+        )
+        .length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        MetricGrid(
+          metrics: [
+            DashboardMetric(
+              label: 'Connected aircraft',
+              value: '$connected/${states.length}',
+              status: connected == states.length ? 'ready' : 'warning',
+            ),
+            DashboardMetric(
+              label: 'Stale connections',
+              value: '$staleConnections',
+              status: staleConnections == 0 ? 'ready' : 'warning',
+            ),
+            DashboardMetric(
+              label: 'Fresh telemetry',
+              value: '$freshTelemetry/${states.length}',
+              status: freshTelemetry == states.length ? 'ready' : 'warning',
+            ),
+            DashboardMetric(
+              label: 'Missing telemetry',
+              value: '$missingTelemetry',
+              status: missingTelemetry == 0 ? 'ready' : 'warning',
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Panel(
+          title: 'Live Aircraft',
+          child: RowList(
+            children: [
+              for (final state in states)
+                ActionRow(
+                  onTap: () => _showLiveAircraftDetails(context, state),
+                  child: _LiveAircraftRow(state: state),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LiveAircraftRow extends StatelessWidget {
+  const _LiveAircraftRow({required this.state});
+
+  final AircraftLiveState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final connection = state.connection;
+    final telemetry = state.telemetry;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 720;
+        final identity = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              state.aircraftId,
+              style: const TextStyle(
+                color: Color(0xFFD6E0FF),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              [
+                if (connection.agentId != null) 'Agent ${connection.agentId}',
+                if (connection.relayId != null) 'Relay ${connection.relayId}',
+                if (connection.agentId == null && connection.relayId == null)
+                  'No registry placement',
+              ].join(' · '),
+              style: const TextStyle(color: Color(0xFF93A3C7)),
+            ),
+          ],
+        );
+        final statuses = Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _StateChip(
+              label: 'Connection',
+              status: connection.status,
+              detail: _ageLabel(connection.lastHeartbeatAt),
+            ),
+            _StateChip(
+              label: 'Position',
+              status: telemetry.position?.status ?? 'missing',
+              detail: _ageLabel(telemetry.position?.recordedAt),
+            ),
+            _StateChip(
+              label: _batteryLabel(telemetry.battery),
+              status: telemetry.battery?.status ?? 'missing',
+              detail: _ageLabel(telemetry.battery?.recordedAt),
+            ),
+            _StateChip(
+              label: _vehicleLabel(telemetry.vehicle),
+              status: telemetry.vehicle?.status ?? 'missing',
+              detail: _ageLabel(telemetry.vehicle?.recordedAt),
+            ),
+          ],
+        );
+        if (narrow) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [identity, const SizedBox(height: 12), statuses],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(flex: 3, child: identity),
+            const SizedBox(width: 16),
+            Expanded(flex: 5, child: statuses),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _StateChip extends StatelessWidget {
+  const _StateChip({
+    required this.label,
+    required this.status,
+    required this.detail,
+  });
+
+  final String label;
+  final String status;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = statusColor(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: color.withValues(alpha: 0.34)),
+      ),
+      child: Text(
+        '$label · ${displayEnum(status)} · $detail',
+        style: TextStyle(
+          color: color,
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _ConnectionCell extends StatelessWidget {
+  const _ConnectionCell({required this.state});
+
+  final AircraftLiveState? state;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = this.state;
+    if (state == null) {
+      return const StatusBadge(label: 'unavailable');
+    }
+    return Tooltip(
+      message:
+          '${state.connection.relayId ?? 'No relay'}\nHeartbeat ${_ageLabel(state.connection.lastHeartbeatAt)}',
+      child: StatusBadge(label: state.connection.status),
+    );
+  }
+}
+
+class _TelemetryGroupCell extends StatelessWidget {
+  const _TelemetryGroupCell({required this.label, required this.group});
+
+  final String label;
+  final TelemetryGroup? group;
+
+  @override
+  Widget build(BuildContext context) {
+    final group = this.group;
+    if (group == null) {
+      return const Text('Missing', style: TextStyle(color: Color(0xFF7F90B6)));
+    }
+    return Tooltip(
+      message: '$label recorded ${formatDate(group.recordedAt)}',
+      child: Text(
+        '${displayEnum(group.status)} · ${_ageLabel(group.recordedAt)}',
+        style: TextStyle(
+          color: statusColor(group.status),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _BatteryCell extends StatelessWidget {
+  const _BatteryCell({required this.state});
+
+  final AircraftLiveState? state;
+
+  @override
+  Widget build(BuildContext context) {
+    final battery = state?.telemetry.battery;
+    if (battery == null) {
+      return _TelemetryGroupCell(label: 'Battery', group: null);
+    }
+    return Tooltip(
+      message:
+          '${displayEnum(battery.status)} battery recorded ${formatDate(battery.recordedAt)}',
+      child: Text(
+        '${_batteryLabel(battery)} · ${displayEnum(battery.status)} · ${_ageLabel(battery.recordedAt)}',
+        style: TextStyle(
+          color: statusColor(battery.status),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+String _batteryLabel(BatteryTelemetry? battery) {
+  final remaining = battery?.remainingPct;
+  return remaining == null
+      ? 'Battery'
+      : 'Battery ${remaining.toStringAsFixed(0)}%';
+}
+
+String _vehicleLabel(VehicleTelemetry? vehicle) {
+  if (vehicle == null) return 'Vehicle';
+  return switch (vehicle.armed) {
+    true => 'Armed',
+    false => 'Disarmed',
+    null => 'Vehicle',
+  };
+}
+
+String _ageLabel(DateTime? timestamp, {DateTime? now}) {
+  if (timestamp == null) return 'No sample';
+  final age = (now ?? DateTime.now()).toUtc().difference(timestamp.toUtc());
+  if (age.isNegative || age.inSeconds < 1) return 'now';
+  if (age.inSeconds < 60) return '${age.inSeconds}s ago';
+  if (age.inMinutes < 60) return '${age.inMinutes}m ago';
+  if (age.inHours < 48) return '${age.inHours}h ago';
+  return '${age.inDays}d ago';
+}
+
+void _showLiveAircraftDetails(BuildContext context, AircraftLiveState state) {
+  final connection = state.connection;
+  final telemetry = state.telemetry;
+  showDetailsSheet(
+    context,
+    title: '${state.aircraftId} live state',
+    status: StatusBadge(label: connection.status),
+    children: [
+      detailSection('Connection', [
+        DetailLine(label: 'Status', value: displayEnum(connection.status)),
+        DetailLine(label: 'Agent', value: connection.agentId ?? 'Unmapped'),
+        DetailLine(label: 'Relay', value: connection.relayId ?? 'Unplaced'),
+        DetailLine(
+          label: 'Heartbeat',
+          value:
+              '${formatDate(connection.lastHeartbeatAt)} (${_ageLabel(connection.lastHeartbeatAt)})',
+        ),
+        DetailLine(
+          label: 'Placement updated',
+          value: formatDate(connection.placementLastUpdatedAt),
+        ),
+      ]),
+      detailSection('Telemetry Availability', [
+        DetailLine(label: 'Overall', value: displayEnum(telemetry.status)),
+        DetailLine(
+          label: 'Last observed',
+          value:
+              '${formatDate(telemetry.lastObservedAt)} (${_ageLabel(telemetry.lastObservedAt)})',
+        ),
+      ]),
+      _telemetryGroupDetails('Position', telemetry.position, [
+        DetailLine(
+          label: 'Coordinates',
+          value: telemetry.position == null
+              ? 'Not available'
+              : '${telemetry.position!.latitudeDeg.toStringAsFixed(5)}, ${telemetry.position!.longitudeDeg.toStringAsFixed(5)}',
+        ),
+        DetailLine(
+          label: 'Relative altitude',
+          value: formatMeters(telemetry.position?.relativeAltitudeM),
+        ),
+        DetailLine(
+          label: 'Groundspeed',
+          value: _metersPerSecond(telemetry.position?.groundspeedMps),
+        ),
+        DetailLine(
+          label: 'Heading',
+          value: _degrees(telemetry.position?.headingDeg),
+        ),
+      ]),
+      _telemetryGroupDetails('Battery', telemetry.battery, [
+        DetailLine(
+          label: 'Remaining',
+          value: formatPercentagePoints(telemetry.battery?.remainingPct),
+        ),
+        DetailLine(
+          label: 'Voltage',
+          value: _unit(telemetry.battery?.voltageV, 'V'),
+        ),
+        DetailLine(
+          label: 'Current',
+          value: _unit(telemetry.battery?.currentA, 'A'),
+        ),
+        DetailLine(
+          label: 'Temperature',
+          value: _unit(telemetry.battery?.temperatureC, '°C'),
+        ),
+      ]),
+      _telemetryGroupDetails('Vehicle', telemetry.vehicle, [
+        DetailLine(
+          label: 'Armed',
+          value: telemetry.vehicle?.armed == null
+              ? 'Not available'
+              : yesNo(telemetry.vehicle!.armed!),
+        ),
+        DetailLine(
+          label: 'System status',
+          value: telemetry.vehicle?.systemStatus == null
+              ? 'Not available'
+              : displayEnum(telemetry.vehicle!.systemStatus!),
+        ),
+        DetailLine(
+          label: 'Custom mode',
+          value: telemetry.vehicle?.customMode?.toString() ?? 'Not available',
+        ),
+      ]),
+      _telemetryGroupDetails('System', telemetry.system, [
+        DetailLine(
+          label: 'Mainloop load',
+          value: formatPercentagePoints(telemetry.system?.mainloopLoadPct),
+        ),
+        DetailLine(
+          label: 'Communication drop rate',
+          value: formatPercentagePoints(
+            telemetry.system?.communicationDropRatePct,
+          ),
+        ),
+        DetailLine(
+          label: 'Communication errors',
+          value:
+              telemetry.system?.communicationErrorCount?.toString() ??
+              'Not available',
+        ),
+      ]),
+      _telemetryGroupDetails('HUD', telemetry.hud, [
+        DetailLine(
+          label: 'Groundspeed',
+          value: _metersPerSecond(telemetry.hud?.groundspeedMps),
+        ),
+        DetailLine(
+          label: 'Airspeed',
+          value: _metersPerSecond(telemetry.hud?.airspeedMps),
+        ),
+        DetailLine(
+          label: 'Climb rate',
+          value: _metersPerSecond(telemetry.hud?.climbRateMps),
+        ),
+      ]),
+      _telemetryGroupDetails('Extended State', telemetry.extendedState, [
+        DetailLine(
+          label: 'VTOL state',
+          value: telemetry.extendedState?.vtolState == null
+              ? 'Not available'
+              : displayEnum(telemetry.extendedState!.vtolState!),
+        ),
+        DetailLine(
+          label: 'Landed state',
+          value: telemetry.extendedState?.landedState == null
+              ? 'Not available'
+              : displayEnum(telemetry.extendedState!.landedState!),
+        ),
+      ]),
+      _telemetryGroupDetails('GPS', telemetry.gps, [
+        DetailLine(
+          label: 'Fix type',
+          value: telemetry.gps?.fixType == null
+              ? 'Not available'
+              : displayEnum(telemetry.gps!.fixType!),
+        ),
+        DetailLine(
+          label: 'Satellites',
+          value:
+              telemetry.gps?.satellitesVisible?.toString() ?? 'Not available',
+        ),
+        DetailLine(
+          label: 'Horizontal accuracy',
+          value: formatMeters(telemetry.gps?.horizontalAccuracyM),
+        ),
+      ]),
+    ],
+  );
+}
+
+Widget _telemetryGroupDetails(
+  String title,
+  TelemetryGroup? group,
+  List<Widget> details,
+) {
+  return detailSection(title, [
+    DetailLine(
+      label: 'Sample status',
+      value: group == null ? 'Missing' : displayEnum(group.status),
+    ),
+    DetailLine(
+      label: 'Recorded',
+      value: group == null
+          ? 'No sample'
+          : '${formatDate(group.recordedAt)} (${_ageLabel(group.recordedAt)})',
+    ),
+    ...details,
+  ]);
+}
+
+String _unit(double? value, String unit) =>
+    value == null ? 'Not available' : '${value.toStringAsFixed(1)} $unit';
+
+String _metersPerSecond(double? value) => _unit(value, 'm/s');
+
+String _degrees(double? value) => _unit(value, '°');
 
 enum _IntentFilter {
   all('All'),
@@ -51,10 +515,15 @@ enum _IntentFilter {
 }
 
 class _IntentTable extends StatefulWidget {
-  const _IntentTable({required this.intents, required this.conformance});
+  const _IntentTable({
+    required this.intents,
+    required this.conformance,
+    required this.liveAircraft,
+  });
 
   final List<OperationalIntent> intents;
   final List<ConformanceSummary> conformance;
+  final List<AircraftLiveState> liveAircraft;
 
   @override
   State<_IntentTable> createState() => _IntentTableState();
@@ -100,6 +569,9 @@ class _IntentTableState extends State<_IntentTable> {
     }
     final intents = _filteredIntents;
     final conformanceByIntent = _conformanceByIntent;
+    final liveByAircraft = {
+      for (final state in widget.liveAircraft) state.aircraftId: state,
+    };
     return Panel(
       title: 'Intent Register',
       child: Padding(
@@ -133,6 +605,9 @@ class _IntentTableState extends State<_IntentTable> {
                         columns: const [
                           DataColumn(label: Text('Intent')),
                           DataColumn(label: Text('Aircraft')),
+                          DataColumn(label: Text('Connection')),
+                          DataColumn(label: Text('Position')),
+                          DataColumn(label: Text('Battery')),
                           DataColumn(label: Text('Posture')),
                           DataColumn(label: Text('Window')),
                           DataColumn(label: Text('Conformance')),
@@ -146,6 +621,24 @@ class _IntentTableState extends State<_IntentTable> {
                                 DataCell(
                                   _AircraftAction(
                                     aircraftId: intent.aircraftId,
+                                  ),
+                                ),
+                                DataCell(
+                                  _ConnectionCell(
+                                    state: liveByAircraft[intent.aircraftId],
+                                  ),
+                                ),
+                                DataCell(
+                                  _TelemetryGroupCell(
+                                    label: 'Position',
+                                    group: liveByAircraft[intent.aircraftId]
+                                        ?.telemetry
+                                        .position,
+                                  ),
+                                ),
+                                DataCell(
+                                  _BatteryCell(
+                                    state: liveByAircraft[intent.aircraftId],
                                   ),
                                 ),
                                 DataCell(

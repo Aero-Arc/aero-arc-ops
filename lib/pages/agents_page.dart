@@ -217,7 +217,7 @@ class _AircraftTableState extends State<_AircraftTable> {
                                 ),
                                 DataCell(
                                   Text(
-                                    formatPercent(
+                                    formatPercentagePoints(
                                       item.activeBattery?.stateOfHealth,
                                     ),
                                   ),

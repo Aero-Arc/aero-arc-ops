@@ -1,3 +1,7 @@
+import 'live_aircraft_state.dart';
+
+export 'live_aircraft_state.dart';
+
 class DashboardMetric {
   const DashboardMetric({
     required this.label,
@@ -61,11 +65,13 @@ class OperationsDashboard {
     required this.metrics,
     required this.operationalIntents,
     required this.conformance,
+    this.liveAircraft = const [],
   });
 
   final List<DashboardMetric> metrics;
   final List<OperationalIntent> operationalIntents;
   final List<ConformanceSummary> conformance;
+  final List<AircraftLiveState> liveAircraft;
 
   factory OperationsDashboard.fromJson(Map<String, dynamic> json) {
     return OperationsDashboard(
@@ -75,6 +81,7 @@ class OperationsDashboard {
         OperationalIntent.fromJson,
       ),
       conformance: listOf(json['conformance'], ConformanceSummary.fromJson),
+      liveAircraft: listOf(json['live_aircraft'], AircraftLiveState.fromJson),
     );
   }
 }
@@ -177,6 +184,7 @@ class AircraftDashboard {
     this.activeBattery,
     required this.maintenanceEvents,
     this.latestTelemetry,
+    this.telemetry,
     this.liveState,
     required this.liveStateAvailable,
     required this.readiness,
@@ -187,6 +195,7 @@ class AircraftDashboard {
   final Battery? activeBattery;
   final List<MaintenanceEvent> maintenanceEvents;
   final TelemetrySample? latestTelemetry;
+  final AircraftTelemetryState? telemetry;
   final LiveAircraftState? liveState;
   final bool liveStateAvailable;
   final Readiness readiness;
@@ -204,6 +213,7 @@ class AircraftDashboard {
         json['latest_telemetry'],
         TelemetrySample.fromJson,
       ),
+      telemetry: optional(json['telemetry'], AircraftTelemetryState.fromJson),
       liveState: optional(json['live_state'], LiveAircraftState.fromJson),
       liveStateAvailable: asBool(json['live_state_available']),
       readiness: Readiness.fromJson(asMap(json['readiness'])),

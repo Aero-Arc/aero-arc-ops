@@ -30,6 +30,8 @@ class AeroArcApiClient {
       _get('/api/v1/overview', OverviewDashboard.fromJson);
   Future<AircraftListResponse> aircraft() =>
       _get('/api/v1/aircraft', AircraftListResponse.fromJson);
+  Future<AircraftLiveState> getAircraftState(String aircraftId) =>
+      _get('/api/v1/aircraft/$aircraftId/state', AircraftLiveState.fromJson);
   Future<OperationsDashboard> operations() =>
       _get('/api/v1/operations', OperationsDashboard.fromJson);
   Future<PreflightDashboard> preflight() =>

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ class AircraftMapScreen extends StatefulWidget {
     super.key,
     required this.aircraftId,
     this.load,
+    this.loadState,
     this.limit = 1000,
     this.renderTiles = true,
   });
@@ -21,6 +23,7 @@ class AircraftMapScreen extends StatefulWidget {
   final String aircraftId;
   final int limit;
   final Future<AircraftMapView> Function()? load;
+  final Future<AircraftLiveState> Function()? loadState;
   final bool renderTiles;
 
   @override
@@ -29,6 +32,10 @@ class AircraftMapScreen extends StatefulWidget {
 
 class _AircraftMapScreenState extends State<AircraftMapScreen> {
   late Future<AircraftMapView> _future;
+  AircraftLiveState? _liveState;
+  Object? _liveStateError;
+  bool _liveStateLoading = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -37,16 +44,50 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
   }
 
   Future<AircraftMapView> _load() {
+    final generation = ++_loadGeneration;
     final custom = widget.load;
-    if (custom != null) return custom();
-    return AeroArcApiClient().getAircraftMapView(
-      widget.aircraftId,
-      limit: widget.limit,
-    );
+    final client = AeroArcApiClient();
+    final mapFuture = custom != null
+        ? Future<AircraftMapView>.sync(custom)
+        : Future<AircraftMapView>.sync(
+            () => client.getAircraftMapView(
+              widget.aircraftId,
+              limit: widget.limit,
+            ),
+          );
+    final stateLoader =
+        widget.loadState ??
+        (custom == null
+            ? () => client.getAircraftState(widget.aircraftId)
+            : null);
+    _liveStateLoading = stateLoader != null;
+    if (stateLoader != null) {
+      unawaited(
+        _loadLiveState(Future<AircraftLiveState>.sync(stateLoader), generation),
+      );
+    }
+    return mapFuture;
+  }
+
+  Future<void> _loadLiveState(
+    Future<AircraftLiveState> future,
+    int generation,
+  ) async {
+    final result = await _captureLiveState(future);
+    if (!mounted || generation != _loadGeneration) return;
+    setState(() {
+      _liveState = result.state;
+      _liveStateError = result.error;
+      _liveStateLoading = false;
+    });
   }
 
   void _refresh() {
-    setState(() => _future = _load());
+    setState(() {
+      _liveState = null;
+      _liveStateError = null;
+      _future = _load();
+    });
   }
 
   @override
@@ -86,6 +127,9 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
 
           return _AircraftMapContent(
             view: view,
+            liveState: _liveState,
+            liveStateError: _liveStateError,
+            liveStateLoading: _liveStateLoading,
             onRefresh: _refresh,
             renderTiles: widget.renderTiles,
           );
@@ -93,6 +137,23 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
       ),
     );
   }
+}
+
+Future<_LiveStateResult> _captureLiveState(
+  Future<AircraftLiveState> future,
+) async {
+  try {
+    return _LiveStateResult(state: await future);
+  } catch (error) {
+    return _LiveStateResult(error: error);
+  }
+}
+
+class _LiveStateResult {
+  const _LiveStateResult({this.state, this.error});
+
+  final AircraftLiveState? state;
+  final Object? error;
 }
 
 class _MapLoadingIndicator extends StatelessWidget {
@@ -131,24 +192,35 @@ class _MapLoadingIndicator extends StatelessWidget {
 class _AircraftMapContent extends StatelessWidget {
   const _AircraftMapContent({
     required this.view,
+    required this.liveState,
+    required this.liveStateError,
+    required this.liveStateLoading,
     required this.onRefresh,
     required this.renderTiles,
   });
 
   final AircraftMapView view;
+  final AircraftLiveState? liveState;
+  final Object? liveStateError;
+  final bool liveStateLoading;
   final VoidCallback onRefresh;
   final bool renderTiles;
 
   @override
   Widget build(BuildContext context) {
-    final center = mapCenterFor(view);
+    final center = mapCenterFor(view, liveState: liveState);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _MapHeader(view: view, onRefresh: onRefresh),
+          _MapHeader(
+            view: view,
+            liveState: liveState,
+            liveStateLoading: liveStateLoading,
+            onRefresh: onRefresh,
+          ),
           const SizedBox(height: 18),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -160,12 +232,21 @@ class _AircraftMapContent extends StatelessWidget {
                       flex: 3,
                       child: _MapPanel(
                         view: view,
+                        liveState: liveState,
                         center: center,
                         renderTiles: renderTiles,
                       ),
                     ),
                     const SizedBox(width: 18),
-                    SizedBox(width: 390, child: _DetailPanel(view: view)),
+                    SizedBox(
+                      width: 390,
+                      child: _DetailPanel(
+                        view: view,
+                        liveState: liveState,
+                        liveStateError: liveStateError,
+                        liveStateLoading: liveStateLoading,
+                      ),
+                    ),
                   ],
                 );
               }
@@ -173,11 +254,17 @@ class _AircraftMapContent extends StatelessWidget {
                 children: [
                   _MapPanel(
                     view: view,
+                    liveState: liveState,
                     center: center,
                     renderTiles: renderTiles,
                   ),
                   const SizedBox(height: 18),
-                  _DetailPanel(view: view),
+                  _DetailPanel(
+                    view: view,
+                    liveState: liveState,
+                    liveStateError: liveStateError,
+                    liveStateLoading: liveStateLoading,
+                  ),
                 ],
               );
             },
@@ -189,9 +276,16 @@ class _AircraftMapContent extends StatelessWidget {
 }
 
 class _MapHeader extends StatelessWidget {
-  const _MapHeader({required this.view, required this.onRefresh});
+  const _MapHeader({
+    required this.view,
+    required this.liveState,
+    required this.liveStateLoading,
+    required this.onRefresh,
+  });
 
   final AircraftMapView view;
+  final AircraftLiveState? liveState;
+  final bool liveStateLoading;
   final VoidCallback onRefresh;
 
   @override
@@ -225,7 +319,9 @@ class _MapHeader extends StatelessWidget {
                   StatusBadge(label: aircraft.status),
                   StatusBadge(label: aircraft.remoteIdStatus),
                   StatusBadge(
-                    label: view.liveStateAvailable ? 'connected' : 'offline',
+                    label:
+                        liveState?.connection.status ??
+                        (liveStateLoading ? 'loading' : 'unavailable'),
                   ),
                 ],
               ),
@@ -246,11 +342,13 @@ class _MapHeader extends StatelessWidget {
 class _MapPanel extends StatelessWidget {
   const _MapPanel({
     required this.view,
+    required this.liveState,
     required this.center,
     required this.renderTiles,
   });
 
   final AircraftMapView view;
+  final AircraftLiveState? liveState;
   final LatLng center;
   final bool renderTiles;
 
@@ -258,8 +356,8 @@ class _MapPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final path = replayPath(view.replaySamples);
     final polygons = volumePolygons(view.operationalVolumes);
-    final livePositionAvailable =
-        view.liveStateAvailable && (view.liveState?.connected ?? false);
+    final livePosition = liveState?.telemetry.position;
+    final livePositionAvailable = livePosition?.status == 'fresh';
     final markers = <Marker>[
       if (path.isNotEmpty)
         Marker(
@@ -271,9 +369,11 @@ class _MapPanel extends StatelessWidget {
             icon: Icons.home_rounded,
           ),
         ),
-      if (view.latestTelemetry != null)
+      if (livePosition != null || view.latestTelemetry != null)
         Marker(
-          point: telemetryPoint(view.latestTelemetry!),
+          point: livePosition == null
+              ? telemetryPoint(view.latestTelemetry!)
+              : LatLng(livePosition.latitudeDeg, livePosition.longitudeDeg),
           width: 42,
           height: 42,
           child: _MapMarker(
@@ -303,6 +403,7 @@ class _MapPanel extends StatelessWidget {
       child: SizedBox(
         height: 560,
         child: FlutterMap(
+          key: ValueKey('${center.latitude},${center.longitude}'),
           options: MapOptions(initialCenter: center, initialZoom: 15),
           children: [
             if (renderTiles)
@@ -361,9 +462,17 @@ class _MapMarker extends StatelessWidget {
 }
 
 class _DetailPanel extends StatelessWidget {
-  const _DetailPanel({required this.view});
+  const _DetailPanel({
+    required this.view,
+    required this.liveState,
+    required this.liveStateError,
+    required this.liveStateLoading,
+  });
 
   final AircraftMapView view;
+  final AircraftLiveState? liveState;
+  final Object? liveStateError;
+  final bool liveStateLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -376,6 +485,12 @@ class _DetailPanel extends StatelessWidget {
 
     return Column(
       children: [
+        _AircraftLiveStatePanel(
+          state: liveState,
+          error: liveStateError,
+          loading: liveStateLoading,
+        ),
+        const SizedBox(height: 18),
         Panel(
           title: 'Operation',
           trailing: intent == null
@@ -464,7 +579,7 @@ class _DetailPanel extends StatelessWidget {
                 ),
                 DetailLine(
                   label: 'Battery',
-                  value: formatPercent(telemetry?.batteryPct),
+                  value: formatPercentagePoints(telemetry?.batteryPct),
                 ),
               ],
             ),
@@ -504,6 +619,132 @@ class _DetailPanel extends StatelessWidget {
   }
 }
 
+class _AircraftLiveStatePanel extends StatelessWidget {
+  const _AircraftLiveStatePanel({
+    required this.state,
+    required this.error,
+    required this.loading,
+  });
+
+  final AircraftLiveState? state;
+  final Object? error;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = this.state;
+    if (state == null) {
+      return Panel(
+        title: 'Live Aircraft State',
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              StatusBadge(label: loading ? 'loading' : 'unavailable'),
+              const SizedBox(height: 10),
+              Text(
+                loading
+                    ? 'Live state is loading. Map history and operation data remain available.'
+                    : error == null
+                    ? 'Live state was not requested for this view.'
+                    : 'Registry or telemetry state could not be loaded. Map history and operation data remain available.',
+                style: const TextStyle(color: Color(0xFF93A3C7)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    final connection = state.connection;
+    final telemetry = state.telemetry;
+    return Panel(
+      title: 'Live Aircraft State',
+      trailing: StatusBadge(label: connection.status),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+        child: Column(
+          children: [
+            DetailLine(label: 'Agent', value: connection.agentId ?? 'Unmapped'),
+            DetailLine(label: 'Relay', value: connection.relayId ?? 'Unplaced'),
+            DetailLine(
+              label: 'Registry heartbeat',
+              value: _mapTimestamp(connection.lastHeartbeatAt),
+            ),
+            DetailLine(
+              label: 'Telemetry',
+              value:
+                  '${displayEnum(telemetry.status)} · ${_mapTimestamp(telemetry.lastObservedAt)}',
+            ),
+            DetailLine(
+              label: 'Position sample',
+              value: telemetry.position == null
+                  ? 'Missing'
+                  : '${displayEnum(telemetry.position!.status)} · ${_mapTimestamp(telemetry.position!.recordedAt)}\n${telemetry.position!.latitudeDeg.toStringAsFixed(5)}, ${telemetry.position!.longitudeDeg.toStringAsFixed(5)}\nAltitude ${formatMeters(telemetry.position!.relativeAltitudeM ?? telemetry.position!.altitudeMslM)}',
+            ),
+            DetailLine(
+              label: 'Battery sample',
+              value: telemetry.battery == null
+                  ? 'Missing'
+                  : '${displayEnum(telemetry.battery!.status)} · ${_mapTimestamp(telemetry.battery!.recordedAt)}\n${formatPercentagePoints(telemetry.battery!.remainingPct)} · ${_mapUnit(telemetry.battery!.voltageV, 'V')} · ${_mapUnit(telemetry.battery!.currentA, 'A')}',
+            ),
+            DetailLine(
+              label: 'Vehicle heartbeat',
+              value: telemetry.vehicle == null
+                  ? 'Missing'
+                  : '${displayEnum(telemetry.vehicle!.status)} · ${_mapTimestamp(telemetry.vehicle!.recordedAt)}\n${switch (telemetry.vehicle!.armed) {
+                      true => 'Armed',
+                      false => 'Disarmed',
+                      null => 'Arm state unknown',
+                    }} · System ${telemetry.vehicle!.systemStatus ?? 'unknown'}',
+            ),
+            DetailLine(
+              label: 'System sample',
+              value: telemetry.system == null
+                  ? 'Missing'
+                  : '${displayEnum(telemetry.system!.status)} · ${_mapTimestamp(telemetry.system!.recordedAt)}\nLoad ${formatPercentagePoints(telemetry.system!.mainloopLoadPct)} · Drop ${formatPercentagePoints(telemetry.system!.communicationDropRatePct)}',
+            ),
+            DetailLine(
+              label: 'HUD sample',
+              value: telemetry.hud == null
+                  ? 'Missing'
+                  : '${displayEnum(telemetry.hud!.status)} · ${_mapTimestamp(telemetry.hud!.recordedAt)}\nGround ${_mapUnit(telemetry.hud!.groundspeedMps, 'm/s')} · Air ${_mapUnit(telemetry.hud!.airspeedMps, 'm/s')}',
+            ),
+            DetailLine(
+              label: 'Extended-state sample',
+              value: telemetry.extendedState == null
+                  ? 'Missing'
+                  : '${displayEnum(telemetry.extendedState!.status)} · ${_mapTimestamp(telemetry.extendedState!.recordedAt)}\nVTOL ${telemetry.extendedState!.vtolState ?? 'unknown'} · Landed ${telemetry.extendedState!.landedState ?? 'unknown'}',
+            ),
+            DetailLine(
+              label: 'GPS sample',
+              value: telemetry.gps == null
+                  ? 'Missing'
+                  : '${displayEnum(telemetry.gps!.status)} · ${_mapTimestamp(telemetry.gps!.recordedAt)}\nFix ${telemetry.gps!.fixType ?? 'unknown'} · ${telemetry.gps!.satellitesVisible ?? 'unknown'} satellites',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _mapTimestamp(DateTime? timestamp) {
+  if (timestamp == null) return 'No sample';
+  final delta = DateTime.now().toUtc().difference(timestamp.toUtc());
+  final age = delta.isNegative
+      ? 'now'
+      : delta.inSeconds < 60
+      ? '${delta.inSeconds}s ago'
+      : delta.inMinutes < 60
+      ? '${delta.inMinutes}m ago'
+      : '${delta.inHours}h ago';
+  return '${formatDate(timestamp)} ($age)';
+}
+
+String _mapUnit(double? value, String unit) =>
+    value == null ? 'n/a' : '${value.toStringAsFixed(1)} $unit';
+
 void _openAssignedIntent(BuildContext context, AircraftMapView view) {
   final intent = view.activeIntent;
   if (intent == null) return;
@@ -525,7 +766,11 @@ void _openCreateIntent(BuildContext context, AircraftMapView view) {
   );
 }
 
-LatLng mapCenterFor(AircraftMapView view) {
+LatLng mapCenterFor(AircraftMapView view, {AircraftLiveState? liveState}) {
+  final livePosition = liveState?.telemetry.position;
+  if (livePosition != null) {
+    return LatLng(livePosition.latitudeDeg, livePosition.longitudeDeg);
+  }
   final telemetry = view.latestTelemetry;
   if (telemetry != null) return telemetryPoint(telemetry);
   if (view.replaySamples.isNotEmpty) {

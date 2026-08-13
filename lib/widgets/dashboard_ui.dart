@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/aero_arc_models.dart';
@@ -15,12 +17,14 @@ class DashboardPage<T> extends StatefulWidget {
     required this.subtitle,
     required this.load,
     required this.builder,
+    this.autoRefreshInterval,
   });
 
   final String title;
   final String subtitle;
   final Future<T> Function() load;
   final List<Widget> Function(BuildContext context, T data) builder;
+  final Duration? autoRefreshInterval;
 
   @override
   State<DashboardPage<T>> createState() => _DashboardPageState<T>();
@@ -28,15 +32,59 @@ class DashboardPage<T> extends StatefulWidget {
 
 class _DashboardPageState<T> extends State<DashboardPage<T>> {
   late Future<T> _future;
+  Timer? _refreshTimer;
+  var _isRefreshing = false;
+  T? _lastData;
+  var _hasLastData = false;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.load();
+    _future = _load();
+    _scheduleRefresh();
   }
 
   void _refresh() {
-    setState(() => _future = widget.load());
+    if (_isRefreshing) return;
+    setState(() {
+      _future = _load();
+    });
+  }
+
+  Future<T> _load() async {
+    _isRefreshing = true;
+    try {
+      final data = await widget.load();
+      _lastData = data;
+      _hasLastData = true;
+      return data;
+    } finally {
+      _isRefreshing = false;
+    }
+  }
+
+  void _scheduleRefresh() {
+    _refreshTimer?.cancel();
+    final interval = widget.autoRefreshInterval;
+    if (interval != null) {
+      _refreshTimer = Timer.periodic(interval, (_) {
+        if (mounted) _refresh();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardPage<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.autoRefreshInterval != widget.autoRefreshInterval) {
+      _scheduleRefresh();
+    }
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -81,14 +129,25 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
             const SizedBox(height: 20),
           ];
 
-          if (isLoading) {
+          if (isLoading && !_hasLastData) {
             children.add(const LoadingPanel());
-          } else if (snapshot.hasError) {
+          } else if (snapshot.hasError && !_hasLastData) {
             children.add(
               ErrorPanel(error: snapshot.error.toString(), onRetry: _refresh),
             );
-          } else if (snapshot.hasData) {
-            children.addAll(widget.builder(context, snapshot.data as T));
+          } else if (_hasLastData) {
+            if (snapshot.hasError) {
+              children
+                ..add(
+                  ErrorPanel(
+                    title: 'Refresh failed',
+                    error: snapshot.error.toString(),
+                    onRetry: _refresh,
+                  ),
+                )
+                ..add(const SizedBox(height: 18));
+            }
+            children.addAll(widget.builder(context, _lastData as T));
           }
 
           return Stack(
@@ -613,6 +672,21 @@ String formatPercent(double? value) {
   return '${pct.toStringAsFixed(0)}%';
 }
 
+/// Formats values whose API field is already expressed in percentage points.
+///
+/// Unlike [formatPercent], this must not interpret values at or below one as a
+/// ratio. For example, a `communication_drop_rate_pct` of `0.4` is `0.4%`.
+String formatPercentagePoints(double? value) {
+  if (value == null) {
+    return 'Not provided';
+  }
+  final formatted = value
+      .toStringAsFixed(2)
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
+  return '$formatted%';
+}
+
 String formatMeters(double? value) =>
     value == null ? 'Not provided' : '${value.toStringAsFixed(1)} m';
 String formatFeetRange(double? min, double? max) => min == null && max == null
@@ -634,6 +708,8 @@ Color statusColor(String status) {
     'conforming' ||
     'exported' ||
     'closed' ||
+    'connected' ||
+    'fresh' ||
     'no' => const Color(0xFF00CFA0),
     'review' ||
     'submitted' ||
@@ -643,6 +719,7 @@ Color statusColor(String status) {
     'contingent' ||
     'draft' ||
     'open' ||
+    'stale' ||
     'action' => const Color(0xFFE4A100),
     'blocked' ||
     'critical' ||
@@ -653,6 +730,7 @@ Color statusColor(String status) {
     'offline' ||
     'rejected' ||
     'expired' => const Color(0xFFE14A5B),
+    'missing' || 'unmapped' || 'unavailable' => const Color(0xFF7F90B6),
     _ => const Color(0xFF6B75FF),
   };
 }
