@@ -38,6 +38,12 @@ class AeroArcApiClient {
       _get('/api/v1/preflight', PreflightDashboard.fromJson);
   Future<ConformanceDashboard> conformance() =>
       _get('/api/v1/conformance', ConformanceDashboard.fromJson);
+  Future<ConformanceEvaluation> evaluateTelemetry(TelemetrySample sample) =>
+      _post(
+        '/api/v1/telemetry',
+        ConformanceEvaluation.fromJson,
+        body: sample.toJson(),
+      );
   Future<MaintenanceDashboard> maintenance() =>
       _get('/api/v1/maintenance', MaintenanceDashboard.fromJson);
   Future<RecordsDashboard> records() =>

@@ -18,6 +18,8 @@ class DashboardPage<T> extends StatefulWidget {
     required this.load,
     required this.builder,
     this.autoRefreshInterval,
+    this.headerActions = const [],
+    this.refreshTrigger,
   });
 
   final String title;
@@ -25,6 +27,8 @@ class DashboardPage<T> extends StatefulWidget {
   final Future<T> Function() load;
   final List<Widget> Function(BuildContext context, T data) builder;
   final Duration? autoRefreshInterval;
+  final List<Widget> headerActions;
+  final Object? refreshTrigger;
 
   @override
   State<DashboardPage<T>> createState() => _DashboardPageState<T>();
@@ -79,6 +83,9 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
     if (oldWidget.autoRefreshInterval != widget.autoRefreshInterval) {
       _scheduleRefresh();
     }
+    if (oldWidget.refreshTrigger != widget.refreshTrigger && !_isRefreshing) {
+      _future = _load();
+    }
   }
 
   @override
@@ -96,35 +103,54 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
         builder: (context, snapshot) {
           final isLoading = snapshot.connectionState == ConnectionState.waiting;
           final children = <Widget>[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final heading = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.title,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.headlineMedium?.copyWith(fontSize: 46),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      widget.subtitle,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: const Color(0xFF7F90B6),
+                      ),
+                    ),
+                  ],
+                );
+                final actions = Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    ...widget.headerActions,
+                    IconButton.filledTonal(
+                      tooltip: 'Refresh',
+                      onPressed: _refresh,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                  ],
+                );
+                if (constraints.maxWidth < 700) {
+                  return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.title,
-                        style: Theme.of(
-                          context,
-                        ).textTheme.headlineMedium?.copyWith(fontSize: 46),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        widget.subtitle,
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: const Color(0xFF7F90B6),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton.filledTonal(
-                  tooltip: 'Refresh',
-                  onPressed: _refresh,
-                  icon: const Icon(Icons.refresh),
-                ),
-              ],
+                    children: [heading, const SizedBox(height: 14), actions],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: heading),
+                    const SizedBox(width: 16),
+                    actions,
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 20),
           ];
@@ -267,8 +293,8 @@ class MetricGrid extends StatelessWidget {
     }
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 1200
-            ? metrics.length.clamp(1, 5)
+        final columns = constraints.maxWidth >= 1000
+            ? metrics.length.clamp(1, 4)
             : constraints.maxWidth >= 840
             ? 2
             : 1;
@@ -710,6 +736,7 @@ Color statusColor(String status) {
     'closed' ||
     'connected' ||
     'fresh' ||
+    'confirmed' ||
     'no' => const Color(0xFF00CFA0),
     'review' ||
     'submitted' ||
@@ -721,6 +748,10 @@ Color statusColor(String status) {
     'open' ||
     'stale' ||
     'action' => const Color(0xFFE4A100),
+    'suspected' ||
+    'pending' ||
+    'armed' ||
+    'received' => const Color(0xFFE4A100),
     'blocked' ||
     'critical' ||
     'reportable' ||
@@ -730,7 +761,11 @@ Color statusColor(String status) {
     'offline' ||
     'rejected' ||
     'expired' => const Color(0xFFE14A5B),
-    'missing' || 'unmapped' || 'unavailable' => const Color(0xFF7F90B6),
+    'degraded' => const Color(0xFFE14A5B),
+    'missing' ||
+    'unmapped' ||
+    'unavailable' ||
+    'unknown' => const Color(0xFF7F90B6),
     _ => const Color(0xFF6B75FF),
   };
 }

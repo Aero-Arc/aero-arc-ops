@@ -120,6 +120,26 @@ class ConformanceDashboard {
   }
 }
 
+class ConformanceEvaluation {
+  const ConformanceEvaluation({
+    required this.intent,
+    required this.summary,
+    required this.events,
+  });
+
+  final OperationalIntent intent;
+  final ConformanceSummary summary;
+  final List<ConformanceEvent> events;
+
+  factory ConformanceEvaluation.fromJson(Map<String, dynamic> json) {
+    return ConformanceEvaluation(
+      intent: OperationalIntent.fromJson(asMap(json['intent'])),
+      summary: ConformanceSummary.fromJson(asMap(json['summary'])),
+      events: listOf(json['events'], ConformanceEvent.fromJson),
+    );
+  }
+}
+
 class MaintenanceDashboard {
   const MaintenanceDashboard({
     required this.metrics,
@@ -483,6 +503,22 @@ class TelemetrySample {
       headingDeg: asDouble(json['heading_deg']),
       batteryPct: asNullableDouble(json['battery_pct']),
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return withoutNullValues({
+      'id': id,
+      'aircraft_id': aircraftId,
+      'intent_id': intentId,
+      'flight_id': flightId,
+      'recorded_at': recordedAt?.toUtc().toIso8601String(),
+      'latitude': latitude,
+      'longitude': longitude,
+      'altitude_m': altitudeM,
+      'velocity_mps': velocityMps,
+      'heading_deg': headingDeg,
+      'battery_pct': batteryPct,
+    });
   }
 }
 
@@ -1123,6 +1159,16 @@ class ConformanceSummary {
     required this.alertCount,
     required this.reportabilityStatus,
     this.updatedAt,
+    this.assignmentId,
+    this.assignmentGeneration,
+    this.evaluationRevision,
+    this.evaluationId,
+    this.condition,
+    this.monitoringStatus,
+    this.recordingStatus,
+    this.observedAt,
+    this.frameId,
+    this.violations = const [],
   });
 
   final String id;
@@ -1135,6 +1181,28 @@ class ConformanceSummary {
   final int alertCount;
   final String reportabilityStatus;
   final DateTime? updatedAt;
+  final String? assignmentId;
+  final int? assignmentGeneration;
+  final int? evaluationRevision;
+  final String? evaluationId;
+  final String? condition;
+  final String? monitoringStatus;
+  final String? recordingStatus;
+  final DateTime? observedAt;
+  final String? frameId;
+  final List<ConformanceViolation> violations;
+
+  bool get isLiveProjection => assignmentId != null;
+  int get activeViolationCount => violations
+      .where(
+        (violation) => violation.phase.isNotEmpty && violation.phase != 'clear',
+      )
+      .length;
+  List<ConformanceViolation> get activeViolations => violations
+      .where(
+        (violation) => violation.phase.isNotEmpty && violation.phase != 'clear',
+      )
+      .toList(growable: false);
 
   factory ConformanceSummary.fromJson(Map<String, dynamic> json) {
     return ConformanceSummary(
@@ -1148,6 +1216,45 @@ class ConformanceSummary {
       alertCount: asInt(json['alert_count']),
       reportabilityStatus: asString(json['reportability_status']),
       updatedAt: asDate(json['updated_at']),
+      assignmentId: asNullableString(json['assignment_id']),
+      assignmentGeneration: nullableInt(json['assignment_generation']),
+      evaluationRevision: nullableInt(json['evaluation_revision']),
+      evaluationId: asNullableString(json['evaluation_id']),
+      condition: asNullableString(json['condition']),
+      monitoringStatus: asNullableString(json['monitoring_status']),
+      recordingStatus: asNullableString(json['recording_status']),
+      observedAt: asDate(json['observed_at']),
+      frameId: asNullableString(json['frame_id']),
+      violations: listOf(json['violations'], ConformanceViolation.fromJson),
+    );
+  }
+}
+
+class ConformanceViolation {
+  const ConformanceViolation({
+    required this.type,
+    required this.phase,
+    this.openingFrameId,
+    this.openedAt,
+    this.lastObservedAt,
+    this.worstDeviationM,
+  });
+
+  final String type;
+  final String phase;
+  final String? openingFrameId;
+  final DateTime? openedAt;
+  final DateTime? lastObservedAt;
+  final double? worstDeviationM;
+
+  factory ConformanceViolation.fromJson(Map<String, dynamic> json) {
+    return ConformanceViolation(
+      type: asString(json['violation_type'] ?? json['type']),
+      phase: asString(json['phase']),
+      openingFrameId: asNullableString(json['opening_frame_id']),
+      openedAt: asDate(json['opened_at']),
+      lastObservedAt: asDate(json['last_observed_at']),
+      worstDeviationM: asNullableDouble(json['worst_deviation_m']),
     );
   }
 }

@@ -15,6 +15,9 @@ Provide operators with a fast, readable surface for understanding whether the Ae
 - **Relay monitoring** with relay counts, health states, node counts, regions, message rates, and heartbeat freshness.
 - **Aircraft fleet view** with durable identity, readiness, active intent, registry placement, and telemetry recency.
 - **Live operations view** with connected/stale/offline/unmapped state and independently timestamped position, battery, vehicle, system, HUD, extended-state, and GPS samples.
+- **Live conformance view** with assignment condition, monitoring freshness,
+  recording durability, active findings, evaluated axes, and evaluation/frame
+  provenance read from Registry through the API.
 - **Aircraft map** that combines replay, operational volumes, conformance evidence, and live state while degrading safely if registry or telemetry state is unavailable.
 - **Compute nodes** with CPU, memory, disk, region, uptime, and per-node utilization bars.
 - **Telemetry dashboard** with latency, throughput, error rate, uptime, trend charts, system health radar, and fleet activity.
@@ -33,6 +36,19 @@ Provide operators with a fast, readable surface for understanding whether the Ae
 ```sh
 flutter pub get
 flutter run -d chrome --dart-define=AERO_ARC_API_BASE_URL=http://localhost:8080
+```
+
+For WSL or another environment where Flutter cannot launch Chrome directly,
+start the web server and open `http://localhost:7357` in your browser:
+
+```sh
+make web
+```
+
+Override the defaults when needed, for example:
+
+```sh
+make web WEB_PORT=8081 API_BASE_URL=http://localhost:8080
 ```
 
 For another target, replace `chrome` with an available device from:
@@ -90,6 +106,31 @@ age. See `test/fixtures/live_aircraft_state.json` for an executable example.
 If the live-state request fails, the aircraft map continues to render durable
 aircraft, replay, intent, volume, and conformance data with an explicit
 unavailable state.
+
+## Live conformance data contract
+
+Operations and Conformance consume the API's Registry-backed projections. The
+condition (`conforming`, `suspected`, or `non_conforming`), monitoring status,
+and recording status are separate signals and are displayed independently. A
+clear evaluated axis is evidence that a check ran; it is not an active finding.
+The client does not invent freshness or conformance thresholds.
+
+The Conformance page refreshes the batch dashboard every three seconds. Its
+`Evaluate API sample` action is an explicit legacy/single-sample diagnostic;
+normal live results are produced by Agent telemetry flowing through Relay,
+Conformance, and Registry. Missing optional live fields degrade locally without
+hiding durable conformance history.
+
+The diagnostic action is hidden in normal builds. Enable it only for a local
+diagnostic session with
+`--dart-define=AERO_ARC_ENABLE_SAMPLE_CONFORMANCE=true`; submitted samples are
+persisted and can create conformance findings.
+
+For a real no-seed run, start Registry, Relay, Conformance, API, Agent, and one
+MAVLink source such as ArduPilot SITL. Create the aircraft, battery installation,
+intent, and flight through API lifecycle routes, then prepare/arm/cut over the
+Conformance assignment and apply the matching Relay operation context. Start
+Ops with `make web` after the API is listening.
 
 ## Roadmap
 
