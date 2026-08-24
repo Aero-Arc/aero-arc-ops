@@ -989,6 +989,9 @@ String _intentPosture(
   OperationalIntent intent,
   ConformanceSummary? conformance,
 ) {
+  if (_intentIsOverdue(intent)) {
+    return 'overdue';
+  }
   if (conformance != null && _conformanceNeedsAttention(conformance)) {
     return _conformanceAttentionStatus(conformance);
   }
@@ -1015,6 +1018,11 @@ List<String> _intentAttentionReasons(
   } else if (intent.status == 'rejected') {
     reasons.add('Intent was rejected.');
   }
+  if (_intentIsOverdue(intent)) {
+    reasons.add(
+      'Active flight is beyond its planned end (${_ageLabel(intent.plannedEndAt)}); monitoring must continue until explicit completion.',
+    );
+  }
   if (conformance != null && _conformanceNeedsAttention(conformance)) {
     reasons.add(
       conformance.isLiveProjection
@@ -1023,6 +1031,12 @@ List<String> _intentAttentionReasons(
     );
   }
   return reasons;
+}
+
+bool _intentIsOverdue(OperationalIntent intent, {DateTime? now}) {
+  final plannedEndAt = intent.plannedEndAt;
+  if (intent.status != 'active' || plannedEndAt == null) return false;
+  return !(now ?? DateTime.now()).toUtc().isBefore(plannedEndAt.toUtc());
 }
 
 String _operationConformanceCondition(ConformanceSummary summary) {

@@ -1,0 +1,25 @@
+services:
+  conformance-db:
+    image: postgis/postgis:14-3.5-alpine
+    environment:
+      POSTGRES_USER: conformance
+      POSTGRES_PASSWORD: conformance
+      POSTGRES_DB: conformance
+    ports:
+      - "127.0.0.1:55433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conformance -d conformance"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  influx:
+    image: influxdb:3.10.3-core
+    command:
+      - influxdb3
+      - serve
+      - --node-id=aero-arc-sitl-observer
+      - --object-store=memory
+      - --without-auth
+    ports:
+      - "127.0.0.1:18181:8181"

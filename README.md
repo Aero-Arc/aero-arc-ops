@@ -18,7 +18,7 @@ Provide operators with a fast, readable surface for understanding whether the Ae
 - **Live conformance view** with assignment condition, monitoring freshness,
   recording durability, active findings, evaluated axes, and evaluation/frame
   provenance read from Registry through the API.
-- **Aircraft map** that combines replay, operational volumes, conformance evidence, and live state while degrading safely if registry or telemetry state is unavailable.
+- **Aircraft map** that combines replay, operational volumes, conformance evidence, and a two-second live tracker. Fresh position samples move and rotate the aircraft marker, build a bounded recent breadcrumb, and produce a clearly labeled ten-second constant-velocity projection. Follow mode can be paused for manual map inspection, and a failed refresh retains the last known track while explicitly marking the update delayed.
 - **Compute nodes** with CPU, memory, disk, region, uptime, and per-node utilization bars.
 - **Telemetry dashboard** with latency, throughput, error rate, uptime, trend charts, system health radar, and fleet activity.
 - **Events and settings placeholders** for timeline review and environment configuration workflows.
@@ -126,11 +126,65 @@ diagnostic session with
 `--dart-define=AERO_ARC_ENABLE_SAMPLE_CONFORMANCE=true`; submitted samples are
 persisted and can create conformance findings.
 
-For a real no-seed run, start Registry, Relay, Conformance, API, Agent, and one
-MAVLink source such as ArduPilot SITL. Create the aircraft, battery installation,
-intent, and flight through API lifecycle routes, then prepare/arm/cut over the
-Conformance assignment and apply the matching Relay operation context. Start
-Ops with `make web` after the API is listening.
+## No-seed SITL observer stack
+
+The repository includes a local WSL-oriented runner for watching one real
+ArduCopter SITL instance through the full observation path. It builds sibling
+Aero Arc repositories, starts isolated PostGIS and InfluxDB containers, starts
+Registry, Relay, Conformance, API, Agent, Ops, and SITL, and then creates the
+aircraft, battery installation, intent, volume, and flight through API routes.
+It does not load fixture or seed data.
+
+Prerequisites are Docker Compose, Flutter, Go, OpenSSL, tmux, and an existing
+ArduPilot checkout with a built `ArduCopter` SITL binary. With the Aero Arc
+repositories and `ardupilot` checked out beside this repository, run:
+
+```sh
+make sitl-up
+make sitl-status
+```
+
+Open `http://localhost:7357`. `sitl-up` activates a ten-minute plan and gives
+Conformance a separate 24-hour monitoring authority. Crossing the planned end
+therefore produces an overdue temporal-deviation state; it does not silently
+stop monitoring or mark the flight complete. Override these windows with
+`AERO_ARC_SITL_PLAN_MINUTES` and `AERO_ARC_SITL_MONITOR_HOURS`.
+
+The currently implemented Aero Arc command plane supports authenticated ARM
+and DISARM commands:
+
+```sh
+make sitl-arm
+make sitl-disarm
+```
+
+Movement commands are still issued from MAVProxy. Start a takeoff and waypoint
+demonstration, or attach to the interactive console:
+
+```sh
+make sitl-demo-flight
+make sitl-console
+```
+
+Land first, observe the landing/disarm, and only then complete the operational
+lifecycle:
+
+```sh
+make sitl-land
+make sitl-complete
+make sitl-down
+```
+
+`sitl-complete` is deliberately explicit: it completes the API intent and
+clears the matching Agent context, while the flight remains active if no
+authoritative flight-completion signal has been implemented. Automatic
+Agent-driven flight completion and broader guided movement commands remain
+command-lifecycle work, not behavior simulated by this runner.
+
+Source checkouts can be selected without editing the script, for example
+`AERO_ARC_API_SOURCE=/tmp/aero-arc-api-feature make sitl-up`. Runtime binaries,
+certificates, WAL, logs, and PID files live under
+`/tmp/aero-arc-sitl-observer` by default.
 
 ## Roadmap
 

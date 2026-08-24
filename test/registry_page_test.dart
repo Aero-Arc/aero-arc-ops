@@ -112,6 +112,52 @@ void main() {
     expect(find.text('Armed'), findsWidgets);
     expect(find.textContaining('Armed monitoring'), findsWidgets);
   });
+
+  testWidgets('active intent past planned end remains active and is overdue', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1800, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final dashboard = OperationsDashboard(
+      metrics: const [],
+      operationalIntents: [
+        OperationalIntent(
+          id: 'intent-overdue',
+          aircraftId: 'aircraft-overdue',
+          version: 1,
+          name: 'Overrun mission',
+          summary: 'Aircraft is still operating',
+          authorizationPath: 'demo',
+          populationCategory: 'cat_1',
+          status: 'active',
+          conformanceRequired: true,
+          plannedStartAt: DateTime.utc(2020, 1, 1, 11),
+          plannedEndAt: DateTime.utc(2020, 1, 1, 12),
+        ),
+      ],
+      conformance: const [],
+      liveAircraft: const [],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: Scaffold(body: RegistryPage(load: () async => dashboard)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Overdue'), findsWidgets);
+    expect(
+      find.textContaining('monitoring must continue until explicit completion'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Needs attention'));
+    await tester.pumpAndSettle();
+    expect(find.text('Overrun mission v1'), findsOneWidget);
+  });
 }
 
 OperationsDashboard transitionalOperationsDashboard() {
