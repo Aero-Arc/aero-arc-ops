@@ -56,6 +56,74 @@ void main() {
       mapCenterFor(sampleMapView(), liveState: sampleLiveState()).latitude,
       29.7604,
     );
+    expect(find.text('Live Tracking'), findsOneWidget);
+    expect(find.textContaining('10s projected track'), findsOneWidget);
+  });
+
+  testWidgets('live tracker polls and retains a recent breadcrumb', (
+    tester,
+  ) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async {
+            calls += 1;
+            return sampleLiveState(
+              latitudeDeg: 29.7604 + calls / 10000,
+              longitudeDeg: -95.3698 + calls / 10000,
+              recordedAt: DateTime(2099, 8, 11, 12, 0, calls),
+            );
+          },
+          liveRefreshInterval: const Duration(seconds: 1),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(calls, 1);
+    expect(find.textContaining('1 recent track points'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(calls, 2);
+    expect(find.textContaining('2 recent track points'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('failed refresh retains last known tracker position', (
+    tester,
+  ) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async {
+            calls += 1;
+            if (calls > 1) throw Exception('registry unavailable');
+            return sampleLiveState();
+          },
+          liveRefreshInterval: const Duration(seconds: 1),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(find.byIcon(Icons.navigation), findsOneWidget);
+    expect(find.text('Update Delayed'), findsOneWidget);
+    expect(find.textContaining('Last known live state'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   for (final connectionStatus in ['stale', 'offline', 'unmapped']) {
@@ -280,6 +348,16 @@ void main() {
       hasLength(1),
     );
   });
+
+  test('projected track follows current velocity for ten seconds', () {
+    final position = sampleLiveState().telemetry.position!;
+    final track = projectedPositionTrack(position);
+
+    expect(track, hasLength(2));
+    expect(track.first.latitude, position.latitudeDeg);
+    expect(track.last.latitude, greaterThan(track.first.latitude));
+    expect(track.last.longitude, greaterThan(track.first.longitude));
+  });
 }
 
 AircraftMapView sampleMapView({bool includeActiveIntent = true}) {
@@ -377,7 +455,11 @@ AircraftLiveState sampleLiveState({
   String connectionStatus = 'connected',
   String positionStatus = 'fresh',
   bool includePosition = true,
+  double latitudeDeg = 29.7604,
+  double longitudeDeg = -95.3698,
+  DateTime? recordedAt,
 }) {
+  final sampleTime = recordedAt ?? DateTime(2099, 8, 11, 12);
   return AircraftLiveState(
     aircraftId: 'aircraft-1',
     agentId: 'agent-1',
@@ -391,14 +473,18 @@ AircraftLiveState sampleLiveState({
     ),
     telemetry: AircraftTelemetryState(
       status: 'fresh',
-      lastObservedAt: DateTime(2099, 8, 11, 12),
+      lastObservedAt: sampleTime,
       position: includePosition
           ? PositionTelemetry(
               status: positionStatus,
-              recordedAt: DateTime(2099, 8, 11, 12),
-              latitudeDeg: 29.7604,
-              longitudeDeg: -95.3698,
+              recordedAt: sampleTime,
+              latitudeDeg: latitudeDeg,
+              longitudeDeg: longitudeDeg,
               relativeAltitudeM: 21.2,
+              velocityNorthMps: 8,
+              velocityEastMps: 6,
+              groundspeedMps: 10,
+              headingDeg: 36.9,
             )
           : null,
       battery: BatteryTelemetry(

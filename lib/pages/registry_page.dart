@@ -531,6 +531,13 @@ class _IntentTable extends StatefulWidget {
 
 class _IntentTableState extends State<_IntentTable> {
   _IntentFilter _filter = _IntentFilter.all;
+  final ScrollController _horizontalController = ScrollController();
+
+  @override
+  void dispose() {
+    _horizontalController.dispose();
+    super.dispose();
+  }
 
   Map<String, ConformanceSummary> get _conformanceByIntent => {
     for (final summary in widget.conformance) summary.intentId: summary,
@@ -556,7 +563,10 @@ class _IntentTableState extends State<_IntentTable> {
       _IntentFilter.conformanceAlerts =>
         widget.intents
             .where(
-              (intent) => (conformanceByIntent[intent.id]?.alertCount ?? 0) > 0,
+              (intent) => switch (conformanceByIntent[intent.id]) {
+                final summary? => _conformanceNeedsAttention(summary),
+                null => false,
+              },
             )
             .toList(),
     };
@@ -595,84 +605,93 @@ class _IntentTableState extends State<_IntentTable> {
             else
               LayoutBuilder(
                 builder: (context, constraints) {
-                  return SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        minWidth: constraints.maxWidth,
-                      ),
-                      child: DataTable(
-                        columns: const [
-                          DataColumn(label: Text('Intent')),
-                          DataColumn(label: Text('Aircraft')),
-                          DataColumn(label: Text('Connection')),
-                          DataColumn(label: Text('Position')),
-                          DataColumn(label: Text('Battery')),
-                          DataColumn(label: Text('Posture')),
-                          DataColumn(label: Text('Window')),
-                          DataColumn(label: Text('Conformance')),
-                          DataColumn(label: Text('Open')),
-                        ],
-                        rows: [
-                          for (final intent in intents)
-                            DataRow(
-                              cells: [
-                                DataCell(_IntentAction(intent: intent)),
-                                DataCell(
-                                  _AircraftAction(
-                                    aircraftId: intent.aircraftId,
-                                  ),
-                                ),
-                                DataCell(
-                                  _ConnectionCell(
-                                    state: liveByAircraft[intent.aircraftId],
-                                  ),
-                                ),
-                                DataCell(
-                                  _TelemetryGroupCell(
-                                    label: 'Position',
-                                    group: liveByAircraft[intent.aircraftId]
-                                        ?.telemetry
-                                        .position,
-                                  ),
-                                ),
-                                DataCell(
-                                  _BatteryCell(
-                                    state: liveByAircraft[intent.aircraftId],
-                                  ),
-                                ),
-                                DataCell(
-                                  _IntentPostureCell(
-                                    intent: intent,
-                                    conformance: conformanceByIntent[intent.id],
-                                    onPressed: () => _showIntentDetails(
-                                      context,
-                                      intent,
-                                      conformanceByIntent[intent.id],
+                  return Scrollbar(
+                    controller: _horizontalController,
+                    thumbVisibility: true,
+                    child: SingleChildScrollView(
+                      controller: _horizontalController,
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minWidth: constraints.maxWidth,
+                        ),
+                        child: DataTable(
+                          dataRowMinHeight: 56,
+                          dataRowMaxHeight: 64,
+                          columns: const [
+                            DataColumn(label: Text('Intent')),
+                            DataColumn(label: Text('Aircraft')),
+                            DataColumn(label: Text('Connection')),
+                            DataColumn(label: Text('Position')),
+                            DataColumn(label: Text('Battery')),
+                            DataColumn(label: Text('Posture')),
+                            DataColumn(label: Text('Window')),
+                            DataColumn(label: Text('Conformance')),
+                            DataColumn(label: Text('Open')),
+                          ],
+                          rows: [
+                            for (final intent in intents)
+                              DataRow(
+                                cells: [
+                                  DataCell(_IntentAction(intent: intent)),
+                                  DataCell(
+                                    _AircraftAction(
+                                      aircraftId: intent.aircraftId,
                                     ),
                                   ),
-                                ),
-                                DataCell(
-                                  Text(
-                                    '${formatDate(intent.plannedStartAt)} -> ${formatDate(intent.plannedEndAt)}',
+                                  DataCell(
+                                    _ConnectionCell(
+                                      state: liveByAircraft[intent.aircraftId],
+                                    ),
                                   ),
-                                ),
-                                DataCell(
-                                  _ConformanceCell(
-                                    summary: conformanceByIntent[intent.id],
+                                  DataCell(
+                                    _TelemetryGroupCell(
+                                      label: 'Position',
+                                      group: liveByAircraft[intent.aircraftId]
+                                          ?.telemetry
+                                          .position,
+                                    ),
                                   ),
-                                ),
-                                DataCell(
-                                  IconButton(
-                                    tooltip: 'Open intent workflow',
-                                    onPressed: () =>
-                                        _openIntentWorkflow(context, intent),
-                                    icon: const Icon(Icons.open_in_new),
+                                  DataCell(
+                                    _BatteryCell(
+                                      state: liveByAircraft[intent.aircraftId],
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
-                        ],
+                                  DataCell(
+                                    _IntentPostureCell(
+                                      intent: intent,
+                                      conformance:
+                                          conformanceByIntent[intent.id],
+                                      onPressed: () => _showIntentDetails(
+                                        context,
+                                        intent,
+                                        conformanceByIntent[intent.id],
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      '${formatDate(intent.plannedStartAt)} -> ${formatDate(intent.plannedEndAt)}',
+                                    ),
+                                  ),
+                                  DataCell(
+                                    _ConformanceCell(
+                                      summary: conformanceByIntent[intent.id],
+                                    ),
+                                  ),
+                                  DataCell(
+                                    IconButton(
+                                      tooltip: 'Open intent workflow',
+                                      onPressed: () =>
+                                          _openIntentWorkflow(context, intent),
+                                      icon: const Icon(Icons.open_in_new),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   );
@@ -826,9 +845,23 @@ class _ConformanceCell extends StatelessWidget {
       );
     }
     return Tooltip(
-      message:
-          '${summary.alertCount} alert${summary.alertCount == 1 ? '' : 's'}',
-      child: StatusBadge(label: summary.status),
+      message: summary.isLiveProjection
+          ? '${displayEnum(summary.monitoringStatus ?? 'unknown')} monitoring · ${displayEnum(summary.recordingStatus ?? 'unknown')} recording · ${summary.activeViolationCount} active findings'
+          : '${summary.alertCount} alert${summary.alertCount == 1 ? '' : 's'}',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          StatusBadge(label: _operationConformanceCondition(summary)),
+          if (summary.isLiveProjection) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${displayEnum(summary.monitoringStatus ?? 'unknown')} · ${displayEnum(summary.recordingStatus ?? 'unknown')}',
+              style: const TextStyle(color: Color(0xFF93A3C7), fontSize: 12),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -908,9 +941,7 @@ class _ConformanceLinkPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final linked = summaries
-        .where((summary) => summary.alertCount > 0)
-        .toList();
+    final linked = summaries.where(_conformanceNeedsAttention).toList();
     return Panel(
       title: 'Conformance Attention',
       child: RowList(
@@ -930,12 +961,14 @@ class _ConformanceLinkPanel extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      '${summary.intentId} / ${summary.aircraftId} - ${formatPercent(summary.score)} score, ${summary.alertCount} alerts',
+                      summary.isLiveProjection
+                          ? '${summary.intentId} / ${summary.aircraftId} · ${displayEnum(summary.monitoringStatus ?? 'unknown')} monitoring · ${summary.activeViolationCount} active findings'
+                          : '${summary.intentId} / ${summary.aircraftId} · ${formatPercent(summary.score)} score, ${summary.alertCount} alerts',
                       style: const TextStyle(color: Color(0xFFC4D0EE)),
                     ),
                   ),
                   const SizedBox(width: 12),
-                  StatusBadge(label: summary.status),
+                  StatusBadge(label: _operationConformanceCondition(summary)),
                 ],
               ),
             ),
@@ -956,7 +989,12 @@ String _intentPosture(
   OperationalIntent intent,
   ConformanceSummary? conformance,
 ) {
-  if ((conformance?.alertCount ?? 0) > 0) return 'warning';
+  if (_intentIsOverdue(intent)) {
+    return 'overdue';
+  }
+  if (conformance != null && _conformanceNeedsAttention(conformance)) {
+    return _conformanceAttentionStatus(conformance);
+  }
   return switch (intent.status) {
     'active' => 'active',
     'accepted' => 'ready',
@@ -980,12 +1018,51 @@ List<String> _intentAttentionReasons(
   } else if (intent.status == 'rejected') {
     reasons.add('Intent was rejected.');
   }
-  if ((conformance?.alertCount ?? 0) > 0) {
+  if (_intentIsOverdue(intent)) {
     reasons.add(
-      '${conformance!.alertCount} conformance alert${conformance.alertCount == 1 ? '' : 's'} linked.',
+      'Active flight is beyond its planned end (${_ageLabel(intent.plannedEndAt)}); monitoring must continue until explicit completion.',
+    );
+  }
+  if (conformance != null && _conformanceNeedsAttention(conformance)) {
+    reasons.add(
+      conformance.isLiveProjection
+          ? '${displayEnum(_operationConformanceCondition(conformance))} condition, ${displayEnum(conformance.monitoringStatus ?? 'unknown')} monitoring, and ${conformance.activeViolationCount} active findings.'
+          : '${conformance.alertCount} conformance alert${conformance.alertCount == 1 ? '' : 's'} linked.',
     );
   }
   return reasons;
+}
+
+bool _intentIsOverdue(OperationalIntent intent, {DateTime? now}) {
+  final plannedEndAt = intent.plannedEndAt;
+  if (intent.status != 'active' || plannedEndAt == null) return false;
+  return !(now ?? DateTime.now()).toUtc().isBefore(plannedEndAt.toUtc());
+}
+
+String _operationConformanceCondition(ConformanceSummary summary) {
+  final condition = summary.condition;
+  return condition == null || condition.isEmpty ? summary.status : condition;
+}
+
+bool _conformanceNeedsAttention(ConformanceSummary summary) {
+  if (!summary.isLiveProjection) return summary.alertCount > 0;
+  return _operationConformanceCondition(summary) != 'conforming' ||
+      summary.monitoringStatus != 'current' ||
+      summary.recordingStatus != 'confirmed' ||
+      summary.activeViolationCount > 0;
+}
+
+String _conformanceAttentionStatus(ConformanceSummary summary) {
+  if (!summary.isLiveProjection) return 'warning';
+  final condition = _operationConformanceCondition(summary);
+  if (condition != 'conforming') return condition;
+  if (summary.monitoringStatus != 'current') {
+    return summary.monitoringStatus ?? 'unavailable';
+  }
+  if (summary.recordingStatus != 'confirmed') {
+    return summary.recordingStatus ?? 'unavailable';
+  }
+  return summary.activeViolationCount > 0 ? 'warning' : 'ready';
 }
 
 String _topIntentAttentionReason(
@@ -1084,13 +1161,31 @@ void _showIntentDetails(
       ]),
       if (conformance != null)
         detailSection('Linked Conformance', [
-          DetailLine(label: 'Status', value: displayEnum(conformance.status)),
-          DetailLine(label: 'Alerts', value: '${conformance.alertCount}'),
-          DetailLine(label: 'Score', value: formatPercent(conformance.score)),
           DetailLine(
-            label: 'Reportability',
-            value: displayEnum(conformance.reportabilityStatus),
+            label: 'Condition',
+            value: displayEnum(_operationConformanceCondition(conformance)),
           ),
+          if (conformance.isLiveProjection) ...[
+            DetailLine(
+              label: 'Monitoring',
+              value: displayEnum(conformance.monitoringStatus ?? 'unknown'),
+            ),
+            DetailLine(
+              label: 'Recording',
+              value: displayEnum(conformance.recordingStatus ?? 'unknown'),
+            ),
+            DetailLine(
+              label: 'Observed',
+              value: formatDate(conformance.observedAt),
+            ),
+          ] else ...[
+            DetailLine(label: 'Alerts', value: '${conformance.alertCount}'),
+            DetailLine(label: 'Score', value: formatPercent(conformance.score)),
+            DetailLine(
+              label: 'Reportability',
+              value: displayEnum(conformance.reportabilityStatus),
+            ),
+          ],
         ]),
     ],
   );
@@ -1114,20 +1209,48 @@ void _showConformanceSummaryDetails(
   showDetailsSheet(
     context,
     title: summary.intentId,
-    status: StatusBadge(label: summary.status),
+    status: StatusBadge(label: _operationConformanceCondition(summary)),
     children: [
       detailSection('Linked Conformance', [
         DetailLine(label: 'Summary ID', value: summary.id),
         DetailLine(label: 'Intent', value: summary.intentId),
         DetailLine(label: 'Flight', value: summary.flightId ?? 'Not linked'),
         DetailLine(label: 'Aircraft', value: summary.aircraftId),
-        DetailLine(label: 'Score', value: formatPercent(summary.score)),
-        DetailLine(label: 'Alerts', value: '${summary.alertCount}'),
         DetailLine(
-          label: 'Reportability',
-          value: displayEnum(summary.reportabilityStatus),
+          label: 'Condition',
+          value: displayEnum(_operationConformanceCondition(summary)),
         ),
-        DetailLine(label: 'Updated', value: formatDate(summary.updatedAt)),
+        if (summary.isLiveProjection) ...[
+          DetailLine(
+            label: 'Monitoring',
+            value: displayEnum(summary.monitoringStatus ?? 'unknown'),
+          ),
+          DetailLine(
+            label: 'Recording',
+            value: displayEnum(summary.recordingStatus ?? 'unknown'),
+          ),
+          DetailLine(label: 'Observed', value: formatDate(summary.observedAt)),
+          DetailLine(
+            label: 'Assignment generation',
+            value: '${summary.assignmentGeneration ?? 0}',
+          ),
+          DetailLine(
+            label: 'Evaluation revision',
+            value: '${summary.evaluationRevision ?? 0}',
+          ),
+          DetailLine(
+            label: 'Frame ID',
+            value: summary.frameId ?? 'Not provided',
+          ),
+        ] else ...[
+          DetailLine(label: 'Score', value: formatPercent(summary.score)),
+          DetailLine(label: 'Alerts', value: '${summary.alertCount}'),
+          DetailLine(
+            label: 'Reportability',
+            value: displayEnum(summary.reportabilityStatus),
+          ),
+          DetailLine(label: 'Updated', value: formatDate(summary.updatedAt)),
+        ],
       ]),
     ],
   );

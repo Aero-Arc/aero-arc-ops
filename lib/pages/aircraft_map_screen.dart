@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -18,13 +19,18 @@ class AircraftMapScreen extends StatefulWidget {
     this.loadState,
     this.limit = 1000,
     this.renderTiles = true,
-  });
+    this.liveRefreshInterval = const Duration(seconds: 2),
+    this.liveTrailLimit = 60,
+  }) : assert(liveRefreshInterval > Duration.zero),
+       assert(liveTrailLimit > 0);
 
   final String aircraftId;
   final int limit;
   final Future<AircraftMapView> Function()? load;
   final Future<AircraftLiveState> Function()? loadState;
   final bool renderTiles;
+  final Duration liveRefreshInterval;
+  final int liveTrailLimit;
 
   @override
   State<AircraftMapScreen> createState() => _AircraftMapScreenState();
@@ -36,6 +42,9 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
   Object? _liveStateError;
   bool _liveStateLoading = false;
   int _loadGeneration = 0;
+  Timer? _liveRefreshTimer;
+  final List<LatLng> _liveTrail = [];
+  DateTime? _lastTrackRecordedAt;
 
   @override
   void initState() {
@@ -62,32 +71,62 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             : null);
     _liveStateLoading = stateLoader != null;
     if (stateLoader != null) {
-      unawaited(
-        _loadLiveState(Future<AircraftLiveState>.sync(stateLoader), generation),
-      );
+      unawaited(_loadLiveState(stateLoader, generation));
     }
     return mapFuture;
   }
 
   Future<void> _loadLiveState(
-    Future<AircraftLiveState> future,
+    Future<AircraftLiveState> Function() loader,
     int generation,
   ) async {
-    final result = await _captureLiveState(future);
+    final result = await _captureLiveState(
+      Future<AircraftLiveState>.sync(loader),
+    );
     if (!mounted || generation != _loadGeneration) return;
     setState(() {
-      _liveState = result.state;
+      if (result.state != null) {
+        _liveState = result.state;
+        _recordLiveTrack(result.state!);
+      }
       _liveStateError = result.error;
       _liveStateLoading = false;
     });
+    _liveRefreshTimer?.cancel();
+    _liveRefreshTimer = Timer(
+      widget.liveRefreshInterval,
+      () => _loadLiveState(loader, generation),
+    );
+  }
+
+  void _recordLiveTrack(AircraftLiveState state) {
+    final position = state.telemetry.position;
+    if (position == null || position.status != 'fresh') return;
+    if (_lastTrackRecordedAt == position.recordedAt) return;
+    final point = LatLng(position.latitudeDeg, position.longitudeDeg);
+    if (_liveTrail.isEmpty || _liveTrail.last != point) {
+      _liveTrail.add(point);
+      final overflow = _liveTrail.length - widget.liveTrailLimit;
+      if (overflow > 0) _liveTrail.removeRange(0, overflow);
+    }
+    _lastTrackRecordedAt = position.recordedAt;
   }
 
   void _refresh() {
+    _liveRefreshTimer?.cancel();
     setState(() {
       _liveState = null;
       _liveStateError = null;
+      _liveTrail.clear();
+      _lastTrackRecordedAt = null;
       _future = _load();
     });
+  }
+
+  @override
+  void dispose() {
+    _liveRefreshTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -130,6 +169,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             liveState: _liveState,
             liveStateError: _liveStateError,
             liveStateLoading: _liveStateLoading,
+            liveTrail: List.unmodifiable(_liveTrail),
             onRefresh: _refresh,
             renderTiles: widget.renderTiles,
           );
@@ -195,6 +235,7 @@ class _AircraftMapContent extends StatelessWidget {
     required this.liveState,
     required this.liveStateError,
     required this.liveStateLoading,
+    required this.liveTrail,
     required this.onRefresh,
     required this.renderTiles,
   });
@@ -203,6 +244,7 @@ class _AircraftMapContent extends StatelessWidget {
   final AircraftLiveState? liveState;
   final Object? liveStateError;
   final bool liveStateLoading;
+  final List<LatLng> liveTrail;
   final VoidCallback onRefresh;
   final bool renderTiles;
 
@@ -233,6 +275,8 @@ class _AircraftMapContent extends StatelessWidget {
                       child: _MapPanel(
                         view: view,
                         liveState: liveState,
+                        liveStateError: liveStateError,
+                        liveTrail: liveTrail,
                         center: center,
                         renderTiles: renderTiles,
                       ),
@@ -255,6 +299,8 @@ class _AircraftMapContent extends StatelessWidget {
                   _MapPanel(
                     view: view,
                     liveState: liveState,
+                    liveStateError: liveStateError,
+                    liveTrail: liveTrail,
                     center: center,
                     renderTiles: renderTiles,
                   ),
@@ -343,12 +389,16 @@ class _MapPanel extends StatelessWidget {
   const _MapPanel({
     required this.view,
     required this.liveState,
+    required this.liveStateError,
+    required this.liveTrail,
     required this.center,
     required this.renderTiles,
   });
 
   final AircraftMapView view;
   final AircraftLiveState? liveState;
+  final Object? liveStateError;
+  final List<LatLng> liveTrail;
   final LatLng center;
   final bool renderTiles;
 
@@ -358,6 +408,21 @@ class _MapPanel extends StatelessWidget {
     final polygons = volumePolygons(view.operationalVolumes);
     final livePosition = liveState?.telemetry.position;
     final livePositionAvailable = livePosition?.status == 'fresh';
+    final hud = liveState?.telemetry.hud;
+    final heading = livePosition?.headingDeg ?? hud?.headingDeg;
+    final projectedTrack = livePositionAvailable
+        ? projectedPositionTrack(
+            livePosition!,
+            fallbackGroundspeedMps: hud?.groundspeedMps,
+            fallbackHeadingDeg: hud?.headingDeg,
+          )
+        : const <LatLng>[];
+    final speed = livePosition == null
+        ? null
+        : positionGroundspeed(
+            livePosition,
+            fallbackGroundspeedMps: hud?.groundspeedMps,
+          );
     final markers = <Marker>[
       if (path.isNotEmpty)
         Marker(
@@ -383,6 +448,9 @@ class _MapPanel extends StatelessWidget {
             icon: livePositionAvailable
                 ? Icons.navigation
                 : Icons.question_mark_rounded,
+            rotationRadians: livePositionAvailable && heading != null
+                ? heading * math.pi / 180
+                : 0,
           ),
         ),
       for (final event in view.conformanceEvents)
@@ -400,40 +468,86 @@ class _MapPanel extends StatelessWidget {
 
     return Panel(
       title: 'Aircraft Map',
+      trailing: StatusBadge(
+        label: liveStateError != null
+            ? 'update_delayed'
+            : livePositionAvailable
+            ? 'live_tracking'
+            : 'tracking_unavailable',
+      ),
       child: SizedBox(
         height: 560,
-        child: FlutterMap(
-          key: ValueKey('${center.latitude},${center.longitude}'),
-          options: MapOptions(initialCenter: center, initialZoom: 15),
+        child: Stack(
           children: [
-            if (renderTiles)
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'aero_arc_web',
-              ),
-            if (polygons.isNotEmpty)
-              PolygonLayer(
-                polygons: [
-                  for (final polygon in polygons)
-                    Polygon(
-                      points: polygon,
-                      color: const Color(0xFF5A6BFF).withValues(alpha: 0.18),
-                      borderColor: const Color(0xFF6B75FF),
-                      borderStrokeWidth: 2,
-                    ),
-                ],
-              ),
-            if (path.length >= 2)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: path,
-                    strokeWidth: 4,
-                    color: const Color(0xFF00CFA0),
+            _FollowingMap(
+              center: center,
+              children: [
+                if (renderTiles)
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'aero_arc_web',
                   ),
-                ],
+                if (polygons.isNotEmpty)
+                  PolygonLayer(
+                    polygons: [
+                      for (final polygon in polygons)
+                        Polygon(
+                          points: polygon,
+                          color: const Color(
+                            0xFF5A6BFF,
+                          ).withValues(alpha: 0.18),
+                          borderColor: const Color(0xFF6B75FF),
+                          borderStrokeWidth: 2,
+                        ),
+                    ],
+                  ),
+                if (path.length >= 2)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: path,
+                        strokeWidth: 3,
+                        color: const Color(0xFF5E6FFF),
+                      ),
+                    ],
+                  ),
+                if (liveTrail.length >= 2)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: liveTrail,
+                        strokeWidth: 5,
+                        color: const Color(0xFF00CFA0),
+                      ),
+                    ],
+                  ),
+                if (projectedTrack.length == 2)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: projectedTrack,
+                        strokeWidth: 3,
+                        color: const Color(0xFF43C6FF),
+                      ),
+                    ],
+                  ),
+                if (markers.isNotEmpty) MarkerLayer(markers: markers),
+              ],
+            ),
+            Positioned(
+              top: 12,
+              left: 12,
+              child: _TrackerReadout(
+                position: livePosition,
+                speedMps: speed,
+                headingDeg: heading,
+                sampleCount: liveTrail.length,
+                projecting: projectedTrack.length == 2,
+                updateDelayed: liveStateError != null,
               ),
-            if (markers.isNotEmpty) MarkerLayer(markers: markers),
+            ),
+            const Positioned(bottom: 12, left: 12, child: _MapLegend()),
           ],
         ),
       ),
@@ -442,10 +556,15 @@ class _MapPanel extends StatelessWidget {
 }
 
 class _MapMarker extends StatelessWidget {
-  const _MapMarker({required this.color, required this.icon});
+  const _MapMarker({
+    required this.color,
+    required this.icon,
+    this.rotationRadians = 0,
+  });
 
   final Color color;
   final IconData icon;
+  final double rotationRadians;
 
   @override
   Widget build(BuildContext context) {
@@ -456,7 +575,198 @@ class _MapMarker extends StatelessWidget {
         border: Border.all(color: Colors.white, width: 2),
         boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 8)],
       ),
-      child: Icon(icon, color: Colors.white, size: 20),
+      child: Transform.rotate(
+        angle: rotationRadians,
+        child: Icon(icon, color: Colors.white, size: 20),
+      ),
+    );
+  }
+}
+
+class _FollowingMap extends StatefulWidget {
+  const _FollowingMap({required this.center, required this.children});
+
+  final LatLng center;
+  final List<Widget> children;
+
+  @override
+  State<_FollowingMap> createState() => _FollowingMapState();
+}
+
+class _FollowingMapState extends State<_FollowingMap> {
+  final MapController _controller = MapController();
+  bool _following = true;
+
+  @override
+  void didUpdateWidget(covariant _FollowingMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_following || oldWidget.center == widget.center) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _moveToLivePosition();
+    });
+  }
+
+  void _moveToLivePosition() {
+    _controller.move(widget.center, _controller.camera.zoom);
+  }
+
+  void _setFollowing(bool selected) {
+    setState(() => _following = selected);
+    if (selected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _moveToLivePosition();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        FlutterMap(
+          mapController: _controller,
+          options: MapOptions(initialCenter: widget.center, initialZoom: 15),
+          children: widget.children,
+        ),
+        Positioned(
+          top: 12,
+          right: 12,
+          child: Material(
+            color: Colors.transparent,
+            child: IconButton.filledTonal(
+              onPressed: () => _setFollowing(!_following),
+              icon: Icon(_following ? Icons.gps_fixed : Icons.gps_not_fixed),
+              tooltip: _following
+                  ? 'Pause live map follow'
+                  : 'Follow live position',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TrackerReadout extends StatelessWidget {
+  const _TrackerReadout({
+    required this.position,
+    required this.speedMps,
+    required this.headingDeg,
+    required this.sampleCount,
+    required this.projecting,
+    required this.updateDelayed,
+  });
+
+  final PositionTelemetry? position;
+  final double? speedMps;
+  final double? headingDeg;
+  final int sampleCount;
+  final bool projecting;
+  final bool updateDelayed;
+
+  @override
+  Widget build(BuildContext context) {
+    final fresh = position?.status == 'fresh';
+    final moving = fresh && (speedMps ?? 0) >= 0.5;
+    final motion = updateDelayed
+        ? 'Last known position'
+        : !fresh
+        ? 'Position ${displayEnum(position?.status ?? 'unavailable')}'
+        : moving
+        ? 'Moving ${speedMps!.toStringAsFixed(1)} m/s'
+        : 'Holding position';
+    final direction = headingDeg == null
+        ? ''
+        : ' · ${headingDeg!.round().toString().padLeft(3, '0')}°';
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xED07132E),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF183263)),
+        boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 12)],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              motion + direction,
+              style: const TextStyle(
+                color: Color(0xFFE7EEFF),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              updateDelayed
+                  ? '$sampleCount recent track points · live update delayed'
+                  : projecting
+                  ? '10s projected track · $sampleCount recent track points'
+                  : '$sampleCount recent track points · no motion projection',
+              style: const TextStyle(color: Color(0xFF93A3C7), fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MapLegend extends StatelessWidget {
+  const _MapLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xE607132E),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: const Color(0xFF183263)),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        child: Wrap(
+          spacing: 12,
+          runSpacing: 6,
+          children: [
+            _MapLegendItem(color: Color(0xFF5E6FFF), label: 'History'),
+            _MapLegendItem(color: Color(0xFF00CFA0), label: 'Live trail'),
+            _MapLegendItem(color: Color(0xFF43C6FF), label: '10s projection'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MapLegendItem extends StatelessWidget {
+  const _MapLegendItem({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          child: const SizedBox.square(dimension: 8),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: const TextStyle(color: Color(0xFFB8C5E3), fontSize: 11),
+        ),
+      ],
     );
   }
 }
@@ -676,6 +986,12 @@ class _AircraftLiveStatePanel extends StatelessWidget {
               value:
                   '${displayEnum(telemetry.status)} · ${_mapTimestamp(telemetry.lastObservedAt)}',
             ),
+            if (error != null)
+              const DetailLine(
+                label: 'Tracker refresh',
+                value:
+                    'Update delayed. Last known live state remains on the map.',
+              ),
             DetailLine(
               label: 'Position sample',
               value: telemetry.position == null
@@ -796,6 +1112,60 @@ List<LatLng> replayPath(List<TelemetrySample> samples) {
       return left.compareTo(right);
     });
   return [for (final sample in sorted) telemetryPoint(sample)];
+}
+
+double? positionGroundspeed(
+  PositionTelemetry position, {
+  double? fallbackGroundspeedMps,
+}) {
+  final north = position.velocityNorthMps;
+  final east = position.velocityEastMps;
+  if (north != null && east != null) {
+    return math.sqrt(north * north + east * east);
+  }
+  return position.groundspeedMps ?? fallbackGroundspeedMps;
+}
+
+/// Returns the current position and a simple constant-velocity projection.
+///
+/// This is a situational-awareness cue, not a commanded route or mission
+/// destination. A projection is omitted when the aircraft is effectively
+/// stationary or the API did not provide enough motion information.
+List<LatLng> projectedPositionTrack(
+  PositionTelemetry position, {
+  double? fallbackGroundspeedMps,
+  double? fallbackHeadingDeg,
+  Duration horizon = const Duration(seconds: 10),
+}) {
+  var north = position.velocityNorthMps;
+  var east = position.velocityEastMps;
+  final speed = positionGroundspeed(
+    position,
+    fallbackGroundspeedMps: fallbackGroundspeedMps,
+  );
+  if (speed == null || speed < 0.5) return const [];
+
+  if (north == null || east == null) {
+    final heading = position.headingDeg ?? fallbackHeadingDeg;
+    if (heading == null) return const [];
+    final radians = heading * math.pi / 180;
+    north = speed * math.cos(radians);
+    east = speed * math.sin(radians);
+  }
+
+  const metersPerDegreeLatitude = 111320.0;
+  final seconds = horizon.inMilliseconds / 1000;
+  final latitudeRadians = position.latitudeDeg * math.pi / 180;
+  final longitudeScale = metersPerDegreeLatitude * math.cos(latitudeRadians);
+  if (longitudeScale.abs() < 1) return const [];
+
+  return [
+    LatLng(position.latitudeDeg, position.longitudeDeg),
+    LatLng(
+      position.latitudeDeg + north * seconds / metersPerDegreeLatitude,
+      position.longitudeDeg + east * seconds / longitudeScale,
+    ),
+  ];
 }
 
 List<List<LatLng>> volumePolygons(List<OperationalVolume> volumes) {

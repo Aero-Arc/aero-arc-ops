@@ -61,6 +61,12 @@ void main() {
     expect(find.text('Pipeline v2'), findsOneWidget);
     expect(find.text('Survey v1'), findsNothing);
 
+    await tester.tap(find.text('Conformance alerts'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pipeline v2'), findsNothing);
+    expect(find.text('Survey v1'), findsOneWidget);
+
     await tester.tap(find.text('All'));
     await tester.pumpAndSettle();
 
@@ -80,6 +86,115 @@ void main() {
 
     expect(find.text('route:/aircraft/aircraft-2/map'), findsOneWidget);
   });
+
+  testWidgets('transitional live conformance is surfaced as attention', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: Scaffold(
+          body: RegistryPage(
+            load: () async => transitionalOperationsDashboard(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Conformance alerts'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Transition v1'), findsOneWidget);
+    expect(find.text('Armed'), findsWidgets);
+    expect(find.textContaining('Armed monitoring'), findsWidgets);
+  });
+
+  testWidgets('active intent past planned end remains active and is overdue', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1800, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final dashboard = OperationsDashboard(
+      metrics: const [],
+      operationalIntents: [
+        OperationalIntent(
+          id: 'intent-overdue',
+          aircraftId: 'aircraft-overdue',
+          version: 1,
+          name: 'Overrun mission',
+          summary: 'Aircraft is still operating',
+          authorizationPath: 'demo',
+          populationCategory: 'cat_1',
+          status: 'active',
+          conformanceRequired: true,
+          plannedStartAt: DateTime.utc(2020, 1, 1, 11),
+          plannedEndAt: DateTime.utc(2020, 1, 1, 12),
+        ),
+      ],
+      conformance: const [],
+      liveAircraft: const [],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: Scaffold(body: RegistryPage(load: () async => dashboard)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Overdue'), findsWidgets);
+    expect(
+      find.textContaining('monitoring must continue until explicit completion'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Needs attention'));
+    await tester.pumpAndSettle();
+    expect(find.text('Overrun mission v1'), findsOneWidget);
+  });
+}
+
+OperationsDashboard transitionalOperationsDashboard() {
+  return OperationsDashboard(
+    metrics: const [],
+    operationalIntents: const [
+      OperationalIntent(
+        id: 'intent-transition',
+        aircraftId: 'aircraft-transition',
+        version: 1,
+        name: 'Transition',
+        summary: 'Assignment cutover',
+        authorizationPath: 'permit',
+        populationCategory: 'cat_1',
+        status: 'active',
+        conformanceRequired: true,
+      ),
+    ],
+    conformance: const [
+      ConformanceSummary(
+        id: 'summary-transition',
+        intentId: 'intent-transition',
+        intentVersion: 1,
+        aircraftId: 'aircraft-transition',
+        status: 'conforming',
+        alertCount: 0,
+        reportabilityStatus: 'no',
+        assignmentId: 'intent-transition',
+        assignmentGeneration: 1,
+        evaluationRevision: 1,
+        condition: 'conforming',
+        monitoringStatus: 'armed',
+        recordingStatus: 'pending',
+      ),
+    ],
+    liveAircraft: const [],
+  );
 }
 
 OperationsDashboard sampleOperationsDashboard() {
@@ -117,9 +232,19 @@ OperationsDashboard sampleOperationsDashboard() {
         intentId: 'intent-2',
         intentVersion: 1,
         aircraftId: 'aircraft-2',
-        status: 'deviating',
-        alertCount: 2,
-        reportabilityStatus: 'review',
+        status: 'non_conforming',
+        alertCount: 0,
+        reportabilityStatus: 'no',
+        assignmentId: 'intent-2',
+        assignmentGeneration: 1,
+        evaluationRevision: 7,
+        evaluationId: 'evaluation-7',
+        condition: 'non_conforming',
+        monitoringStatus: 'current',
+        recordingStatus: 'confirmed',
+        violations: const [
+          ConformanceViolation(type: 'lateral_deviation', phase: 'opening'),
+        ],
       ),
     ],
     liveAircraft: [
