@@ -126,6 +126,57 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets(
+    'live conformance refreshes independently and retains the last good state',
+    (tester) async {
+      var calls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(),
+            loadConformance: () async {
+              calls += 1;
+              if (calls == 1) return sampleConformanceDashboard();
+              if (calls == 2) {
+                return sampleConformanceDashboard(
+                  condition: 'non_conforming',
+                  phase: 'open',
+                  worstDeviationM: 62.4,
+                );
+              }
+              throw Exception('conformance unavailable');
+            },
+            conformanceRefreshInterval: const Duration(seconds: 1),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(calls, 1);
+      expect(find.text('Conforming'), findsWidgets);
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(calls, 2);
+      expect(find.text('Non Conforming'), findsWidgets);
+      expect(find.text('Lateral Deviation'), findsOneWidget);
+      expect(find.text('Open · 62.4 m worst deviation'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(calls, 3);
+      expect(find.text('Update Delayed'), findsOneWidget);
+      expect(find.text('Non Conforming'), findsOneWidget);
+      expect(find.text('Open · 62.4 m worst deviation'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   for (final connectionStatus in ['stale', 'offline', 'unmapped']) {
     testWidgets(
       'fresh position renders navigation marker with $connectionStatus connection',
@@ -421,6 +472,40 @@ AircraftMapView sampleMapView({bool includeActiveIntent = true}) {
         longitude: -97.3,
       ),
     ],
+  );
+}
+
+ConformanceDashboard sampleConformanceDashboard({
+  String condition = 'conforming',
+  String phase = 'clear',
+  double? worstDeviationM,
+}) {
+  return ConformanceDashboard(
+    metrics: const [],
+    summaries: [
+      ConformanceSummary(
+        id: 'live-summary-1',
+        intentId: 'intent-1',
+        intentVersion: 1,
+        aircraftId: 'aircraft-1',
+        status: condition,
+        alertCount: phase == 'clear' ? 0 : 1,
+        reportabilityStatus: 'no',
+        assignmentId: 'assignment-1',
+        condition: condition,
+        monitoringStatus: 'current',
+        recordingStatus: 'confirmed',
+        observedAt: DateTime(2099, 8, 11, 12),
+        violations: [
+          ConformanceViolation(
+            type: 'lateral_deviation',
+            phase: phase,
+            worstDeviationM: worstDeviationM,
+          ),
+        ],
+      ),
+    ],
+    events: const [],
   );
 }
 
