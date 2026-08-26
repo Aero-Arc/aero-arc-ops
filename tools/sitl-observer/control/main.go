@@ -36,11 +36,13 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected activate, clear, or aircraft-command")
+		return errors.New("expected activate, set-context, clear, or aircraft-command")
 	}
 	switch args[0] {
 	case "activate":
 		return activate(args[1:])
+	case "set-context":
+		return setContext(args[1:])
 	case "clear":
 		return clearContext(args[1:])
 	case "aircraft-command":
@@ -48,6 +50,59 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func setContext(args []string) error {
+	fs := flag.NewFlagSet("set-context", flag.ContinueOnError)
+	var shared sharedFlags
+	addSharedFlags(fs, &shared)
+	relayAddress := fs.String("relay", "127.0.0.1:50050", "Relay gRPC address")
+	agentID := fs.String("agent-id", "", "agent ID")
+	flightID := fs.String("flight-id", "", "flight ID")
+	intentID := fs.String("intent-id", "", "intent ID")
+	intentVersion := fs.Uint("intent-version", 1, "intent version")
+	commandID := fs.String("command-id", "", "idempotency key")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := require(map[string]string{
+		"agent-id": *agentID, "flight-id": *flightID, "intent-id": *intentID,
+		"command-id": *commandID,
+	}); err != nil {
+		return err
+	}
+	if *intentVersion == 0 {
+		return errors.New("intent-version must be positive")
+	}
+	creds, err := clientCredentials(shared)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), shared.timeout)
+	defer cancel()
+	conn, err := grpc.NewClient(*relayAddress, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		return fmt.Errorf("connect to Relay: %w", err)
+	}
+	defer conn.Close()
+	result, err := relayv1.NewRelayControlClient(conn).SetOperationContext(ctx, &relayv1.SetOperationContextRequest{
+		AgentId: *agentID,
+		Command: &agentv1.SetOperationContextCommand{
+			CommandId: *commandID,
+			Context: &agentv1.OperationContext{
+				FlightId: *flightID, IntentId: *intentID,
+				IntentVersion: uint32(*intentVersion),
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("set Agent operation context: %w", err)
+	}
+	if !acceptedAck(result.GetResult().GetStatus()) {
+		return fmt.Errorf("Agent rejected operation context: %s: %s", result.GetResult().GetStatus(), result.GetResult().GetError())
+	}
+	fmt.Printf("Agent context set for flight %s\n", *flightID)
+	return nil
 }
 
 func addSharedFlags(fs *flag.FlagSet, values *sharedFlags) {
@@ -124,7 +179,7 @@ func activate(args []string) error {
 		Volumes: []*conformancev1.ConformanceVolume{{
 			VolumeId: *volumeID, AltitudeLowerM: 0, AltitudeUpperM: 1000,
 			AltitudeReference: conformancev1.AltitudeReference_ALTITUDE_REFERENCE_MSL,
-			StartsAt: timestamppb.New(plannedStart), EndsAt: timestamppb.New(plannedEnd),
+			StartsAt:          timestamppb.New(plannedStart), EndsAt: timestamppb.New(plannedEnd),
 			Polygon: square(*latitude, *longitude, 0.01),
 		}},
 	}

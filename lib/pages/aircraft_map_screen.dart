@@ -17,19 +17,24 @@ class AircraftMapScreen extends StatefulWidget {
     required this.aircraftId,
     this.load,
     this.loadState,
+    this.loadConformance,
     this.limit = 1000,
     this.renderTiles = true,
-    this.liveRefreshInterval = const Duration(seconds: 2),
+    this.liveRefreshInterval = const Duration(seconds: 1),
+    this.conformanceRefreshInterval = const Duration(seconds: 1),
     this.liveTrailLimit = 60,
   }) : assert(liveRefreshInterval > Duration.zero),
+       assert(conformanceRefreshInterval > Duration.zero),
        assert(liveTrailLimit > 0);
 
   final String aircraftId;
   final int limit;
   final Future<AircraftMapView> Function()? load;
   final Future<AircraftLiveState> Function()? loadState;
+  final Future<ConformanceDashboard> Function()? loadConformance;
   final bool renderTiles;
   final Duration liveRefreshInterval;
+  final Duration conformanceRefreshInterval;
   final int liveTrailLimit;
 
   @override
@@ -41,8 +46,12 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
   AircraftLiveState? _liveState;
   Object? _liveStateError;
   bool _liveStateLoading = false;
+  List<ConformanceSummary> _liveConformance = const [];
+  Object? _conformanceError;
+  bool _conformanceLoading = false;
   int _loadGeneration = 0;
   Timer? _liveRefreshTimer;
+  Timer? _conformanceRefreshTimer;
   final List<LatLng> _liveTrail = [];
   DateTime? _lastTrackRecordedAt;
 
@@ -69,9 +78,15 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
         (custom == null
             ? () => client.getAircraftState(widget.aircraftId)
             : null);
+    final conformanceLoader =
+        widget.loadConformance ?? (custom == null ? client.conformance : null);
     _liveStateLoading = stateLoader != null;
     if (stateLoader != null) {
       unawaited(_loadLiveState(stateLoader, generation));
+    }
+    _conformanceLoading = conformanceLoader != null;
+    if (conformanceLoader != null) {
+      unawaited(_loadConformance(conformanceLoader, generation));
     }
     return mapFuture;
   }
@@ -99,6 +114,28 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
     );
   }
 
+  Future<void> _loadConformance(
+    Future<ConformanceDashboard> Function() loader,
+    int generation,
+  ) async {
+    final result = await _captureConformance(
+      Future<ConformanceDashboard>.sync(loader),
+    );
+    if (!mounted || generation != _loadGeneration) return;
+    setState(() {
+      if (result.dashboard != null) {
+        _liveConformance = result.dashboard!.summaries;
+      }
+      _conformanceError = result.error;
+      _conformanceLoading = false;
+    });
+    _conformanceRefreshTimer?.cancel();
+    _conformanceRefreshTimer = Timer(
+      widget.conformanceRefreshInterval,
+      () => _loadConformance(loader, generation),
+    );
+  }
+
   void _recordLiveTrack(AircraftLiveState state) {
     final position = state.telemetry.position;
     if (position == null || position.status != 'fresh') return;
@@ -114,9 +151,11 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
 
   void _refresh() {
     _liveRefreshTimer?.cancel();
+    _conformanceRefreshTimer?.cancel();
     setState(() {
       _liveState = null;
       _liveStateError = null;
+      _conformanceError = null;
       _liveTrail.clear();
       _lastTrackRecordedAt = null;
       _future = _load();
@@ -126,6 +165,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
   @override
   void dispose() {
     _liveRefreshTimer?.cancel();
+    _conformanceRefreshTimer?.cancel();
     super.dispose();
   }
 
@@ -164,11 +204,20 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             );
           }
 
+          final liveConformance = _selectConformanceSummary(
+            _liveConformance,
+            aircraftId: widget.aircraftId,
+            intentId: view.activeIntent?.id,
+          );
+
           return _AircraftMapContent(
             view: view,
             liveState: _liveState,
             liveStateError: _liveStateError,
             liveStateLoading: _liveStateLoading,
+            conformanceSummary: liveConformance ?? view.conformanceSummary,
+            conformanceError: _conformanceError,
+            conformanceLoading: _conformanceLoading,
             liveTrail: List.unmodifiable(_liveTrail),
             onRefresh: _refresh,
             renderTiles: widget.renderTiles,
@@ -177,6 +226,35 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
       ),
     );
   }
+}
+
+ConformanceSummary? _selectConformanceSummary(
+  List<ConformanceSummary> summaries, {
+  required String aircraftId,
+  String? intentId,
+}) {
+  final matchingAircraft = summaries
+      .where((summary) => summary.aircraftId == aircraftId)
+      .toList();
+  if (matchingAircraft.isEmpty) return null;
+  final matchingIntent = intentId == null
+      ? const <ConformanceSummary>[]
+      : matchingAircraft
+            .where((summary) => summary.intentId == intentId)
+            .toList();
+  if (intentId != null && matchingIntent.isEmpty) return null;
+  final candidates = matchingIntent.isEmpty ? matchingAircraft : matchingIntent;
+  candidates.sort((left, right) {
+    if (left.isLiveProjection != right.isLiveProjection) {
+      return left.isLiveProjection ? -1 : 1;
+    }
+    final leftAt = left.observedAt ?? left.updatedAt;
+    final rightAt = right.observedAt ?? right.updatedAt;
+    if (leftAt == null) return rightAt == null ? 0 : 1;
+    if (rightAt == null) return -1;
+    return rightAt.compareTo(leftAt);
+  });
+  return candidates.first;
 }
 
 Future<_LiveStateResult> _captureLiveState(
@@ -189,10 +267,27 @@ Future<_LiveStateResult> _captureLiveState(
   }
 }
 
+Future<_ConformanceResult> _captureConformance(
+  Future<ConformanceDashboard> future,
+) async {
+  try {
+    return _ConformanceResult(dashboard: await future);
+  } catch (error) {
+    return _ConformanceResult(error: error);
+  }
+}
+
 class _LiveStateResult {
   const _LiveStateResult({this.state, this.error});
 
   final AircraftLiveState? state;
+  final Object? error;
+}
+
+class _ConformanceResult {
+  const _ConformanceResult({this.dashboard, this.error});
+
+  final ConformanceDashboard? dashboard;
   final Object? error;
 }
 
@@ -235,6 +330,9 @@ class _AircraftMapContent extends StatelessWidget {
     required this.liveState,
     required this.liveStateError,
     required this.liveStateLoading,
+    required this.conformanceSummary,
+    required this.conformanceError,
+    required this.conformanceLoading,
     required this.liveTrail,
     required this.onRefresh,
     required this.renderTiles,
@@ -244,6 +342,9 @@ class _AircraftMapContent extends StatelessWidget {
   final AircraftLiveState? liveState;
   final Object? liveStateError;
   final bool liveStateLoading;
+  final ConformanceSummary? conformanceSummary;
+  final Object? conformanceError;
+  final bool conformanceLoading;
   final List<LatLng> liveTrail;
   final VoidCallback onRefresh;
   final bool renderTiles;
@@ -289,6 +390,9 @@ class _AircraftMapContent extends StatelessWidget {
                         liveState: liveState,
                         liveStateError: liveStateError,
                         liveStateLoading: liveStateLoading,
+                        conformanceSummary: conformanceSummary,
+                        conformanceError: conformanceError,
+                        conformanceLoading: conformanceLoading,
                       ),
                     ),
                   ],
@@ -310,6 +414,9 @@ class _AircraftMapContent extends StatelessWidget {
                     liveState: liveState,
                     liveStateError: liveStateError,
                     liveStateLoading: liveStateLoading,
+                    conformanceSummary: conformanceSummary,
+                    conformanceError: conformanceError,
+                    conformanceLoading: conformanceLoading,
                   ),
                 ],
               );
@@ -777,18 +884,24 @@ class _DetailPanel extends StatelessWidget {
     required this.liveState,
     required this.liveStateError,
     required this.liveStateLoading,
+    required this.conformanceSummary,
+    required this.conformanceError,
+    required this.conformanceLoading,
   });
 
   final AircraftMapView view;
   final AircraftLiveState? liveState;
   final Object? liveStateError;
   final bool liveStateLoading;
+  final ConformanceSummary? conformanceSummary;
+  final Object? conformanceError;
+  final bool conformanceLoading;
 
   @override
   Widget build(BuildContext context) {
     final telemetry = view.latestTelemetry;
     final intent = view.activeIntent;
-    final summary = view.conformanceSummary;
+    final summary = conformanceSummary;
     final skippedVolumes = view.operationalVolumes
         .where((volume) => (volume.geoJson ?? '').isEmpty)
         .length;
@@ -860,6 +973,13 @@ class _DetailPanel extends StatelessWidget {
         const SizedBox(height: 18),
         Panel(
           title: 'Conformance',
+          trailing: StatusBadge(
+            label: conformanceError != null
+                ? 'update_delayed'
+                : conformanceLoading
+                ? 'loading'
+                : summary?.condition ?? summary?.status ?? 'unavailable',
+          ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
             child: Column(
@@ -868,13 +988,42 @@ class _DetailPanel extends StatelessWidget {
                   label: 'Status',
                   value: summary == null
                       ? 'No conformance summary.'
-                      : displayEnum(summary.status),
+                      : displayEnum(summary.condition ?? summary.status),
                 ),
                 DetailLine(
-                  label: 'Alerts',
+                  label: summary?.isLiveProjection == true
+                      ? 'Active findings'
+                      : 'Alerts',
                   value:
-                      '${summary?.alertCount ?? view.conformanceEvents.length}',
+                      '${summary?.isLiveProjection == true ? summary?.activeViolationCount : summary?.alertCount ?? view.conformanceEvents.length}',
                 ),
+                if (summary?.isLiveProjection == true) ...[
+                  DetailLine(
+                    label: 'Monitoring',
+                    value: displayEnum(
+                      summary?.monitoringStatus ?? 'unavailable',
+                    ),
+                  ),
+                  DetailLine(
+                    label: 'Recording',
+                    value: displayEnum(
+                      summary?.recordingStatus ?? 'unavailable',
+                    ),
+                  ),
+                  DetailLine(
+                    label: 'Observed',
+                    value: formatDate(summary?.observedAt),
+                  ),
+                  for (final violation in summary?.activeViolations ?? const [])
+                    DetailLine(
+                      label: displayEnum(violation.type),
+                      value: [
+                        displayEnum(violation.phase),
+                        if (violation.worstDeviationM != null)
+                          '${violation.worstDeviationM!.toStringAsFixed(1)} m worst deviation',
+                      ].join(' · '),
+                    ),
+                ],
                 DetailLine(
                   label: 'Reportability',
                   value: summary == null

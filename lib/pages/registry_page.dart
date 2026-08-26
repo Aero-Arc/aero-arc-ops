@@ -17,7 +17,7 @@ class RegistryPage extends StatelessWidget {
       subtitle:
           'Live aircraft connectivity, telemetry freshness, assigned intents, and conformance attention.',
       load: load ?? AeroArcApiClient().operations,
-      autoRefreshInterval: const Duration(seconds: 10),
+      autoRefreshInterval: const Duration(seconds: 1),
       builder: (context, data) => [
         MetricGrid(metrics: data.metrics),
         const SizedBox(height: 18),
