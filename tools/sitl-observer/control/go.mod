@@ -5,7 +5,7 @@ go 1.24.0
 toolchain go1.24.9
 
 require (
-	github.com/aero-arc/aero-arc-protos v0.0.0-20260824043625-7fb48058e9d2
+	github.com/aero-arc/aero-arc-protos v0.0.0-20260827000821-5dda92b25784
 	google.golang.org/grpc v1.79.1
 	google.golang.org/protobuf v1.36.11
 )

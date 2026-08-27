@@ -14,17 +14,31 @@ class AeroArcApiException implements Exception {
 }
 
 class AeroArcApiClient {
-  AeroArcApiClient({http.Client? httpClient, Uri? baseUri})
-    : _http = httpClient ?? http.Client(),
-      _baseUri = baseUri ?? Uri.parse(_defaultBaseUrl);
+  AeroArcApiClient({
+    http.Client? httpClient,
+    Uri? baseUri,
+    String? missionControlToken,
+  }) : _http = httpClient ?? http.Client(),
+       _baseUri = baseUri ?? Uri.parse(_defaultBaseUrl),
+       _missionControlToken =
+           missionControlToken ?? _defaultMissionControlToken;
 
   static const _defaultBaseUrl = String.fromEnvironment(
     'AERO_ARC_API_BASE_URL',
     defaultValue: 'http://localhost:8080',
   );
+  // Local development convenience only. Production authentication must be
+  // supplied by the deployment environment's identity integration.
+  static const _defaultMissionControlToken = String.fromEnvironment(
+    'AERO_ARC_MISSION_DEPLOYMENT_TOKEN',
+  );
 
   final http.Client _http;
   final Uri _baseUri;
+  final String _missionControlToken;
+
+  bool get hasLocalMissionControlToken =>
+      _missionControlToken.trim().isNotEmpty;
 
   Future<OverviewDashboard> overview() =>
       _get('/api/v1/overview', OverviewDashboard.fromJson);
@@ -139,13 +153,102 @@ class AeroArcApiClient {
     );
   }
 
+  Future<FlightRecord> createPlannedFlight(
+    String intentId,
+    CreateFlightRequest request,
+  ) {
+    return _post(
+      '/api/v1/operational-intents/$intentId/flights',
+      FlightRecord.fromJson,
+      body: request.toJson(),
+    );
+  }
+
+  Future<FlightListResponse> listAircraftFlights(String aircraftId) =>
+      _get('/api/v1/aircraft/$aircraftId/flights', FlightListResponse.fromJson);
+
+  Future<MissionImportResult> importMission({
+    required String flightId,
+    required String aircraftId,
+    required String intentId,
+    required int intentVersion,
+    required String source,
+    required String idempotencyKey,
+  }) async {
+    return await _post(
+      '/api/v1/flights/$flightId/missions/import',
+      MissionImportResult.fromJson,
+      headers: _missionControlHeaders(idempotencyKey: idempotencyKey),
+      body: {
+        'source_format': 'qgc_wpl_110',
+        'source': source,
+        'aircraft_id': aircraftId,
+        'intent_id': intentId,
+        'intent_version': intentVersion,
+      },
+    );
+  }
+
+  Future<Mission> getCurrentMission(String flightId) =>
+      _get('/api/v1/flights/$flightId/missions/current', Mission.fromJson);
+
+  Future<MissionDeploymentResponse> deployMission({
+    required Mission mission,
+    required String idempotencyKey,
+  }) async {
+    if (!_lowercaseSha256.hasMatch(mission.missionDigest)) {
+      throw const AeroArcApiException(
+        'Mission deployment requires a lowercase SHA-256 mission digest.',
+      );
+    }
+    final headers = _missionControlHeaders(
+      idempotencyKey: idempotencyKey,
+      missionDigest: mission.missionDigest,
+    );
+    return await _postEmpty(
+      '/api/v1/flights/${mission.flightId}/missions/${mission.id}/deploy',
+      MissionDeploymentResponse.fromJson,
+      headers: headers,
+    );
+  }
+
+  Future<MissionDeployment> getMissionDeployment({
+    required String flightId,
+    required String deploymentId,
+  }) async {
+    return await _get(
+      '/api/v1/flights/$flightId/mission-deployments/$deploymentId',
+      MissionDeployment.fromJson,
+      headers: _missionControlHeaders(),
+    );
+  }
+
+  Map<String, String> _missionControlHeaders({
+    String? idempotencyKey,
+    String? missionDigest,
+  }) {
+    final token = _missionControlToken.trim();
+    if (token.isEmpty) {
+      throw const AeroArcApiException(
+        'Mission control is unavailable: no local development credential is configured.',
+      );
+    }
+    return {
+      'Authorization': 'Bearer $token',
+      'Idempotency-Key': ?idempotencyKey,
+      if (missionDigest != null) 'If-Match': '"$missionDigest"',
+    };
+  }
+
   Future<T> _get<T>(
     String path,
     T Function(Map<String, dynamic>) parse, {
     Map<String, String>? queryParameters,
+    Map<String, String>? headers,
   }) async {
     final response = await _http.get(
       _baseUri.replace(path: path, queryParameters: queryParameters),
+      headers: headers,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw AeroArcApiException('API ${response.statusCode}: ${response.body}');
@@ -160,14 +263,38 @@ class AeroArcApiClient {
     return parse(decoded);
   }
 
+  Future<T> _postEmpty<T>(
+    String path,
+    T Function(Map<String, dynamic>) parse, {
+    required Map<String, String> headers,
+  }) async {
+    final response = await _http.post(
+      _baseUri.replace(path: path),
+      headers: headers,
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AeroArcApiException('API ${response.statusCode}: ${response.body}');
+    }
+    final decoded = response.body.isEmpty
+        ? const <String, dynamic>{}
+        : jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const AeroArcApiException(
+        'API returned an unexpected JSON payload.',
+      );
+    }
+    return parse(decoded);
+  }
+
   Future<T> _post<T>(
     String path,
     T Function(Map<String, dynamic>) parse, {
     Map<String, dynamic>? body,
+    Map<String, String>? headers,
   }) async {
     final response = await _http.post(
       _baseUri.replace(path: path),
-      headers: const {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', ...?headers},
       body: jsonEncode(body ?? const <String, dynamic>{}),
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -185,3 +312,5 @@ class AeroArcApiClient {
     return parse(decoded);
   }
 }
+
+final RegExp _lowercaseSha256 = RegExp(r'^[0-9a-f]{64}$');

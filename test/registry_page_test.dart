@@ -47,6 +47,7 @@ void main() {
     expect(find.text('Conformance Attention'), findsOneWidget);
     expect(find.text('Pipeline v2'), findsOneWidget);
     expect(find.text('Survey v1'), findsOneWidget);
+    expect(find.textContaining('intent-1 v1 / aircraft-1'), findsNothing);
     expect(find.byTooltip('Open intent workflow'), findsNWidgets(2));
 
     await tester.tap(find.text('Needs attention'));
@@ -227,6 +228,25 @@ OperationsDashboard sampleOperationsDashboard() {
       ),
     ],
     conformance: [
+      ConformanceSummary(
+        id: 'summary-superseded',
+        intentId: 'intent-1',
+        intentVersion: 1,
+        aircraftId: 'aircraft-1',
+        status: 'non_conforming',
+        alertCount: 1,
+        reportabilityStatus: 'review',
+        assignmentId: 'intent-1-v1',
+        assignmentGeneration: 1,
+        evaluationRevision: 99,
+        condition: 'non_conforming',
+        monitoringStatus: 'current',
+        recordingStatus: 'confirmed',
+        observedAt: DateTime.utc(2099, 8, 11, 12),
+        violations: const [
+          ConformanceViolation(type: 'lateral_deviation', phase: 'open'),
+        ],
+      ),
       ConformanceSummary(
         id: 'summary-1',
         intentId: 'intent-2',

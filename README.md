@@ -18,7 +18,10 @@ Provide operators with a fast, readable surface for understanding whether the Ae
 - **Live conformance view** with assignment condition, monitoring freshness,
   recording durability, active findings, evaluated axes, and evaluation/frame
   provenance read from Registry through the API.
-- **Aircraft map** that combines replay, operational volumes, conformance evidence, and a two-second live tracker. Fresh position samples move and rotate the aircraft marker, build a bounded recent breadcrumb, and produce a clearly labeled ten-second constant-velocity projection. Follow mode can be paused for manual map inspection, and a failed refresh retains the last known track while explicitly marking the update delayed.
+- **Aircraft map** that combines replay, authorized operational volumes, an
+  intent-bound validated mission plan, conformance evidence, and a one-second live
+  tracker. Violet authorization, cyan mission waypoints, green observed flight,
+  and the amber ten-second motion projection remain separate map layers.
 - **Compute nodes** with CPU, memory, disk, region, uptime, and per-node utilization bars.
 - **Telemetry dashboard** with latency, throughput, error rate, uptime, trend charts, system health radar, and fleet activity.
 - **Events and settings placeholders** for timeline review and environment configuration workflows.
@@ -50,6 +53,16 @@ Override the defaults when needed, for example:
 ```sh
 make web WEB_PORT=8081 API_BASE_URL=http://localhost:8080
 ```
+
+Mission deployment additionally requires a local development credential:
+
+```sh
+make web MISSION_DEPLOY_TOKEN=replace-with-a-local-token-at-least-24-bytes
+```
+
+That value is compiled into the web application and is therefore only a local
+development bridge. It must not be used as production operator authentication;
+production deployment controls require user-scoped API sessions.
 
 For another target, replace `chrome` with an available device from:
 
@@ -150,8 +163,33 @@ therefore produces an overdue temporal-deviation state; it does not silently
 stop monitoring or mark the flight complete. Override these windows with
 `AERO_ARC_SITL_PLAN_MINUTES` and `AERO_ARC_SITL_MONITOR_HOURS`.
 
-The currently implemented Aero Arc command plane supports authenticated ARM
-and DISARM commands:
+`sitl-up` imports the checked-in WPL 110 demonstration mission and validates
+every waypoint and complete route segment against the exact intent version. It
+then asks only the API to deploy the current immutable mission. The API derives
+the aircraft's Agent assignment, resolves that Agent's current Relay through
+Registry, establishes the exact operation context, and sends the command over
+mTLS. Neither Ops nor the observer chooses an Agent or Relay or resubmits
+mission bytes. The Agent reports success only after an onboard readback matches
+the API mission digest. Reconcile or retry the same durable command with:
+
+```sh
+make sitl-mission-deploy
+```
+
+Ops presents mission validation and durable aircraft-deployment status as
+separate steps. The map also keeps the authorization, validated plan, and
+observed flight visually separate. Start the AUTO mission with:
+
+```sh
+make sitl-mission-run
+```
+
+Mission import is deliberately constrained to a single MSL Polygon volume and
+the supported WPL 110 navigation commands. A mission cannot replace or reshape
+the operational intent. `sitl-mission-run` configures SITL-only AUTO behavior,
+selects AUTO in MAVProxy, waits until fresh API telemetry confirms that mode,
+and sends ARM through the authenticated Relay/Agent command lifecycle. The
+command plane also supports explicit ARM and DISARM:
 
 ```sh
 make sitl-arm
@@ -164,6 +202,16 @@ demonstration, or attach to the interactive console:
 ```sh
 make sitl-demo-flight
 make sitl-console
+```
+
+While airborne, the repeatable post-window spatial check sends the aircraft
+outside and then just back inside the authorized Polygon. This demonstrates
+that lateral deviation can open and clear independently while the temporal
+deviation remains open:
+
+```sh
+make sitl-out-of-bounds
+make sitl-return-in-bounds
 ```
 
 Land first, observe the landing/disarm, and only then complete the operational

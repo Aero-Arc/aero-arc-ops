@@ -34,7 +34,10 @@ class RegistryPage extends StatelessWidget {
             intents: data.operationalIntents,
             conformance: data.conformance,
           ),
-          right: _ConformanceLinkPanel(summaries: data.conformance),
+          right: _ConformanceLinkPanel(
+            intents: data.operationalIntents,
+            summaries: data.conformance,
+          ),
         ),
       ],
     );
@@ -514,6 +517,46 @@ enum _IntentFilter {
   final String label;
 }
 
+String _intentConformanceKey(String intentId, int intentVersion) =>
+    '$intentId\u0000$intentVersion';
+
+Map<String, ConformanceSummary> _indexCurrentConformance(
+  List<ConformanceSummary> summaries,
+) {
+  final indexed = <String, ConformanceSummary>{};
+  for (final summary in summaries) {
+    final key = _intentConformanceKey(summary.intentId, summary.intentVersion);
+    final current = indexed[key];
+    if (current == null || _preferConformanceSummary(summary, current)) {
+      indexed[key] = summary;
+    }
+  }
+  return indexed;
+}
+
+bool _preferConformanceSummary(
+  ConformanceSummary candidate,
+  ConformanceSummary current,
+) {
+  if (candidate.isLiveProjection != current.isLiveProjection) {
+    return candidate.isLiveProjection;
+  }
+  final candidateRevision = candidate.evaluationRevision ?? -1;
+  final currentRevision = current.evaluationRevision ?? -1;
+  if (candidateRevision != currentRevision) {
+    return candidateRevision > currentRevision;
+  }
+  final candidateAt = candidate.observedAt ?? candidate.updatedAt;
+  final currentAt = current.observedAt ?? current.updatedAt;
+  if (candidateAt == null) return false;
+  return currentAt == null || candidateAt.isAfter(currentAt);
+}
+
+ConformanceSummary? _conformanceForIntent(
+  Map<String, ConformanceSummary> indexed,
+  OperationalIntent intent,
+) => indexed[_intentConformanceKey(intent.id, intent.version)];
+
 class _IntentTable extends StatefulWidget {
   const _IntentTable({
     required this.intents,
@@ -539,9 +582,8 @@ class _IntentTableState extends State<_IntentTable> {
     super.dispose();
   }
 
-  Map<String, ConformanceSummary> get _conformanceByIntent => {
-    for (final summary in widget.conformance) summary.intentId: summary,
-  };
+  Map<String, ConformanceSummary> get _conformanceByIntent =>
+      _indexCurrentConformance(widget.conformance);
 
   List<OperationalIntent> get _filteredIntents {
     final conformanceByIntent = _conformanceByIntent;
@@ -550,8 +592,10 @@ class _IntentTableState extends State<_IntentTable> {
       _IntentFilter.needsAttention =>
         widget.intents
             .where(
-              (intent) =>
-                  _intentNeedsAttention(intent, conformanceByIntent[intent.id]),
+              (intent) => _intentNeedsAttention(
+                intent,
+                _conformanceForIntent(conformanceByIntent, intent),
+              ),
             )
             .toList(),
       _IntentFilter.active =>
@@ -563,10 +607,11 @@ class _IntentTableState extends State<_IntentTable> {
       _IntentFilter.conformanceAlerts =>
         widget.intents
             .where(
-              (intent) => switch (conformanceByIntent[intent.id]) {
-                final summary? => _conformanceNeedsAttention(summary),
-                null => false,
-              },
+              (intent) =>
+                  switch (_conformanceForIntent(conformanceByIntent, intent)) {
+                    final summary? => _conformanceNeedsAttention(summary),
+                    null => false,
+                  },
             )
             .toList(),
     };
@@ -661,12 +706,17 @@ class _IntentTableState extends State<_IntentTable> {
                                   DataCell(
                                     _IntentPostureCell(
                                       intent: intent,
-                                      conformance:
-                                          conformanceByIntent[intent.id],
+                                      conformance: _conformanceForIntent(
+                                        conformanceByIntent,
+                                        intent,
+                                      ),
                                       onPressed: () => _showIntentDetails(
                                         context,
                                         intent,
-                                        conformanceByIntent[intent.id],
+                                        _conformanceForIntent(
+                                          conformanceByIntent,
+                                          intent,
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -677,7 +727,10 @@ class _IntentTableState extends State<_IntentTable> {
                                   ),
                                   DataCell(
                                     _ConformanceCell(
-                                      summary: conformanceByIntent[intent.id],
+                                      summary: _conformanceForIntent(
+                                        conformanceByIntent,
+                                        intent,
+                                      ),
                                     ),
                                   ),
                                   DataCell(
@@ -877,13 +930,13 @@ class _OperationsAttentionPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final conformanceByIntent = {
-      for (final summary in conformance) summary.intentId: summary,
-    };
+    final conformanceByIntent = _indexCurrentConformance(conformance);
     final items = intents
         .where(
-          (intent) =>
-              _intentNeedsAttention(intent, conformanceByIntent[intent.id]),
+          (intent) => _intentNeedsAttention(
+            intent,
+            _conformanceForIntent(conformanceByIntent, intent),
+          ),
         )
         .take(8)
         .toList();
@@ -904,14 +957,14 @@ class _OperationsAttentionPanel extends StatelessWidget {
               onTap: () => _showIntentDetails(
                 context,
                 intent,
-                conformanceByIntent[intent.id],
+                _conformanceForIntent(conformanceByIntent, intent),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     child: Text(
-                      '${intent.name.isEmpty ? intent.id : intent.name}: ${_topIntentAttentionReason(intent, conformanceByIntent[intent.id])}',
+                      '${intent.name.isEmpty ? intent.id : intent.name}: ${_topIntentAttentionReason(intent, _conformanceForIntent(conformanceByIntent, intent))}',
                       style: const TextStyle(
                         color: Color(0xFFC4D0EE),
                         height: 1.35,
@@ -922,7 +975,7 @@ class _OperationsAttentionPanel extends StatelessWidget {
                   StatusBadge(
                     label: _intentPosture(
                       intent,
-                      conformanceByIntent[intent.id],
+                      _conformanceForIntent(conformanceByIntent, intent),
                     ),
                   ),
                 ],
@@ -935,13 +988,19 @@ class _OperationsAttentionPanel extends StatelessWidget {
 }
 
 class _ConformanceLinkPanel extends StatelessWidget {
-  const _ConformanceLinkPanel({required this.summaries});
+  const _ConformanceLinkPanel({required this.intents, required this.summaries});
 
+  final List<OperationalIntent> intents;
   final List<ConformanceSummary> summaries;
 
   @override
   Widget build(BuildContext context) {
-    final linked = summaries.where(_conformanceNeedsAttention).toList();
+    final indexed = _indexCurrentConformance(summaries);
+    final linked = [
+      for (final intent in intents)
+        if (_conformanceForIntent(indexed, intent) case final summary?)
+          if (_conformanceNeedsAttention(summary)) summary,
+    ];
     return Panel(
       title: 'Conformance Attention',
       child: RowList(
@@ -962,8 +1021,8 @@ class _ConformanceLinkPanel extends StatelessWidget {
                   Expanded(
                     child: Text(
                       summary.isLiveProjection
-                          ? '${summary.intentId} / ${summary.aircraftId} · ${displayEnum(summary.monitoringStatus ?? 'unknown')} monitoring · ${summary.activeViolationCount} active findings'
-                          : '${summary.intentId} / ${summary.aircraftId} · ${formatPercent(summary.score)} score, ${summary.alertCount} alerts',
+                          ? '${summary.intentId} v${summary.intentVersion} / ${summary.aircraftId} · ${displayEnum(summary.monitoringStatus ?? 'unknown')} monitoring · ${summary.activeViolationCount} active findings'
+                          : '${summary.intentId} v${summary.intentVersion} / ${summary.aircraftId} · ${formatPercent(summary.score)} score, ${summary.alertCount} alerts',
                       style: const TextStyle(color: Color(0xFFC4D0EE)),
                     ),
                   ),

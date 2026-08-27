@@ -17,6 +17,7 @@ API_URL=${AERO_ARC_SITL_API_URL:-http://127.0.0.1:8080}
 OPS_URL=${AERO_ARC_SITL_OPS_URL:-http://127.0.0.1:7357}
 AGENT_ID=${AERO_ARC_SITL_AGENT_ID:-7bddaca99083eb313cf715a7d02db998869892d466d2000407311a6cbf5f4725}
 AGENT_TOKEN=${AERO_ARC_SITL_AGENT_TOKEN:-sitl-agent-local-secret}
+MISSION_DEPLOY_TOKEN=${AERO_ARC_SITL_MISSION_DEPLOY_TOKEN:-sitl-mission-deployment-secret}
 AIRCRAFT_ID=${AERO_ARC_SITL_AIRCRAFT_ID:-aircraft-sitl-1}
 OPERATOR_ID=${AERO_ARC_SITL_OPERATOR_ID:-operator-local}
 INTENT_ID=${AERO_ARC_SITL_INTENT_ID:-33333333-3333-4333-8333-333333333333}
@@ -233,7 +234,10 @@ build_binaries() {
 }
 
 api_post() {
-  local path=$1 body=${2:-{}}
+  local path=$1 body=${2-}
+  if [[ -z "$body" ]]; then
+    body='{}'
+  fi
   local response_file=$RUN_DIR/last-api-response.json
   local status
   echo "POST $path" >&2
@@ -247,7 +251,99 @@ api_post() {
   sed -n '1,$p' "$response_file"
 }
 
+api_post_file() {
+  local path=$1 body_file=$2 idempotency_key=${3:-}
+  local response_file=$RUN_DIR/last-api-response.json
+  local status
+  local headers=(-H 'Content-Type: application/json' -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN")
+  if [[ -n "$idempotency_key" ]]; then
+    headers+=(-H "Idempotency-Key: $idempotency_key")
+  fi
+  echo "POST $path" >&2
+  status=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' "${headers[@]}" -X POST "$API_URL$path" --data-binary "@$body_file")
+  if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+    echo "API returned HTTP $status for POST $path:" >&2
+    sed 's/^/  /' "$response_file" >&2
+    echo >&2
+    return 1
+  fi
+  sed -n '1,$p' "$response_file"
+}
+
+api_get_file() {
+  local path=$1 output_file=$2
+  echo "GET $path" >&2
+  curl --fail --silent --show-error "$API_URL$path" --output "$output_file"
+}
+
+import_mission() {
+  local source_file=$SCRIPT_DIR/fixtures/inside-intent.waypoints
+  local request_file=$RUN_DIR/mission-import-request.json
+  jq --null-input --rawfile source "$source_file" \
+    --arg aircraft_id "$AIRCRAFT_ID" --arg intent_id "$INTENT_ID" \
+    '{source_format:"qgc_wpl_110",source:$source,aircraft_id:$aircraft_id,intent_id:$intent_id,intent_version:1}' \
+    >"$request_file"
+  api_post_file "/api/v1/flights/$FLIGHT_ID/missions/import" "$request_file" "sitl-$FLIGHT_ID-mission-import" >/dev/null
+  api_get_file "/api/v1/flights/$FLIGHT_ID/missions/current" "$RUN_DIR/current-mission.json"
+}
+
+deploy_mission() {
+  local response_file=$RUN_DIR/mission-deployment.json
+  local status deployment_status mission_id mission_digest
+  api_get_file "/api/v1/flights/$FLIGHT_ID/missions/current" "$RUN_DIR/current-mission.json"
+  mission_id=$(jq -er '.id' "$RUN_DIR/current-mission.json")
+  mission_digest=$(jq -er '.mission_digest' "$RUN_DIR/current-mission.json")
+  echo "POST /api/v1/flights/$FLIGHT_ID/missions/$mission_id/deploy" >&2
+  status=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+    -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN" \
+    -H "Idempotency-Key: sitl-$FLIGHT_ID-mission-deploy" \
+    -H "If-Match: \"$mission_digest\"" \
+    -X POST "$API_URL/api/v1/flights/$FLIGHT_ID/missions/$mission_id/deploy")
+  if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+    echo "API returned HTTP $status while deploying the current mission:" >&2
+    sed 's/^/  /' "$response_file" >&2
+    echo >&2
+    return 2
+  fi
+  deployment_status=$(jq -er '.deployment.status' "$response_file")
+  case "$deployment_status" in
+    applied|already_applied)
+      jq -c '{deployment_id:.deployment.id,status:.deployment.status,mission_id:.deployment.mission_id,mission_digest:.deployment.mission_digest,uploaded_item_count:.deployment.uploaded_item_count,replayed}' "$response_file"
+      ;;
+    pending|temporary_error|outcome_unknown)
+      jq -c '{deployment_id:.deployment.id,status:.deployment.status,message:.deployment.message,replayed}' "$response_file" >&2
+      return 1
+      ;;
+    *)
+      jq -c '{deployment_id:.deployment.id,status:.deployment.status,message:.deployment.message,replayed}' "$response_file" >&2
+      return 2
+      ;;
+  esac
+}
+
+wait_deploy_mission() {
+  local attempt
+  for attempt in $(seq 1 15); do
+    if deploy_mission; then
+      return 0
+    else
+      local status=$?
+      if [[ "$status" -eq 2 ]]; then
+        echo "mission deployment failed permanently; exact retry would only replay the same result" >&2
+        return "$status"
+      fi
+    fi
+    if [[ "$attempt" -lt 15 ]]; then
+      echo "mission deployment not ready (attempt $attempt/15); retrying the exact command" >&2
+      sleep 2
+    fi
+  done
+  echo "mission deployment did not complete after 15 exact retries" >&2
+  return 1
+}
+
 activate() {
+  local deployment_mode=${1:-}
   wait_http API "$API_URL/readyz"
   local now start end monitor
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -264,13 +360,17 @@ activate() {
   api_post "/api/v1/operational-intents/$INTENT_ID/deconfliction/check" >"$RUN_DIR/deconfliction.json"
   api_post "/api/v1/operational-intents/$INTENT_ID/accept" >/dev/null
   api_post "/api/v1/operational-intents/$INTENT_ID/flights" "{\"id\":\"$FLIGHT_ID\",\"operator_id\":\"$OPERATOR_ID\",\"mission_type\":\"sitl\"}" >/dev/null
+  import_mission
   api_post "/api/v1/operational-intents/$INTENT_ID/activate" >/dev/null
-  api_post "/api/v1/flights/$FLIGHT_ID/start" >/dev/null
   "$RUN_DIR/bin/control" activate \
     --ca "$RUN_DIR/tls/ca.crt" --cert "$RUN_DIR/tls/bootstrap.crt" --key "$RUN_DIR/tls/bootstrap.key" \
+    --skip-operation-context \
     --assignment-id "$ASSIGNMENT_ID" --operator-id "$OPERATOR_ID" --aircraft-id "$AIRCRAFT_ID" \
     --agent-id "$AGENT_ID" --flight-id "$FLIGHT_ID" --intent-id "$INTENT_ID" --intent-version 1 \
     --volume-id "$VOLUME_ID" --planned-start "$start" --planned-end "$end" --monitor-until "$monitor"
+  if [[ "$deployment_mode" != "--defer-deploy" ]]; then
+    deploy_mission
+  fi
   printf '%s\n' "$now" >"$RUN_DIR/activated-at"
   printf '%s\n' "$end" >"$RUN_DIR/planned-end"
   echo "SITL operation is active; planned end $end, monitoring authority $monitor"
@@ -278,7 +378,7 @@ activate() {
 
 up() {
   require_safe_run_dir
-  for command in docker curl go flutter openssl setsid tmux; do require_command "$command"; done
+  for command in docker curl go flutter jq openssl setsid tmux; do require_command "$command"; done
   if [[ -d "$RUN_DIR" ]]; then
     stop_processes
   fi
@@ -301,14 +401,30 @@ up() {
   wait_port Relay 50050
   start_process conformance "$RUN_DIR/bin/conformance" --config-path "$RUN_DIR/config/conformance.yaml"
   wait_port Conformance 50052
-  start_process api env AERO_API_ADDR=127.0.0.1:8080 AERO_API_DURABLE_STORE=memory AERO_API_AIRSPACE_PROVIDERS=local AERO_API_TELEMETRY_STORE=influxdb AERO_API_REPLAY_STORE=memory AERO_API_INFLUXDB_HOST=http://127.0.0.1:18181 AERO_API_INFLUXDB_TOKEN=local-development-no-auth AERO_API_INFLUXDB_DATABASE=aero_arc AERO_API_REGISTRY_MODE=grpc AERO_API_REGISTRY_ADDR=127.0.0.1:50051 AERO_API_SEED= "$RUN_DIR/bin/api" start
+  start_process api env AERO_API_ADDR=127.0.0.1:8080 AERO_API_DURABLE_STORE=memory AERO_API_AIRSPACE_PROVIDERS=local AERO_API_TELEMETRY_STORE=influxdb AERO_API_REPLAY_STORE=memory AERO_API_INFLUXDB_HOST=http://127.0.0.1:18181 AERO_API_INFLUXDB_TOKEN=local-development-no-auth AERO_API_INFLUXDB_DATABASE=aero_arc AERO_API_REGISTRY_MODE=grpc AERO_API_REGISTRY_ADDR=127.0.0.1:50051 AERO_API_RELAY_CONTROL_CA_FILE="$RUN_DIR/tls/ca.crt" AERO_API_RELAY_CONTROL_CERT_FILE="$RUN_DIR/tls/bootstrap.crt" AERO_API_RELAY_CONTROL_KEY_FILE="$RUN_DIR/tls/bootstrap.key" AERO_API_RELAY_CONTROL_SERVER_NAME=localhost AERO_API_MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" AERO_API_SEED= "$RUN_DIR/bin/api" start
   wait_http API "$API_URL/readyz"
-  start_process agent env AERO_ARC_API_KEY="$AGENT_TOKEN" "$RUN_DIR/bin/agent" --server-address 127.0.0.1 --server-port 50050 --skip-tls-verification --debug --wal-path "$RUN_DIR/agent-wal.db" --wal-flush-timeout 250ms
+  start_process agent env AERO_ARC_API_KEY="$AGENT_TOKEN" "$RUN_DIR/bin/agent" --server-address 127.0.0.1 --server-port 50050 --skip-tls-verification --debug --wal-path "$RUN_DIR/agent-wal.db" --wal-flush-timeout 250ms --aircraft-command-timeout 10s
+  start_process ops make -C "$OPS_DIR" web API_BASE_URL="$API_URL" MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" WEB_HOST=127.0.0.1 WEB_PORT=7357
+  wait_http Ops "$OPS_URL"
+  # Create the durable operation and mission before SITL emits telemetry.
+  activate --defer-deploy
+  # The first API deployment attempt establishes Agent operation context while
+  # its Relay stream is quiet. Mission upload is expected to remain retryable
+  # until SITL supplies fresh heartbeat and landed-state evidence.
+  local deployment_status
+  if deploy_mission; then
+    echo "mission deployed before SITL telemetry became available"
+  else
+    deployment_status=$?
+    if [[ "$deployment_status" -eq 2 ]]; then
+      echo "mission deployment failed permanently before SITL startup" >&2
+      return "$deployment_status"
+    fi
+    echo "Agent context established; waiting for SITL evidence before exact deployment retry"
+  fi
   tmux new-session -d -s "$TMUX_SESSION" "cd '$ARDUPILOT_SOURCE/ArduCopter' && '$SIM_VEHICLE' -v ArduCopter --no-rebuild --console --out=udp:127.0.0.1:14550"
   sleep 5
-  start_process ops make -C "$OPS_DIR" web API_BASE_URL="$API_URL" WEB_HOST=127.0.0.1 WEB_PORT=7357
-  wait_http Ops "$OPS_URL"
-  activate
+  wait_deploy_mission
   status
   if [[ "${AERO_ARC_SITL_FOREGROUND:-0}" == 1 ]]; then
     echo "SITL observer stack is running in the foreground; press Ctrl-C to release this terminal."
@@ -329,6 +445,7 @@ aircraft_command() {
 }
 
 demo_flight() {
+  api_post "/api/v1/flights/$FLIGHT_ID/start" >/dev/null
   tmux has-session -t "$TMUX_SESSION"
   tmux send-keys -t "$TMUX_SESSION" "mode guided" Enter
   sleep 2
@@ -338,6 +455,49 @@ demo_flight() {
   sleep 12
   tmux send-keys -t "$TMUX_SESSION" "guided -35.362500 149.166000 20" Enter
   echo "SITL is taking off and moving to the demo waypoint; it remains active for observation."
+}
+
+mission_run() {
+  tmux has-session -t "$TMUX_SESSION"
+  api_post "/api/v1/flights/$FLIGHT_ID/start" >/dev/null
+  # These two parameters are local SITL scaffolding, not production aircraft
+  # commands. They let AUTO start without RC throttle input or a physical GPS
+  # safety environment while leaving ARM on the authenticated Relay/Agent path.
+  tmux send-keys -t "$TMUX_SESSION" "param set ARMING_CHECK 0" Enter
+  sleep 2
+  tmux send-keys -t "$TMUX_SESSION" "param set AUTO_OPTIONS 3" Enter
+  sleep 2
+  tmux send-keys -t "$TMUX_SESSION" "mode auto" Enter
+  local attempt
+  for attempt in $(seq 1 20); do
+    if curl --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
+      | jq -e '.telemetry.vehicle.status == "fresh" and .telemetry.vehicle.custom_mode == 3' >/dev/null; then
+      break
+    fi
+    if [[ "$attempt" -eq 20 ]]; then
+      echo "SITL did not report fresh AUTO mode before ARM" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  aircraft_command arm
+  echo "AUTO selected in SITL and ARM sent through Relay/Agent. The deployed route is authoritative; watch commanded versus observed tracks in Ops."
+}
+
+move_outside() {
+  tmux has-session -t "$TMUX_SESSION"
+  tmux send-keys -t "$TMUX_SESSION" "mode guided" Enter
+  sleep 2
+  tmux send-keys -t "$TMUX_SESSION" "guided -35.352500 149.165237 20" Enter
+  echo "GUIDED target sent outside the authorized Polygon; the intent itself is unchanged."
+}
+
+move_inside() {
+  tmux has-session -t "$TMUX_SESSION"
+  tmux send-keys -t "$TMUX_SESSION" "mode guided" Enter
+  sleep 2
+  tmux send-keys -t "$TMUX_SESSION" "guided -35.354000 149.165237 20" Enter
+  echo "GUIDED target sent back inside the authorized Polygon."
 }
 
 land() {
@@ -384,10 +544,14 @@ case "${1:-}" in
   activate) activate ;;
   status) status ;;
   aircraft-command) aircraft_command "${2:-}" ;;
+  deploy-mission) deploy_mission ;;
+  mission-run) mission_run ;;
+  move-outside) move_outside ;;
+  move-inside) move_inside ;;
   demo-flight) demo_flight ;;
   land) land ;;
   complete) complete ;;
   console) console ;;
   down) down ;;
-  *) echo "usage: $0 {up|status|activate|aircraft-command arm|aircraft-command disarm|demo-flight|land|complete|console|down}" >&2; exit 2 ;;
+  *) echo "usage: $0 {up|status|activate|deploy-mission|mission-run|move-outside|move-inside|aircraft-command arm|aircraft-command disarm|demo-flight|land|complete|console|down}" >&2; exit 2 ;;
 esac

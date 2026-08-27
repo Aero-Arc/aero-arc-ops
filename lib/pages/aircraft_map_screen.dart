@@ -208,6 +208,13 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             _liveConformance,
             aircraftId: widget.aircraftId,
             intentId: view.activeIntent?.id,
+            intentVersion: view.activeIntent?.version,
+          );
+          final embeddedConformance = _boundConformanceSummary(
+            view.conformanceSummary,
+            aircraftId: widget.aircraftId,
+            intentId: view.activeIntent?.id,
+            intentVersion: view.activeIntent?.version,
           );
 
           return _AircraftMapContent(
@@ -215,7 +222,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             liveState: _liveState,
             liveStateError: _liveStateError,
             liveStateLoading: _liveStateLoading,
-            conformanceSummary: liveConformance ?? view.conformanceSummary,
+            conformanceSummary: liveConformance ?? embeddedConformance,
             conformanceError: _conformanceError,
             conformanceLoading: _conformanceLoading,
             liveTrail: List.unmodifiable(_liveTrail),
@@ -232,18 +239,21 @@ ConformanceSummary? _selectConformanceSummary(
   List<ConformanceSummary> summaries, {
   required String aircraftId,
   String? intentId,
+  int? intentVersion,
 }) {
+  if (intentId == null || intentVersion == null) return null;
   final matchingAircraft = summaries
       .where((summary) => summary.aircraftId == aircraftId)
       .toList();
   if (matchingAircraft.isEmpty) return null;
-  final matchingIntent = intentId == null
-      ? const <ConformanceSummary>[]
-      : matchingAircraft
-            .where((summary) => summary.intentId == intentId)
-            .toList();
-  if (intentId != null && matchingIntent.isEmpty) return null;
-  final candidates = matchingIntent.isEmpty ? matchingAircraft : matchingIntent;
+  final candidates = matchingAircraft
+      .where(
+        (summary) =>
+            summary.intentId == intentId &&
+            summary.intentVersion == intentVersion,
+      )
+      .toList();
+  if (candidates.isEmpty) return null;
   candidates.sort((left, right) {
     if (left.isLiveProjection != right.isLiveProjection) {
       return left.isLiveProjection ? -1 : 1;
@@ -255,6 +265,20 @@ ConformanceSummary? _selectConformanceSummary(
     return rightAt.compareTo(leftAt);
   });
   return candidates.first;
+}
+
+ConformanceSummary? _boundConformanceSummary(
+  ConformanceSummary? summary, {
+  required String aircraftId,
+  String? intentId,
+  int? intentVersion,
+}) {
+  if (summary == null || intentId == null || intentVersion == null) return null;
+  return summary.aircraftId == aircraftId &&
+          summary.intentId == intentId &&
+          summary.intentVersion == intentVersion
+      ? summary
+      : null;
 }
 
 Future<_LiveStateResult> _captureLiveState(
@@ -512,23 +536,26 @@ class _MapPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final path = replayPath(view.replaySamples);
+    final mission = view.validatedMission;
+    final commandedRoute = missionPath(mission);
     final polygons = volumePolygons(view.operationalVolumes);
     final livePosition = liveState?.telemetry.position;
     final livePositionAvailable = livePosition?.status == 'fresh';
     final hud = liveState?.telemetry.hud;
-    final heading = livePosition?.headingDeg ?? hud?.headingDeg;
+    final freshHud = hud?.status == 'fresh' ? hud : null;
+    final heading = livePosition?.headingDeg ?? freshHud?.headingDeg;
     final projectedTrack = livePositionAvailable
         ? projectedPositionTrack(
             livePosition!,
-            fallbackGroundspeedMps: hud?.groundspeedMps,
-            fallbackHeadingDeg: hud?.headingDeg,
+            fallbackGroundspeedMps: freshHud?.groundspeedMps,
+            fallbackHeadingDeg: freshHud?.headingDeg,
           )
         : const <LatLng>[];
     final speed = livePosition == null
         ? null
         : positionGroundspeed(
             livePosition,
-            fallbackGroundspeedMps: hud?.groundspeedMps,
+            fallbackGroundspeedMps: freshHud?.groundspeedMps,
           );
     final markers = <Marker>[
       if (path.isNotEmpty)
@@ -559,6 +586,13 @@ class _MapPanel extends StatelessWidget {
                 ? heading * math.pi / 180
                 : 0,
           ),
+        ),
+      for (final index in missionMarkerIndexes(commandedRoute.length))
+        Marker(
+          point: commandedRoute[index],
+          width: 34,
+          height: 34,
+          child: _MissionWaypointMarker(item: mission!.items[index]),
         ),
       for (final event in view.conformanceEvents)
         if (event.latitude != null && event.longitude != null)
@@ -619,6 +653,16 @@ class _MapPanel extends StatelessWidget {
                       ),
                     ],
                   ),
+                if (commandedRoute.length >= 2)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: commandedRoute,
+                        strokeWidth: 4,
+                        color: const Color(0xFF43C6FF),
+                      ),
+                    ],
+                  ),
                 if (liveTrail.length >= 2)
                   PolylineLayer(
                     polylines: [
@@ -635,7 +679,7 @@ class _MapPanel extends StatelessWidget {
                       Polyline(
                         points: projectedTrack,
                         strokeWidth: 3,
-                        color: const Color(0xFF43C6FF),
+                        color: const Color(0xFFE4A100),
                       ),
                     ],
                   ),
@@ -656,6 +700,38 @@ class _MapPanel extends StatelessWidget {
             ),
             const Positioned(bottom: 12, left: 12, child: _MapLegend()),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MissionWaypointMarker extends StatelessWidget {
+  const _MissionWaypointMarker({required this.item});
+
+  final MissionItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label:
+          'Mission item ${item.sequence}, ${missionCommandLabel(item.command)}, ${item.altitudeM.toStringAsFixed(0)} meters MSL',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF07132E),
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0xFF43C6FF), width: 2),
+          boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 8)],
+        ),
+        child: Center(
+          child: Text(
+            '${item.sequence}',
+            style: const TextStyle(
+              color: Color(0xFFDFF6FF),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ),
       ),
     );
@@ -844,8 +920,13 @@ class _MapLegend extends StatelessWidget {
           runSpacing: 6,
           children: [
             _MapLegendItem(color: Color(0xFF5E6FFF), label: 'History'),
+            _MapLegendItem(
+              color: Color(0xFF6B75FF),
+              label: 'Authorized volume',
+            ),
+            _MapLegendItem(color: Color(0xFF43C6FF), label: 'Validated plan'),
             _MapLegendItem(color: Color(0xFF00CFA0), label: 'Live trail'),
-            _MapLegendItem(color: Color(0xFF43C6FF), label: '10s projection'),
+            _MapLegendItem(color: Color(0xFFE4A100), label: '10s projection'),
           ],
         ),
       ),
@@ -901,6 +982,7 @@ class _DetailPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final telemetry = view.latestTelemetry;
     final intent = view.activeIntent;
+    final mission = view.validatedMission;
     final summary = conformanceSummary;
     final skippedVolumes = view.operationalVolumes
         .where((volume) => (volume.geoJson ?? '').isEmpty)
@@ -912,6 +994,57 @@ class _DetailPanel extends StatelessWidget {
           state: liveState,
           error: liveStateError,
           loading: liveStateLoading,
+        ),
+        const SizedBox(height: 18),
+        Panel(
+          title: 'Validated Mission Plan',
+          trailing: StatusBadge(
+            label: view.missionBindingMismatch
+                ? 'binding_mismatch'
+                : mission == null
+                ? 'not_available'
+                : 'validated',
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+            child: Column(
+              children: [
+                DetailLine(
+                  label: 'Route',
+                  value: view.missionBindingMismatch
+                      ? 'Mission hidden because its aircraft or exact intent-version binding is inconsistent.'
+                      : mission == null
+                      ? 'No mission is bound to this active intent.'
+                      : '${mission.items.length} waypoint item(s)',
+                ),
+                if (mission != null) ...[
+                  DetailLine(label: 'Flight', value: mission.flightId),
+                  DetailLine(
+                    label: 'Intent binding',
+                    value: '${mission.intentId} v${mission.intentVersion}',
+                  ),
+                  DetailLine(
+                    label: 'Mission version',
+                    value: '${mission.version}',
+                  ),
+                  DetailLine(
+                    label: 'Digest',
+                    value: _mapShortDigest(mission.missionDigest),
+                  ),
+                ],
+                const DetailLine(
+                  label: 'Meaning',
+                  value:
+                      'Cyan is the API-validated plan. Violet is authorization. Green is observed flight.',
+                ),
+                const DetailLine(
+                  label: 'Aircraft deployment',
+                  value:
+                      'Not reported by this API view. Validation alone does not prove the route is onboard.',
+                ),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: 18),
         Panel(
@@ -1241,6 +1374,8 @@ LatLng mapCenterFor(AircraftMapView view, {AircraftLiveState? liveState}) {
   if (view.replaySamples.isNotEmpty) {
     return telemetryPoint(view.replaySamples.first);
   }
+  final commandedRoute = missionPath(view.validatedMission);
+  if (commandedRoute.isNotEmpty) return commandedRoute.first;
   final polygons = volumePolygons(view.operationalVolumes);
   if (polygons.isNotEmpty && polygons.first.isNotEmpty) {
     return polygons.first.first;
@@ -1315,6 +1450,36 @@ List<LatLng> projectedPositionTrack(
       position.longitudeDeg + east * seconds / longitudeScale,
     ),
   ];
+}
+
+List<LatLng> missionPath(Mission? mission) {
+  if (mission == null) return const [];
+  return [
+    for (final item in mission.items) LatLng(item.latitude, item.longitude),
+  ];
+}
+
+List<int> missionMarkerIndexes(int itemCount, {int maxMarkers = 30}) {
+  if (itemCount <= 0 || maxMarkers <= 0) return const [];
+  if (itemCount <= maxMarkers) return [for (var i = 0; i < itemCount; i++) i];
+  final stride = (itemCount / maxMarkers).ceil();
+  final indexes = [for (var i = 0; i < itemCount; i += stride) i];
+  if (indexes.last != itemCount - 1) indexes.add(itemCount - 1);
+  return indexes;
+}
+
+String missionCommandLabel(int command) {
+  return switch (command) {
+    16 => 'waypoint',
+    21 => 'land',
+    22 => 'takeoff',
+    _ => 'command $command',
+  };
+}
+
+String _mapShortDigest(String digest) {
+  if (digest.length <= 16) return digest;
+  return '${digest.substring(0, 8)}…${digest.substring(digest.length - 8)}';
 }
 
 List<List<LatLng>> volumePolygons(List<OperationalVolume> volumes) {

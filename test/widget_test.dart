@@ -59,6 +59,7 @@ void main() {
         home: const AppShell(
           section: AppSection.aircraft,
           intentAircraftId: 'aircraft-1',
+          renderMapTiles: false,
         ),
       ),
     );

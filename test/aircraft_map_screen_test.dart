@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:latlong2/latlong.dart';
 
 import 'package:aero_arc_web/models/aero_arc_models.dart';
 import 'package:aero_arc_web/pages/aircraft_map_screen.dart';
@@ -219,6 +220,49 @@ void main() {
     expect(find.byIcon(Icons.question_mark_rounded), findsOneWidget);
   });
 
+  testWidgets('stale HUD cannot project a fresh position', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async =>
+              sampleLiveState(includePositionMotion: false, hudStatus: 'stale'),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('no motion projection'), findsOneWidget);
+    expect(find.textContaining('10s projected track'), findsNothing);
+  });
+
+  testWidgets('superseded conformance cannot replace the active version', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadConformance: () async => sampleConformanceDashboard(
+            intentVersion: 2,
+            condition: 'non_conforming',
+            phase: 'open',
+          ),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Conforming'), findsWidgets);
+    expect(find.text('Non Conforming'), findsNothing);
+  });
+
   testWidgets('missing live position keeps historical marker uncertain', (
     tester,
   ) async {
@@ -409,6 +453,25 @@ void main() {
     expect(track.last.latitude, greaterThan(track.first.latitude));
     expect(track.last.longitude, greaterThan(track.first.longitude));
   });
+
+  test('commanded mission path preserves waypoint sequence', () {
+    final path = missionPath(sampleMapView().commandedMission);
+
+    expect(path, hasLength(2));
+    expect(path.first, const LatLng(35.15, -97.15));
+    expect(path.last, const LatLng(35.25, -97.25));
+  });
+
+  test(
+    'long mission plans declutter waypoint markers but retain endpoints',
+    () {
+      final indexes = missionMarkerIndexes(200);
+
+      expect(indexes.length, lessThanOrEqualTo(31));
+      expect(indexes.first, 0);
+      expect(indexes.last, 199);
+    },
+  );
 }
 
 AircraftMapView sampleMapView({bool includeActiveIntent = true}) {
@@ -450,6 +513,48 @@ AircraftMapView sampleMapView({bool includeActiveIntent = true}) {
         altitudeRef: 'agl',
       ),
     ],
+    commandedMission: Mission(
+      id: 'mission-1',
+      version: 1,
+      flightId: 'flight-1',
+      aircraftId: 'aircraft-1',
+      intentId: 'intent-1',
+      intentVersion: 1,
+      sourceFormat: 'qgc_wpl_110',
+      sourceSha256: List.filled(64, 'a').join(),
+      missionDigest: List.filled(64, 'b').join(),
+      validationFindings: const [],
+      items: const [
+        MissionItem(
+          sequence: 0,
+          current: true,
+          frame: 0,
+          command: 22,
+          param1: 0,
+          param2: 0,
+          param3: 0,
+          param4: 0,
+          latitudeE7: 351500000,
+          longitudeE7: -971500000,
+          altitudeM: 100,
+          autoContinue: true,
+        ),
+        MissionItem(
+          sequence: 1,
+          current: false,
+          frame: 0,
+          command: 16,
+          param1: 0,
+          param2: 0,
+          param3: 0,
+          param4: 0,
+          latitudeE7: 352500000,
+          longitudeE7: -972500000,
+          altitudeM: 110,
+          autoContinue: true,
+        ),
+      ],
+    ),
     conformanceSummary: const ConformanceSummary(
       id: 'summary-1',
       intentId: 'intent-1',
@@ -476,6 +581,7 @@ AircraftMapView sampleMapView({bool includeActiveIntent = true}) {
 }
 
 ConformanceDashboard sampleConformanceDashboard({
+  int intentVersion = 1,
   String condition = 'conforming',
   String phase = 'clear',
   double? worstDeviationM,
@@ -486,7 +592,7 @@ ConformanceDashboard sampleConformanceDashboard({
       ConformanceSummary(
         id: 'live-summary-1',
         intentId: 'intent-1',
-        intentVersion: 1,
+        intentVersion: intentVersion,
         aircraftId: 'aircraft-1',
         status: condition,
         alertCount: phase == 'clear' ? 0 : 1,
@@ -540,6 +646,8 @@ AircraftLiveState sampleLiveState({
   String connectionStatus = 'connected',
   String positionStatus = 'fresh',
   bool includePosition = true,
+  bool includePositionMotion = true,
+  String? hudStatus,
   double latitudeDeg = 29.7604,
   double longitudeDeg = -95.3698,
   DateTime? recordedAt,
@@ -566,10 +674,10 @@ AircraftLiveState sampleLiveState({
               latitudeDeg: latitudeDeg,
               longitudeDeg: longitudeDeg,
               relativeAltitudeM: 21.2,
-              velocityNorthMps: 8,
-              velocityEastMps: 6,
-              groundspeedMps: 10,
-              headingDeg: 36.9,
+              velocityNorthMps: includePositionMotion ? 8 : null,
+              velocityEastMps: includePositionMotion ? 6 : null,
+              groundspeedMps: includePositionMotion ? 10 : null,
+              headingDeg: includePositionMotion ? 36.9 : null,
             )
           : null,
       battery: BatteryTelemetry(
@@ -591,6 +699,14 @@ AircraftLiveState sampleLiveState({
         mainloopLoadPct: 43.2,
         communicationDropRatePct: 0.4,
       ),
+      hud: hudStatus == null
+          ? null
+          : HudTelemetry(
+              status: hudStatus,
+              recordedAt: DateTime(2099, 8, 11, 11, 59),
+              groundspeedMps: 12,
+              headingDeg: 90,
+            ),
     ),
   );
 }
