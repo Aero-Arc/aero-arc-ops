@@ -189,7 +189,10 @@ the supported WPL 110 navigation commands. A mission cannot replace or reshape
 the operational intent. `sitl-mission-run` configures SITL-only AUTO behavior,
 selects AUTO in MAVProxy, waits until fresh API telemetry confirms that mode,
 and sends ARM through the authenticated Relay/Agent command lifecycle. The
-command plane also supports explicit ARM and DISARM:
+checked-in observer mission deliberately ends at an airborne waypoint rather
+than LAND so the post-mission boundary checks remain possible; landing stays an
+explicit operator action. The command plane also supports explicit ARM and
+DISARM:
 
 ```sh
 make sitl-arm
@@ -207,7 +210,9 @@ make sitl-console
 While airborne, the repeatable post-window spatial check sends the aircraft
 outside and then just back inside the authorized Polygon. This demonstrates
 that lateral deviation can open and clear independently while the temporal
-deviation remains open:
+deviation remains open. These helpers wait for fresh armed/airborne telemetry
+and API-confirmed GUIDED mode before sending a target, so calling them
+immediately after `sitl-mission-run` is safe:
 
 ```sh
 make sitl-out-of-bounds

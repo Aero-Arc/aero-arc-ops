@@ -468,34 +468,67 @@ mission_run() {
   tmux send-keys -t "$TMUX_SESSION" "param set AUTO_OPTIONS 3" Enter
   sleep 2
   tmux send-keys -t "$TMUX_SESSION" "mode auto" Enter
-  local attempt
-  for attempt in $(seq 1 20); do
-    if curl --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
-      | jq -e '.telemetry.vehicle.status == "fresh" and .telemetry.vehicle.custom_mode == 3' >/dev/null; then
-      break
-    fi
-    if [[ "$attempt" -eq 20 ]]; then
-      echo "SITL did not report fresh AUTO mode before ARM" >&2
-      return 1
-    fi
-    sleep 1
-  done
+  wait_vehicle_mode 3 AUTO
   aircraft_command arm
   echo "AUTO selected in SITL and ARM sent through Relay/Agent. The deployed route is authoritative; watch commanded versus observed tracks in Ops."
 }
 
+wait_vehicle_mode() {
+  local expected_mode=$1 mode_name=$2 attempt
+  for attempt in $(seq 1 20); do
+    if curl --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
+      | jq -e --argjson expected "$expected_mode" \
+        '.telemetry.vehicle.status == "fresh" and .telemetry.vehicle.custom_mode == $expected' >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "SITL did not report fresh $mode_name mode" >&2
+  return 1
+}
+
+wait_airborne() {
+  local attempt
+  for attempt in $(seq 1 45); do
+    if curl --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
+      | jq -e '
+          .telemetry.vehicle.status == "fresh" and
+          ((.telemetry.vehicle.base_mode // "") | contains("mav_mode_flag_safety_armed")) and
+          .telemetry.position.status == "fresh" and
+          ((.telemetry.position.relative_altitude_m // 0) > 2)
+        ' >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "aircraft did not become armed and airborne; run make sitl-mission-run and wait for takeoff before sending a guided target" >&2
+  return 1
+}
+
+select_guided_airborne() {
+  wait_airborne
+  tmux send-keys -t "$TMUX_SESSION" "mode guided" Enter
+  wait_vehicle_mode 4 GUIDED
+  if ! curl --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
+    | jq -e '
+        .telemetry.vehicle.status == "fresh" and
+        ((.telemetry.vehicle.base_mode // "") | contains("mav_mode_flag_safety_armed"))
+      ' >/dev/null; then
+    echo "aircraft disarmed before the GUIDED target could be sent" >&2
+    return 1
+  fi
+}
+
 move_outside() {
   tmux has-session -t "$TMUX_SESSION"
-  tmux send-keys -t "$TMUX_SESSION" "mode guided" Enter
-  sleep 2
+  select_guided_airborne
   tmux send-keys -t "$TMUX_SESSION" "guided -35.352500 149.165237 20" Enter
   echo "GUIDED target sent outside the authorized Polygon; the intent itself is unchanged."
 }
 
 move_inside() {
   tmux has-session -t "$TMUX_SESSION"
-  tmux send-keys -t "$TMUX_SESSION" "mode guided" Enter
-  sleep 2
+  select_guided_airborne
   tmux send-keys -t "$TMUX_SESSION" "guided -35.354000 149.165237 20" Enter
   echo "GUIDED target sent back inside the authorized Polygon."
 }
