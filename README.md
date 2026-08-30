@@ -237,6 +237,12 @@ replacement planned flight or importing a replacement mission. Ops preserves
 the original flight, mission, and durable deployment identity for exact status
 refresh until the command reaches a terminal outcome.
 
+The same unresolved-deployment fence blocks operational-intent modification;
+an accepted intent cannot advance to a new version while an earlier aircraft
+effect remains uncertain. When a version change is accepted by the API, Ops
+atomically clears superseded acceptance/activation state before follow-up
+checks, so a failed check cannot re-enable mission controls for the old version.
+
 Returning to the aircraft map from an intent workflow reloads the full map read
 model, including the commanded mission, active intent, volumes, history, and
 embedded conformance evidence. Live-state polling remains independently aged.

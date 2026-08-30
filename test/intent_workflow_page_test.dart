@@ -833,6 +833,71 @@ void main() {
     },
   );
 
+  testWidgets('unresolved deployment blocks intent version mutation', (
+    WidgetTester tester,
+  ) async {
+    final requestedPaths = <String>[];
+    final apiClient = AeroArcApiClient(
+      baseUri: Uri.parse('http://api.test'),
+      missionControlToken: 'local-dev-token',
+      httpClient: MockClient((request) async {
+        requestedPaths.add(request.url.path);
+        switch (request.url.path) {
+          case '/api/v1/aircraft/aircraft-1/flights':
+            return _jsonResponse({
+              'flights': [
+                {
+                  'id': 'flight-1',
+                  'aircraft_id': 'aircraft-1',
+                  'intent_id': 'intent-1',
+                  'intent_version': 1,
+                  'status': 'planned',
+                  'mission_type': 'mavlink',
+                },
+              ],
+            });
+          case '/api/v1/flights/flight-1/missions/current':
+            return _jsonResponse(_missionJson());
+          case '/api/v1/flights/flight-1/mission-deployments/current':
+            return _jsonResponse(
+              _deploymentJson(status: 'outcome_unknown', expired: true),
+            );
+        }
+        return http.Response('unexpected ${request.method}', 404);
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: IntentWorkflowPage(
+            aircraftId: 'aircraft-1',
+            renderTiles: false,
+            apiClient: apiClient,
+            initialIntent: OperationalIntent.fromJson(
+              _intentJson(status: 'accepted'),
+            ),
+            initialVolumes: [_volumeModel()],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final saveAndCheck = find.widgetWithText(FilledButton, 'Save & check');
+    await tester.ensureVisible(saveAndCheck);
+    tester.widget<FilledButton>(saveAndCheck).onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('must reach a terminal outcome'),
+      findsOneWidget,
+    );
+    expect(find.text('deployment-1'), findsOneWidget);
+    expect(find.text('Refresh durable status'), findsOneWidget);
+    expect(requestedPaths.where((path) => path.endsWith('/modify')), isEmpty);
+  });
+
   testWidgets(
     'terminal deployment failure requires a fresh confirmation and key',
     (WidgetTester tester) async {
@@ -1230,6 +1295,97 @@ void main() {
     expect(volumeCount, 1);
     expect(modifyCount, 1);
   });
+
+  testWidgets(
+    'failed checks after modification do not retain superseded acceptance',
+    (WidgetTester tester) async {
+      var preflightCalls = 0;
+      final apiClient = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          final path = request.url.path;
+          if (path == '/api/v1/operational-intents') {
+            return _jsonResponse(_intentJson(status: 'draft'));
+          }
+          if (path == '/api/v1/operational-intents/intent-1/volumes') {
+            return _jsonResponse(_volumeJson());
+          }
+          if (path == '/api/v1/operational-intents/intent-1/submit') {
+            return _jsonResponse(_intentJson(status: 'submitted'));
+          }
+          if (path ==
+              '/api/v1/operational-intents/intent-1/preflight/evaluate') {
+            preflightCalls += 1;
+            if (preflightCalls > 1) {
+              return http.Response('preflight unavailable', 503);
+            }
+            return _jsonResponse({
+              'intent_id': 'intent-1',
+              'intent_version': 1,
+              'findings': const [],
+              'blocked': false,
+            });
+          }
+          if (path ==
+              '/api/v1/operational-intents/intent-1/deconfliction/check') {
+            return _jsonResponse({
+              'intent': _intentJson(status: 'submitted'),
+              'posture': 'clear',
+              'findings': const [],
+            });
+          }
+          if (path == '/api/v1/operational-intents/intent-1/accept') {
+            return _jsonResponse(_intentJson(status: 'accepted'));
+          }
+          if (path == '/api/v1/operational-intents/intent-1/modify') {
+            return _jsonResponse({
+              'intent': _intentJson(status: 'submitted', version: 2),
+              'volumes': [_volumeJson()],
+              'supersedes_intent_id': 'intent-1',
+              'supersedes_version': 1,
+            });
+          }
+          return http.Response('unexpected ${request.method} $path', 404);
+        }),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(useMaterial3: false),
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              renderTiles: false,
+              apiClient: apiClient,
+              initialVolumes: [_volumeModel()],
+            ),
+          ),
+        ),
+      );
+
+      final saveAndCheck = find.widgetWithText(FilledButton, 'Save & check');
+      await tester.ensureVisible(saveAndCheck);
+      tester.widget<FilledButton>(saveAndCheck).onPressed!();
+      await tester.pumpAndSettle();
+
+      final accept = find.widgetWithText(FilledButton, 'Accept');
+      await tester.ensureVisible(accept);
+      tester.widget<FilledButton>(accept).onPressed!();
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(saveAndCheck);
+      tester.widget<FilledButton>(saveAndCheck).onPressed!();
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('preflight unavailable'), findsOneWidget);
+      expect(find.text('intent-1 v2'), findsWidgets);
+      final importButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Select & import WPL'),
+      );
+      expect(importButton.onPressed, isNull);
+    },
+  );
 
   testWidgets('volume width edits update the map preview immediately', (
     WidgetTester tester,

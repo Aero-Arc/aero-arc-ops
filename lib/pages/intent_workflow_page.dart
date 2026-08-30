@@ -297,6 +297,15 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   }
 
   Future<void> _saveAndCheck() async {
+    final deployment = _missionDeployment;
+    if (deployment != null &&
+        _missionDeploymentRequiresResolution(deployment)) {
+      setState(
+        () => _error =
+            'Unresolved deployment ${deployment.id} must reach a terminal outcome before changing the operational intent.',
+      );
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
     final timeWindowError = _validateTimeWindow();
     if (timeWindowError != null) {
@@ -868,6 +877,16 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                 flight.intentVersion != next.version ||
                 flight.aircraftId != widget.aircraftId));
     _intent = next;
+    final accepted = _acceptedIntent;
+    if (accepted != null &&
+        (accepted.id != next.id || accepted.version != next.version)) {
+      _acceptedIntent = null;
+    }
+    final activated = _activatedIntent;
+    if (activated != null &&
+        (activated.id != next.id || activated.version != next.version)) {
+      _activatedIntent = null;
+    }
     if (bindingChanged) {
       _flight = null;
       _mission = null;
