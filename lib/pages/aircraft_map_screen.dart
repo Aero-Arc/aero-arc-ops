@@ -11,6 +11,12 @@ import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
 import 'intent_workflow_page.dart';
 
+typedef _ConformanceContext = ({
+  String aircraftId,
+  String? intentId,
+  int? intentVersion,
+});
+
 class AircraftMapScreen extends StatefulWidget {
   const AircraftMapScreen({
     super.key,
@@ -47,7 +53,10 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
   Object? _liveStateError;
   bool _liveStateLoading = false;
   List<ConformanceSummary> _liveConformance = const [];
-  bool _hasSuccessfulConformanceResponse = false;
+  _ConformanceContext? _resolvedConformanceContext;
+  int? _resolvedConformanceGeneration;
+  _ConformanceContext? _successfulConformanceContext;
+  int? _successfulConformanceGeneration;
   Object? _conformanceError;
   bool _conformanceLoading = false;
   int _loadGeneration = 0;
@@ -89,7 +98,20 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
     if (conformanceLoader != null) {
       unawaited(_loadConformance(conformanceLoader, generation));
     }
-    return mapFuture;
+    return mapFuture.then((view) {
+      if (generation != _loadGeneration) return view;
+      final context = (
+        aircraftId: widget.aircraftId,
+        intentId: view.activeIntent?.id,
+        intentVersion: view.activeIntent?.version,
+      );
+      _resolvedConformanceContext = context;
+      _resolvedConformanceGeneration = generation;
+      if (_successfulConformanceGeneration == generation) {
+        _successfulConformanceContext = context;
+      }
+      return view;
+    });
   }
 
   Future<void> _loadLiveState(
@@ -126,7 +148,10 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
     setState(() {
       if (result.dashboard != null) {
         _liveConformance = result.dashboard!.summaries;
-        _hasSuccessfulConformanceResponse = true;
+        _successfulConformanceGeneration = generation;
+        if (_resolvedConformanceGeneration == generation) {
+          _successfulConformanceContext = _resolvedConformanceContext;
+        }
       }
       _conformanceError = result.error;
       _conformanceLoading = false;
@@ -207,6 +232,14 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
           }
 
           final activeIntent = view.activeIntent;
+          final conformanceContext = (
+            aircraftId: widget.aircraftId,
+            intentId: activeIntent?.id,
+            intentVersion: activeIntent?.version,
+          );
+          final hasSuccessfulConformanceResponse =
+              _successfulConformanceGeneration == _loadGeneration ||
+              _successfulConformanceContext == conformanceContext;
           final hasLiveContextSummary = _liveConformance.any(
             (summary) =>
                 summary.aircraftId == widget.aircraftId &&
@@ -216,7 +249,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
           final conformance = _selectConformanceSummary(
             [
               ..._liveConformance,
-              if ((!_hasSuccessfulConformanceResponse ||
+              if ((!hasSuccessfulConformanceResponse ||
                       hasLiveContextSummary) &&
                   view.conformanceSummary != null)
                 view.conformanceSummary!,

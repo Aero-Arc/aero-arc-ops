@@ -140,8 +140,10 @@ missing summary or a legacy historical summary without assignment identity,
 monitoring, recording, and watermark evidence cannot establish conformance.
 The map's embedded conformance snapshot is only an initial-load and first-error
 fallback. Once a live dashboard response succeeds, its presence or absence is
-authoritative; later polling errors retain that last live result and never
-resurrect an embedded summary that the live dashboard omitted.
+authoritative for that aircraft, intent, and version; later polling errors
+retain that last live result and never resurrect an embedded summary that the
+live dashboard omitted. A newly refreshed intent may use its own embedded
+snapshot if its first live request fails.
 
 Within one intent version, live summaries are ordered first by assignment
 generation and only then by that generation's evaluation revision. The

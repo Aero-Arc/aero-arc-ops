@@ -719,6 +719,78 @@ void main() {
     expect(find.text('cccccccc…cccccccc'), findsOneWidget);
   });
 
+  testWidgets(
+    'conformance success fence follows the intent context across refreshes',
+    (tester) async {
+      var mapLoads = 0;
+      var conformanceLoads = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async {
+              mapLoads += 1;
+              return sampleMapView(intentVersion: mapLoads < 3 ? 1 : 2);
+            },
+            loadConformance: () async {
+              conformanceLoads += 1;
+              if (conformanceLoads == 1) {
+                return const ConformanceDashboard(
+                  metrics: [],
+                  summaries: [],
+                  events: [],
+                );
+              }
+              throw Exception('conformance unavailable');
+            },
+            conformanceRefreshInterval: const Duration(days: 1),
+            renderTiles: false,
+          ),
+          onGenerateRoute: (settings) => MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => Text('route:${settings.name}'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(mapLoads, 1);
+      expect(conformanceLoads, 1);
+      expect(find.text('Unavailable'), findsWidgets);
+      expect(find.text('No conformance summary.'), findsOneWidget);
+      expect(find.text('Conforming'), findsNothing);
+
+      Future<void> refreshFromWorkflow() async {
+        final openIntent = find.text('Open intent');
+        await tester.ensureVisible(openIntent);
+        await tester.tap(openIntent);
+        await tester.pumpAndSettle();
+        Navigator.of(
+          tester.element(find.text('route:/aircraft/aircraft-1/intent/new')),
+        ).pop();
+        await tester.pumpAndSettle();
+      }
+
+      await refreshFromWorkflow();
+
+      expect(mapLoads, 2);
+      expect(conformanceLoads, 2);
+      expect(find.text('Update Delayed'), findsOneWidget);
+      expect(find.text('Unavailable'), findsWidgets);
+      expect(find.text('No conformance summary.'), findsOneWidget);
+      expect(find.text('Conforming'), findsNothing);
+
+      await refreshFromWorkflow();
+
+      expect(mapLoads, 3);
+      expect(conformanceLoads, 3);
+      expect(find.text('Update Delayed'), findsOneWidget);
+      expect(find.text('Conforming'), findsWidgets);
+      expect(find.text('No conformance summary.'), findsNothing);
+    },
+  );
+
   testWidgets('AircraftMapScreen handles loading and error state', (
     tester,
   ) async {
@@ -788,8 +860,11 @@ AircraftMapView sampleMapView({
   bool includeActiveIntent = true,
   ConformanceSummary? conformanceSummary,
   String? missionDigest,
+  int intentVersion = 1,
 }) {
-  final intent = includeActiveIntent ? sampleIntent() : null;
+  final intent = includeActiveIntent
+      ? sampleIntent(version: intentVersion)
+      : null;
   return AircraftMapView(
     aircraft: const Aircraft(
       id: 'aircraft-1',
@@ -815,10 +890,10 @@ AircraftMapView sampleMapView({
     ],
     activeIntent: intent,
     operationalVolumes: [
-      const OperationalVolume(
+      OperationalVolume(
         id: 'volume-1',
         intentId: 'intent-1',
-        intentVersion: 1,
+        intentVersion: intentVersion,
         sequence: 1,
         geoJson:
             '{"type":"Polygon","coordinates":[[[-98,35],[-97,35],[-97,36],[-98,36],[-98,35]]]}',
@@ -833,7 +908,7 @@ AircraftMapView sampleMapView({
       flightId: 'flight-1',
       aircraftId: 'aircraft-1',
       intentId: 'intent-1',
-      intentVersion: 1,
+      intentVersion: intentVersion,
       sourceFormat: 'qgc_wpl_110',
       sourceSha256: List.filled(64, 'a').join(),
       missionDigest: missionDigest ?? List.filled(64, 'b').join(),
@@ -871,10 +946,10 @@ AircraftMapView sampleMapView({
     ),
     conformanceSummary:
         conformanceSummary ??
-        const ConformanceSummary(
+        ConformanceSummary(
           id: 'summary-1',
           intentId: 'intent-1',
-          intentVersion: 1,
+          intentVersion: intentVersion,
           aircraftId: 'aircraft-1',
           status: 'conforming',
           alertCount: 1,
@@ -939,11 +1014,11 @@ ConformanceDashboard sampleConformanceDashboard({
   );
 }
 
-OperationalIntent sampleIntent() {
-  return const OperationalIntent(
+OperationalIntent sampleIntent({int version = 1}) {
+  return OperationalIntent(
     id: 'intent-1',
     aircraftId: 'aircraft-1',
-    version: 1,
+    version: version,
     name: 'Pipeline patrol',
     summary: 'Inspect corridor',
     authorizationPath: 'permit',
