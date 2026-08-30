@@ -830,7 +830,7 @@ void main() {
   });
 
   testWidgets(
-    'conformance success fence follows the intent context across refreshes',
+    'conformance success fence follows the assignment across refreshes',
     (tester) async {
       var mapLoads = 0;
       var conformanceLoads = 0;
@@ -841,7 +841,12 @@ void main() {
             aircraftId: 'aircraft-1',
             load: () async {
               mapLoads += 1;
-              return sampleMapView(intentVersion: mapLoads < 3 ? 1 : 2);
+              return sampleMapView(
+                conformanceSummary: sampleConformanceDashboard(
+                  assignmentId: mapLoads < 3 ? 'assignment-1' : 'assignment-2',
+                  assignmentGeneration: mapLoads < 3 ? 1 : 2,
+                ).summaries.single,
+              );
             },
             loadConformance: () async {
               conformanceLoads += 1;
@@ -1083,6 +1088,8 @@ AircraftMapView sampleMapView({
 
 ConformanceDashboard sampleConformanceDashboard({
   int intentVersion = 1,
+  String assignmentId = 'assignment-1',
+  int? assignmentGeneration,
   String condition = 'conforming',
   String phase = 'clear',
   double? worstDeviationM,
@@ -1099,7 +1106,8 @@ ConformanceDashboard sampleConformanceDashboard({
         status: condition,
         alertCount: phase == 'clear' ? 0 : 1,
         reportabilityStatus: 'no',
-        assignmentId: 'assignment-1',
+        assignmentId: assignmentId,
+        assignmentGeneration: assignmentGeneration,
         condition: condition,
         monitoringStatus: 'current',
         recordingStatus: 'confirmed',

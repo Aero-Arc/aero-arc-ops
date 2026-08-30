@@ -15,6 +15,8 @@ typedef _ConformanceContext = ({
   String aircraftId,
   String? intentId,
   int? intentVersion,
+  String? assignmentId,
+  int? assignmentGeneration,
 });
 
 class AircraftMapScreen extends StatefulWidget {
@@ -104,6 +106,8 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
         aircraftId: widget.aircraftId,
         intentId: view.activeIntent?.id,
         intentVersion: view.activeIntent?.version,
+        assignmentId: view.conformanceSummary?.assignmentId,
+        assignmentGeneration: view.conformanceSummary?.assignmentGeneration,
       );
       _resolvedConformanceContext = context;
       _resolvedConformanceGeneration = generation;
@@ -236,6 +240,8 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             aircraftId: widget.aircraftId,
             intentId: activeIntent?.id,
             intentVersion: activeIntent?.version,
+            assignmentId: view.conformanceSummary?.assignmentId,
+            assignmentGeneration: view.conformanceSummary?.assignmentGeneration,
           );
           final hasSuccessfulConformanceResponse =
               _successfulConformanceGeneration == _loadGeneration ||

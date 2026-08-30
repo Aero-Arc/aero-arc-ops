@@ -147,7 +147,9 @@ snapshot if its first live request fails.
 Historical-only dashboard results count as live absence and cannot re-admit an
 older embedded live projection. An embedded live projection is merged only
 while the successful dashboard still contains that exact assignment ID and
-generation.
+generation. Cached live absence is scoped to the same assignment, so a newly
+refreshed assignment can still use its embedded snapshot if its first live
+request fails.
 
 Within one intent version, live summaries are ordered first by assignment
 generation and only then by that generation's evaluation revision. The
