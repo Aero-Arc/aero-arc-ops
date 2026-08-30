@@ -219,10 +219,13 @@ evidence. An `outcome_unknown` result remains visibly unresolved after its
 reconciliation window closes and must never be treated as permission for a
 replacement effect. Importing and validating a newer immutable mission does not
 discard that durable blocker: Ops retains the prior deployment ID for refresh
-or exact reconciliation and enables confirmation of the new mission only after
-the prior outcome is resolved. The same blocker is restored after a reload when
-the API returns its complete durable identity for the exact flight and intent
-context, even though the flight's current immutable mission is now newer.
+and enables confirmation of the new mission only after the prior outcome is
+resolved. Once another mission is current, Ops never automatically reconciles
+the superseded mission because that could request an old replacement upload; it
+permits exact-ID status refresh only and directs unresolved cases to manual
+resolution. The same blocker is restored after a reload when the API returns
+its complete durable identity for the exact flight and intent context, even
+though the flight's current immutable mission is now newer.
 
 Mission import is deliberately constrained to a single MSL Polygon volume and
 the supported WPL 110 navigation commands. A mission cannot replace or reshape

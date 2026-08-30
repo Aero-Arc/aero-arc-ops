@@ -674,6 +674,15 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       );
       return;
     }
+    if (current != null &&
+        (mission == null ||
+            !_missionDeploymentMissionMatches(current, mission))) {
+      setState(
+        () => _error =
+            'Automatic reconciliation is disabled because this unresolved deployment belongs to a superseded mission. Refresh its exact durable status or escalate for manual resolution.',
+      );
+      return;
+    }
     setState(() => _missionDeploymentAttempted = true);
     await _runWorkflowAction(() async {
       final result = current == null
@@ -808,7 +817,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
             flight: flight,
             intent: intent,
           )) {
-        return 'Unresolved deployment ${deployment.id} for mission ${deployment.missionId} v${deployment.missionVersion} blocks replacement effects until it is reconciled.';
+        return 'Unresolved deployment ${deployment.id} for superseded mission ${deployment.missionId} v${deployment.missionVersion} blocks replacement effects. Automatic reconciliation is disabled; refresh its exact durable status or escalate for manual resolution.';
       }
       return 'The retained deployment does not match the current mission binding.';
     }
@@ -2296,7 +2305,8 @@ class _MissionDeploymentPanel extends StatelessWidget {
         !busy && blocker == null && localCredentialAvailable && current == null;
     final canDeploy =
         !busy &&
-        (blocker == null || retainedPriorMission) &&
+        blocker == null &&
+        !retainedPriorMission &&
         ((current == null && confirmed) || (current != null && retryable));
     final status =
         current?.status ??
@@ -2423,6 +2433,12 @@ class _MissionDeploymentPanel extends StatelessWidget {
                 ),
               if (current.message != null)
                 DetailLine(label: 'Result detail', value: current.message!),
+              if (retainedPriorMission)
+                const DetailLine(
+                  label: 'Resolution',
+                  value:
+                      'Refresh this durable deployment only. Automatic reconciliation is disabled after mission replacement; escalate for manual resolution if it remains unresolved.',
+                ),
               DetailLine(
                 label: 'Updated',
                 value: formatDate(current.updatedAt),
@@ -2450,7 +2466,7 @@ class _MissionDeploymentPanel extends StatelessWidget {
                 ),
               ),
             if ((current == null && confirmed) ||
-                (current != null && retryable))
+                (current != null && retryable && !retainedPriorMission))
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(

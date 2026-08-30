@@ -338,13 +338,8 @@ void main() {
               return _jsonResponse(
                 _deploymentJson(status: 'outcome_unknown', expired: true),
               );
-            case '/api/v1/flights/flight-1/mission-deployments/deployment-1/reconcile':
-              expect(request.bodyBytes, isEmpty);
-              expect(request.headers['idempotency-key'], isNull);
-              return _jsonResponse({
-                'deployment': _deploymentJson(status: 'already_applied'),
-                'replayed': true,
-              });
+            case '/api/v1/flights/flight-1/mission-deployments/deployment-1':
+              return _jsonResponse(_deploymentJson(status: 'already_applied'));
           }
           return http.Response('unexpected ${request.method}', 404);
         }),
@@ -370,16 +365,16 @@ void main() {
       expect(find.text('1 item(s) · v2'), findsOneWidget);
       expect(find.text('deployment-1'), findsOneWidget);
       expect(find.text('Outcome Unknown'), findsWidgets);
-      expect(
-        find.textContaining(
-          'blocks replacement effects until it is reconciled',
-        ),
-        findsOneWidget,
-      );
+      expect(find.textContaining('blocks replacement effects'), findsOneWidget);
       expect(find.text('Review & confirm deployment'), findsNothing);
-      expect(find.text('Retry exact reconciliation'), findsOneWidget);
+      expect(find.text('Retry exact reconciliation'), findsNothing);
+      expect(find.text('Refresh durable status'), findsOneWidget);
+      expect(
+        find.textContaining('Automatic reconciliation is disabled'),
+        findsWidgets,
+      );
 
-      await _tapVisible(tester, find.text('Retry exact reconciliation'));
+      await _tapVisible(tester, find.text('Refresh durable status'));
 
       expect(find.text('deployment-1'), findsNothing);
       expect(find.text('Review & confirm deployment'), findsOneWidget);
@@ -389,6 +384,14 @@ void main() {
       );
       expect(
         requests.where((request) => request.url.path.endsWith('/reconcile')),
+        isEmpty,
+      );
+      expect(
+        requests.where(
+          (request) =>
+              request.url.path ==
+              '/api/v1/flights/flight-1/mission-deployments/deployment-1',
+        ),
         hasLength(1),
       );
     },
@@ -593,9 +596,9 @@ void main() {
   );
 
   testWidgets(
-    'replacement import retains unresolved deployment until reconciliation',
+    'replacement import retains unresolved deployment for refresh only',
     (WidgetTester tester) async {
-      var reconcileRequests = 0;
+      var refreshRequests = 0;
       final apiClient = AeroArcApiClient(
         baseUri: Uri.parse('http://api.test'),
         missionControlToken: 'local-dev-token',
@@ -626,12 +629,11 @@ void main() {
                 ..['version'] = 2
                 ..['mission_digest'] = List.filled(64, 'c').join();
               return _jsonResponse({'mission': replacement, 'replayed': false});
-            case '/api/v1/flights/flight-1/mission-deployments/deployment-1/reconcile':
-              reconcileRequests++;
-              return _jsonResponse({
-                'deployment': _deploymentJson(status: 'already_applied'),
-                'replayed': true,
-              });
+            case '/api/v1/flights/flight-1/mission-deployments/deployment-1':
+              refreshRequests++;
+              return _jsonResponse(
+                _deploymentJson(status: 'outcome_unknown', expired: true),
+              );
           }
           return http.Response('unexpected ${request.method}', 404);
         }),
@@ -665,20 +667,21 @@ void main() {
 
       expect(find.text('1 item(s) · v2'), findsOneWidget);
       expect(find.text('deployment-1'), findsOneWidget);
-      expect(
-        find.textContaining(
-          'blocks replacement effects until it is reconciled',
-        ),
-        findsOneWidget,
-      );
+      expect(find.textContaining('blocks replacement effects'), findsOneWidget);
       expect(find.text('Review & confirm deployment'), findsNothing);
-      expect(find.text('Retry exact reconciliation'), findsOneWidget);
+      expect(find.text('Retry exact reconciliation'), findsNothing);
+      expect(find.text('Refresh durable status'), findsOneWidget);
+      expect(
+        find.textContaining('Automatic reconciliation is disabled'),
+        findsWidgets,
+      );
 
-      await _tapVisible(tester, find.text('Retry exact reconciliation'));
+      await _tapVisible(tester, find.text('Refresh durable status'));
 
-      expect(reconcileRequests, 1);
-      expect(find.text('deployment-1'), findsNothing);
-      expect(find.text('Review & confirm deployment'), findsOneWidget);
+      expect(refreshRequests, 1);
+      expect(find.text('deployment-1'), findsOneWidget);
+      expect(find.text('Review & confirm deployment'), findsNothing);
+      expect(find.text('Retry exact reconciliation'), findsNothing);
     },
   );
 
