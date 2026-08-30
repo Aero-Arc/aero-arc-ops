@@ -138,10 +138,10 @@ Within one intent version, live summaries are ordered first by assignment
 generation and only then by that generation's evaluation revision. The
 evaluation event time and frame/WAL cursor remain visible as provenance. A
 missing lateral or altitude phase is shown as not evaluated at the summary
-watermark. A non-clear spatial incident whose `last_observed_at` predates that
-watermark remains visibly retained and unresolved, but is also labeled not
-evaluated for the newer watermark; Ops never invents a clear recovery from an
-evidence gap.
+watermark. Every spatial phase, including `clear`, must carry a
+`last_observed_at` at or after that watermark. Older retained incidents remain
+visible, but are labeled not evaluated for the newer watermark; Ops never
+invents current conformance or a clear recovery from an evidence gap.
 
 The diagnostic action is hidden in normal builds. Enable it only for a local
 diagnostic session with

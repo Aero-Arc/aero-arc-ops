@@ -328,9 +328,10 @@ void main() {
                       phase: 'open',
                       lastObservedAt: DateTime(2099),
                     ),
-                    const ConformanceViolation(
+                    ConformanceViolation(
                       type: 'altitude_deviation',
                       phase: 'clear',
+                      lastObservedAt: DateTime(2099),
                     ),
                   ],
                 ),
@@ -370,6 +371,61 @@ void main() {
     expect(find.text('Conforming'), findsNothing);
   });
 
+  testWidgets('stale clear spatial phase is not displayed as conforming', (
+    tester,
+  ) async {
+    final watermark = DateTime(2099, 8, 11, 12);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadConformance: () async => ConformanceDashboard(
+            metrics: const [],
+            summaries: [
+              ConformanceSummary(
+                id: 'live-summary-1',
+                intentId: 'intent-1',
+                intentVersion: 1,
+                aircraftId: 'aircraft-1',
+                status: 'conforming',
+                alertCount: 0,
+                reportabilityStatus: 'no',
+                assignmentId: 'assignment-1',
+                condition: 'conforming',
+                monitoringStatus: 'current',
+                recordingStatus: 'confirmed',
+                observedAt: watermark,
+                violations: [
+                  ConformanceViolation(
+                    type: 'lateral_deviation',
+                    phase: 'clear',
+                    lastObservedAt: watermark.subtract(
+                      const Duration(seconds: 1),
+                    ),
+                  ),
+                  ConformanceViolation(
+                    type: 'altitude_deviation',
+                    phase: 'clear',
+                    lastObservedAt: watermark,
+                  ),
+                ],
+              ),
+            ],
+            events: const [],
+          ),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Not Evaluated'), findsWidgets);
+    expect(find.text('Not evaluated at this watermark'), findsOneWidget);
+    expect(find.text('Conforming'), findsNothing);
+  });
+
   testWidgets('newer embedded conformance beats an older live snapshot', (
     tester,
   ) async {
@@ -388,9 +444,17 @@ void main() {
       monitoringStatus: 'current',
       recordingStatus: 'confirmed',
       observedAt: DateTime(2099, 8, 11, 12, 5),
-      violations: const [
-        ConformanceViolation(type: 'lateral_deviation', phase: 'clear'),
-        ConformanceViolation(type: 'altitude_deviation', phase: 'clear'),
+      violations: [
+        ConformanceViolation(
+          type: 'lateral_deviation',
+          phase: 'clear',
+          lastObservedAt: DateTime(2099, 8, 11, 12, 5),
+        ),
+        ConformanceViolation(
+          type: 'altitude_deviation',
+          phase: 'clear',
+          lastObservedAt: DateTime(2099, 8, 11, 12, 5),
+        ),
       ],
     );
     await tester.pumpWidget(

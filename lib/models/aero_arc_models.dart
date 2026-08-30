@@ -1525,7 +1525,6 @@ class ConformanceSummary {
   bool spatialAxisEvaluated(String type) {
     final violation = violationFor(type);
     if (violation == null || violation.phase.isEmpty) return false;
-    if (violation.phase == 'clear') return true;
     final watermark = observedAt;
     final evidenceAt = violation.lastObservedAt;
     return watermark != null &&

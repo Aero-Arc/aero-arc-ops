@@ -285,8 +285,12 @@ void main() {
           violations: [
             ConformanceViolation(
               type: 'lateral_deviation',
-              phase: 'open',
+              phase: 'clear',
               lastObservedAt: DateTime.utc(2026, 8, 30, 9, 59),
+            ),
+            const ConformanceViolation(
+              type: 'altitude_deviation',
+              phase: 'clear',
             ),
           ],
         ),
@@ -308,8 +312,11 @@ void main() {
     await tester.tap(find.textContaining('intent-spatial v1').last);
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Open retained from'), findsOneWidget);
-    expect(find.text('Not evaluated at this watermark'), findsOneWidget);
+    expect(find.textContaining('Clear retained from'), findsNWidgets(2));
+    expect(
+      find.textContaining('not evaluated at this watermark'),
+      findsNWidgets(2),
+    );
     expect(find.text('wal-1 · 8'), findsOneWidget);
     expect(find.text('frame-8'), findsOneWidget);
   });
