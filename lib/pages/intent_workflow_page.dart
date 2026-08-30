@@ -2325,6 +2325,10 @@ class _MissionDeploymentPanel extends StatelessWidget {
         ((outcomeUnknown && reconciliationWindowOpen) ||
             (current.status == 'pending' && retryWindowOpen) ||
             (current.status == 'temporary_error' && retryWindowOpen));
+    final deploymentMatchesDisplayedMission =
+        current != null &&
+        mission != null &&
+        _missionDeploymentMissionMatches(current, mission!);
     final retainedPriorMission =
         current != null &&
         mission != null &&
@@ -2440,7 +2444,9 @@ class _MissionDeploymentPanel extends StatelessWidget {
                     current.status == 'already_applied' &&
                         current.uploadedItemCount == 0
                     ? 'Readback only · no replacement upload'
-                    : '${current.uploadedItemCount}/${mission?.items.length ?? 0}',
+                    : deploymentMatchesDisplayedMission
+                    ? '${current.uploadedItemCount}/${mission!.items.length}'
+                    : '${current.uploadedItemCount} reported for ${current.missionId} v${current.missionVersion}',
               ),
               DetailLine(
                 label: 'Attempts',

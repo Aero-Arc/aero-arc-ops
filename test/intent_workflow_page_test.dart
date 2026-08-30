@@ -709,13 +709,17 @@ void main() {
                 ],
               });
             case '/api/v1/flights/flight-1/missions/current':
-              return _jsonResponse(_missionJson());
+              return _jsonResponse(_missionJson(itemCount: 5));
             case '/api/v1/flights/flight-1/mission-deployments/current':
               return _jsonResponse(
-                _deploymentJson(status: 'outcome_unknown', expired: true),
+                _deploymentJson(
+                  status: 'outcome_unknown',
+                  expired: true,
+                  uploadedItemCount: 5,
+                ),
               );
             case '/api/v1/flights/flight-1/missions/import':
-              final replacement = _missionJson()
+              final replacement = _missionJson(itemCount: 7)
                 ..['id'] = 'mission-2'
                 ..['version'] = 2
                 ..['mission_digest'] = List.filled(64, 'c').join();
@@ -723,7 +727,11 @@ void main() {
             case '/api/v1/flights/flight-1/mission-deployments/deployment-1':
               refreshRequests++;
               return _jsonResponse(
-                _deploymentJson(status: 'outcome_unknown', expired: true),
+                _deploymentJson(
+                  status: 'outcome_unknown',
+                  expired: true,
+                  uploadedItemCount: 5,
+                ),
               );
           }
           return http.Response('unexpected ${request.method}', 404);
@@ -756,8 +764,10 @@ void main() {
       await _tapVisible(tester, find.text('Import new version').first);
       await _tapVisible(tester, find.text('Import new version').last);
 
-      expect(find.text('1 item(s) · v2'), findsOneWidget);
+      expect(find.text('7 item(s) · v2'), findsOneWidget);
       expect(find.text('deployment-1'), findsOneWidget);
+      expect(find.text('5 reported for mission-1 v1'), findsOneWidget);
+      expect(find.text('5/7'), findsNothing);
       expect(find.textContaining('blocks replacement effects'), findsOneWidget);
       expect(find.text('Review & confirm deployment'), findsNothing);
       expect(find.text('Retry exact reconciliation'), findsNothing);
@@ -1685,7 +1695,10 @@ Map<String, Object?> _intentJson({
   };
 }
 
-Map<String, Object?> _missionJson({String flightId = 'flight-1'}) {
+Map<String, Object?> _missionJson({
+  String flightId = 'flight-1',
+  int itemCount = 1,
+}) {
   return {
     'id': 'mission-1',
     'version': 1,
@@ -1697,9 +1710,10 @@ Map<String, Object?> _missionJson({String flightId = 'flight-1'}) {
     'source_sha256': List.filled(64, 'a').join(),
     'mission_digest': List.filled(64, 'b').join(),
     'validation_findings': [],
-    'items': [
-      {
-        'sequence': 0,
+    'items': List.generate(
+      itemCount,
+      (sequence) => {
+        'sequence': sequence,
         'current': false,
         'frame': 0,
         'command': 16,
@@ -1712,7 +1726,7 @@ Map<String, Object?> _missionJson({String flightId = 'flight-1'}) {
         'altitude_m': 120,
         'autocontinue': true,
       },
-    ],
+    ),
     'created_at': '2026-08-26T12:00:00Z',
   };
 }
@@ -1723,6 +1737,7 @@ Map<String, Object?> _deploymentJson({
   bool expired = false,
   bool expiryMissing = false,
   bool reconciliationClosed = false,
+  int? uploadedItemCount,
 }) {
   return {
     'id': 'deployment-1',
@@ -1737,7 +1752,7 @@ Map<String, Object?> _deploymentJson({
     'command_id': 'command-1',
     'status': status,
     'message': status,
-    'uploaded_item_count': status == 'applied' ? 1 : 0,
+    'uploaded_item_count': uploadedItemCount ?? (status == 'applied' ? 1 : 0),
     'onboard_mission_digest': status == 'applied' || status == 'already_applied'
         ? List.filled(64, 'b').join()
         : null,

@@ -233,7 +233,9 @@ reconciliation window closes and must never be treated as permission for a
 replacement effect. Importing and validating a newer immutable mission does not
 discard that durable blocker: Ops retains the prior deployment ID for refresh
 and enables confirmation of the new mission only after the prior outcome is
-resolved. Once another mission is current, Ops never automatically reconciles
+resolved. Upload counts for a retained prior deployment are labeled with that
+deployment's mission identity and never use the newer plan as their denominator.
+Once another mission is current, Ops never automatically reconciles
 the superseded mission because that could request an old replacement upload; it
 permits exact-ID status refresh only and directs unresolved cases to manual
 resolution. The same blocker is restored after a reload when the API returns
