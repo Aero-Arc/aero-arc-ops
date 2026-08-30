@@ -234,6 +234,78 @@ void main() {
     },
   );
 
+  test(
+    'current deployment restore and reconcile use durable server identity',
+    () async {
+      final requests = <http.Request>[];
+      final client = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          if (request.url.path.endsWith('/current')) {
+            return http.Response(
+              jsonEncode(_missionDeploymentJson(status: 'outcome_unknown')),
+              200,
+            );
+          }
+          if (request.url.path.endsWith('/reconcile')) {
+            return http.Response(
+              jsonEncode({
+                'deployment': _missionDeploymentJson(status: 'applied'),
+                'replayed': true,
+              }),
+              200,
+            );
+          }
+          return http.Response('missing', 404);
+        }),
+      );
+
+      final restored = await client.getCurrentMissionDeployment('flight-1');
+      final reconciled = await client.reconcileMissionDeployment(
+        flightId: 'flight-1',
+        deploymentId: restored.id,
+      );
+
+      expect(requests.map((request) => request.url.path), [
+        '/api/v1/flights/flight-1/mission-deployments/current',
+        '/api/v1/flights/flight-1/mission-deployments/deployment-1/reconcile',
+      ]);
+      expect(
+        requests,
+        everyElement(
+          predicate<http.Request>((request) {
+            return request.headers['authorization'] == 'Bearer local-dev-token';
+          }),
+        ),
+      );
+      expect(requests.last.method, 'POST');
+      expect(requests.last.bodyBytes, isEmpty);
+      expect(requests.last.headers['idempotency-key'], isNull);
+      expect(reconciled.replayed, isTrue);
+      expect(reconciled.deployment.status, 'applied');
+    },
+  );
+
+  test('API errors retain HTTP status for expected absence handling', () async {
+    final client = AeroArcApiClient(
+      baseUri: Uri.parse('http://api.test'),
+      httpClient: MockClient((_) async => http.Response('missing', 404)),
+    );
+
+    await expectLater(
+      client.getCurrentMission('flight-1'),
+      throwsA(
+        isA<AeroArcApiException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          404,
+        ),
+      ),
+    );
+  });
+
   test('mission deploy rejects a noncanonical digest before HTTP', () async {
     var requested = false;
     final client = AeroArcApiClient(

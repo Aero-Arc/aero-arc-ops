@@ -541,6 +541,11 @@ bool _preferConformanceSummary(
   if (candidate.isLiveProjection != current.isLiveProjection) {
     return candidate.isLiveProjection;
   }
+  final candidateGeneration = candidate.assignmentGeneration ?? -1;
+  final currentGeneration = current.assignmentGeneration ?? -1;
+  if (candidateGeneration != currentGeneration) {
+    return candidateGeneration > currentGeneration;
+  }
   final candidateRevision = candidate.evaluationRevision ?? -1;
   final currentRevision = current.evaluationRevision ?? -1;
   if (candidateRevision != currentRevision) {
@@ -1301,6 +1306,20 @@ void _showConformanceSummaryDetails(
             label: 'Frame ID',
             value: summary.frameId ?? 'Not provided',
           ),
+          DetailLine(
+            label: 'WAL cursor',
+            value: summary.walId == null
+                ? 'Not provided'
+                : '${summary.walId} · ${summary.walSequence ?? 0}',
+          ),
+          DetailLine(
+            label: 'Lateral evaluation',
+            value: _spatialEvaluationLabel(summary, 'lateral_deviation'),
+          ),
+          DetailLine(
+            label: 'Altitude evaluation',
+            value: _spatialEvaluationLabel(summary, 'altitude_deviation'),
+          ),
         ] else ...[
           DetailLine(label: 'Score', value: formatPercent(summary.score)),
           DetailLine(label: 'Alerts', value: '${summary.alertCount}'),
@@ -1313,4 +1332,15 @@ void _showConformanceSummaryDetails(
       ]),
     ],
   );
+}
+
+String _spatialEvaluationLabel(ConformanceSummary summary, String type) {
+  final violation = summary.violationFor(type);
+  if (!summary.spatialAxisEvaluated(type)) {
+    if (violation == null || violation.phase.isEmpty) {
+      return 'Not evaluated at this watermark';
+    }
+    return '${displayEnum(violation.phase)} retained from ${formatDate(violation.lastObservedAt)} · not evaluated at this watermark';
+  }
+  return displayEnum(violation!.phase);
 }

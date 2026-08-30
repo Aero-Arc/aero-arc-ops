@@ -5,9 +5,10 @@ import 'package:http/http.dart' as http;
 import '../models/aero_arc_models.dart';
 
 class AeroArcApiException implements Exception {
-  const AeroArcApiException(this.message);
+  const AeroArcApiException(this.message, {this.statusCode});
 
   final String message;
+  final int? statusCode;
 
   @override
   String toString() => message;
@@ -223,6 +224,25 @@ class AeroArcApiClient {
     );
   }
 
+  Future<MissionDeployment> getCurrentMissionDeployment(String flightId) {
+    return _get(
+      '/api/v1/flights/$flightId/mission-deployments/current',
+      MissionDeployment.fromJson,
+      headers: _missionControlHeaders(),
+    );
+  }
+
+  Future<MissionDeploymentResponse> reconcileMissionDeployment({
+    required String flightId,
+    required String deploymentId,
+  }) {
+    return _postEmpty(
+      '/api/v1/flights/$flightId/mission-deployments/$deploymentId/reconcile',
+      MissionDeploymentResponse.fromJson,
+      headers: _missionControlHeaders(),
+    );
+  }
+
   Map<String, String> _missionControlHeaders({
     String? idempotencyKey,
     String? missionDigest,
@@ -251,7 +271,10 @@ class AeroArcApiClient {
       headers: headers,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw AeroArcApiException('API ${response.statusCode}: ${response.body}');
+      throw AeroArcApiException(
+        'API ${response.statusCode}: ${response.body}',
+        statusCode: response.statusCode,
+      );
     }
 
     final decoded = jsonDecode(response.body);
@@ -273,7 +296,10 @@ class AeroArcApiClient {
       headers: headers,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw AeroArcApiException('API ${response.statusCode}: ${response.body}');
+      throw AeroArcApiException(
+        'API ${response.statusCode}: ${response.body}',
+        statusCode: response.statusCode,
+      );
     }
     final decoded = response.body.isEmpty
         ? const <String, dynamic>{}
@@ -298,7 +324,10 @@ class AeroArcApiClient {
       body: jsonEncode(body ?? const <String, dynamic>{}),
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw AeroArcApiException('API ${response.statusCode}: ${response.body}');
+      throw AeroArcApiException(
+        'API ${response.statusCode}: ${response.body}',
+        statusCode: response.statusCode,
+      );
     }
 
     final decoded = response.body.isEmpty

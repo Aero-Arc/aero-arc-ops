@@ -527,6 +527,7 @@ class MissionDeployment {
     this.mavlinkMissionAckType,
     this.issuedAt,
     this.expiresAt,
+    this.reconcileUntil,
     this.completedAt,
     required this.attemptCount,
     this.createdAt,
@@ -550,6 +551,7 @@ class MissionDeployment {
   final int? mavlinkMissionAckType;
   final DateTime? issuedAt;
   final DateTime? expiresAt;
+  final DateTime? reconcileUntil;
   final DateTime? completedAt;
   final int attemptCount;
   final DateTime? createdAt;
@@ -574,6 +576,7 @@ class MissionDeployment {
       mavlinkMissionAckType: nullableInt(json['mavlink_mission_ack_type']),
       issuedAt: asDate(json['issued_at']),
       expiresAt: asDate(json['expires_at']),
+      reconcileUntil: asDate(json['reconcile_until']),
       completedAt: asDate(json['completed_at']),
       attemptCount: asInt(json['attempt_count']),
       createdAt: asDate(json['created_at']),
@@ -1472,6 +1475,8 @@ class ConformanceSummary {
     this.recordingStatus,
     this.observedAt,
     this.frameId,
+    this.walId,
+    this.walSequence,
     this.violations = const [],
   });
 
@@ -1494,6 +1499,8 @@ class ConformanceSummary {
   final String? recordingStatus;
   final DateTime? observedAt;
   final String? frameId;
+  final String? walId;
+  final int? walSequence;
   final List<ConformanceViolation> violations;
 
   bool get isLiveProjection => assignmentId != null;
@@ -1507,6 +1514,24 @@ class ConformanceSummary {
         (violation) => violation.phase.isNotEmpty && violation.phase != 'clear',
       )
       .toList(growable: false);
+
+  ConformanceViolation? violationFor(String type) {
+    for (final violation in violations) {
+      if (violation.type == type) return violation;
+    }
+    return null;
+  }
+
+  bool spatialAxisEvaluated(String type) {
+    final violation = violationFor(type);
+    if (violation == null || violation.phase.isEmpty) return false;
+    if (violation.phase == 'clear') return true;
+    final watermark = observedAt;
+    final evidenceAt = violation.lastObservedAt;
+    return watermark != null &&
+        evidenceAt != null &&
+        !evidenceAt.isBefore(watermark);
+  }
 
   factory ConformanceSummary.fromJson(Map<String, dynamic> json) {
     return ConformanceSummary(
@@ -1529,6 +1554,8 @@ class ConformanceSummary {
       recordingStatus: asNullableString(json['recording_status']),
       observedAt: asDate(json['observed_at']),
       frameId: asNullableString(json['frame_id']),
+      walId: asNullableString(json['wal_id']),
+      walSequence: nullableInt(json['wal_sequence'] ?? json['seq']),
       violations: listOf(json['violations'], ConformanceViolation.fromJson),
     );
   }

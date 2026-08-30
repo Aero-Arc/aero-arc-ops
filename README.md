@@ -134,6 +134,15 @@ normal live results are produced by Agent telemetry flowing through Relay,
 Conformance, and Registry. Missing optional live fields degrade locally without
 hiding durable conformance history.
 
+Within one intent version, live summaries are ordered first by assignment
+generation and only then by that generation's evaluation revision. The
+evaluation event time and frame/WAL cursor remain visible as provenance. A
+missing lateral or altitude phase is shown as not evaluated at the summary
+watermark. A non-clear spatial incident whose `last_observed_at` predates that
+watermark remains visibly retained and unresolved, but is also labeled not
+evaluated for the newer watermark; Ops never invents a clear recovery from an
+evidence gap.
+
 The diagnostic action is hidden in normal builds. Enable it only for a local
 diagnostic session with
 `--dart-define=AERO_ARC_ENABLE_SAMPLE_CONFORMANCE=true`; submitted samples are
@@ -186,6 +195,17 @@ observed flight visually separate. Start the AUTO mission with:
 ```sh
 make sitl-mission-run
 ```
+
+Reopening an accepted or active intent restores its exactly bound flight,
+current immutable mission, and current durable deployment from the API. Ops
+does not persist mission bytes, routing, command IDs, or deployment
+idempotency keys in browser state. Refreshes read the deployment by its durable
+ID, and retryable results use the empty-body reconciliation route so the API
+reuses its server-owned command and binding. An `already_applied` result may be
+readback-only with zero uploaded items; its exact onboard digest is the success
+evidence. An `outcome_unknown` result remains visibly unresolved after its
+reconciliation window closes and must never be treated as permission for a
+replacement effect.
 
 Mission import is deliberately constrained to a single MSL Polygon volume and
 the supported WPL 110 navigation commands. A mission cannot replace or reshape

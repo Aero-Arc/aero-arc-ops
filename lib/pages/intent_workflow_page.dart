@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -95,6 +96,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   bool _missionDeploymentConfirmed = false;
   bool _missionDeploymentAttempted = false;
   bool _missionDeploymentReplayed = false;
+  bool _restoringMissionState = false;
+  int _missionRestoreGeneration = 0;
   late final LatLng? _initialVolumeCenter;
   late List<LatLng> _volumePoints;
 
@@ -110,6 +113,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     _volumePoints = _defaultRoutePoints(center: _initialVolumeCenter);
     _sourceIntent = widget.initialIntent;
     _hydrateFromInitialIntent(now);
+    _startMissionStateRestore();
   }
 
   @override
@@ -129,8 +133,132 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   @override
   void didUpdateWidget(covariant IntentWorkflowPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.aircraftId != widget.aircraftId) {
+    final previousIntent = oldWidget.initialIntent;
+    final nextIntent = widget.initialIntent;
+    if (oldWidget.aircraftId != widget.aircraftId ||
+        previousIntent?.id != nextIntent?.id ||
+        previousIntent?.version != nextIntent?.version) {
+      _missionRestoreGeneration++;
+      _sourceIntent = nextIntent;
+      _flight = null;
+      _mission = null;
+      _missionSource = null;
+      _missionIdempotencyKey = null;
       _resetMissionDeploymentState();
+      _startMissionStateRestore();
+    }
+  }
+
+  void _startMissionStateRestore() {
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    if (intent == null ||
+        (intent.status != 'accepted' && intent.status != 'active') ||
+        intent.aircraftId != widget.aircraftId) {
+      _restoringMissionState = false;
+      return;
+    }
+    final generation = ++_missionRestoreGeneration;
+    _restoringMissionState = true;
+    unawaited(_restoreMissionState(intent, generation));
+  }
+
+  Future<void> _restoreMissionState(
+    OperationalIntent intent,
+    int generation,
+  ) async {
+    try {
+      final flights = await _apiClient.listAircraftFlights(widget.aircraftId);
+      final exactFlights = flights.flights
+          .where(
+            (flight) =>
+                flight.aircraftId == widget.aircraftId &&
+                flight.intentId == intent.id &&
+                flight.intentVersion == intent.version,
+          )
+          .toList(growable: false);
+      final missionFlights = <MapEntry<FlightRecord, Mission>>[];
+      for (final flight in exactFlights) {
+        try {
+          final mission = await _apiClient.getCurrentMission(flight.id);
+          if (!_missionBindingMatches(
+            mission,
+            flight: flight,
+            intent: intent,
+          )) {
+            throw const AeroArcApiException(
+              'Current mission binding does not match its flight, aircraft, and exact intent version.',
+            );
+          }
+          missionFlights.add(MapEntry(flight, mission));
+        } on AeroArcApiException catch (error) {
+          if (error.statusCode != 404) rethrow;
+        }
+      }
+      if (missionFlights.length > 1) {
+        throw const AeroArcApiException(
+          'Multiple flights have a current mission for this exact intent version. Resolve the ambiguity before issuing aircraft commands.',
+        );
+      }
+
+      FlightRecord? flight;
+      Mission? mission;
+      if (missionFlights.isNotEmpty) {
+        flight = missionFlights.single.key;
+        mission = missionFlights.single.value;
+      } else {
+        final planned = exactFlights
+            .where((candidate) => candidate.status == 'planned')
+            .toList(growable: false);
+        if (planned.length == 1) flight = planned.single;
+      }
+
+      MissionDeployment? deployment;
+      if (flight != null &&
+          mission != null &&
+          _apiClient.hasLocalMissionControlToken) {
+        try {
+          deployment = await _apiClient.getCurrentMissionDeployment(flight.id);
+        } on AeroArcApiException catch (error) {
+          if (error.statusCode != 404) rethrow;
+        }
+        if (deployment != null &&
+            !_missionDeploymentMatches(
+              deployment,
+              mission: mission,
+              flight: flight,
+              intent: intent,
+            )) {
+          throw const AeroArcApiException(
+            'Current deployment identity is stale or does not match the current flight, mission, and exact intent version.',
+          );
+        }
+      }
+
+      if (!mounted || generation != _missionRestoreGeneration) return;
+      final currentIntent = _acceptedIntent ?? _intent ?? _sourceIntent;
+      if (currentIntent?.id != intent.id ||
+          currentIntent?.version != intent.version ||
+          currentIntent?.aircraftId != widget.aircraftId) {
+        return;
+      }
+      setState(() {
+        _flight = flight;
+        _mission = mission;
+        _missionSource = null;
+        _missionIdempotencyKey = null;
+        _missionDeployment = deployment;
+        _missionDeploymentIdempotencyKey = null;
+        _missionDeploymentConfirmed = false;
+        _missionDeploymentAttempted = deployment != null;
+        _missionDeploymentReplayed = false;
+        _restoringMissionState = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _missionRestoreGeneration) return;
+      setState(() {
+        _restoringMissionState = false;
+        _error = 'Could not restore durable mission state: $error';
+      });
     }
   }
 
@@ -480,8 +608,10 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     final mission = _mission;
     final flight = _flight;
     final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    final current = _missionDeployment;
     final idempotencyKey = _missionDeploymentIdempotencyKey;
-    if (!_missionDeploymentConfirmed || idempotencyKey == null) {
+    if (current == null &&
+        (!_missionDeploymentConfirmed || idempotencyKey == null)) {
       setState(() => _error = 'Confirm the exact mission binding first.');
       return;
     }
@@ -497,10 +627,15 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     }
     setState(() => _missionDeploymentAttempted = true);
     await _runWorkflowAction(() async {
-      final result = await _apiClient.deployMission(
-        mission: mission,
-        idempotencyKey: idempotencyKey,
-      );
+      final result = current == null
+          ? await _apiClient.deployMission(
+              mission: mission,
+              idempotencyKey: idempotencyKey!,
+            )
+          : await _apiClient.reconcileMissionDeployment(
+              flightId: flight.id,
+              deploymentId: current.id,
+            );
       if (!_missionDeploymentMatches(
         result.deployment,
         mission: mission,
@@ -808,6 +943,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   @override
   Widget build(BuildContext context) {
     final editingLocked = _editingLocked;
+    final workflowBusy = _busy || _restoringMissionState;
     return Container(
       decoration: const BoxDecoration(gradient: aeroPageGradient),
       child: Stack(
@@ -929,7 +1065,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                     right: Column(
                       children: [
                         _ChecksPanel(
-                          busy: _busy,
+                          busy: workflowBusy,
                           sourceIntent: _sourceIntent,
                           modifyResult: _modifyResult,
                           intent: _intent,
@@ -951,7 +1087,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           deconfliction: _deconfliction,
                           activatedIntent: _activatedIntent,
                           checksClear: _checksClear,
-                          busy: _busy,
+                          busy: workflowBusy,
                           onRunChecks: _saveAndCheck,
                           onAccept: _acceptIntent,
                           onActivate: _activateIntent,
@@ -964,7 +1100,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           selectedSource: _missionSource,
                           localCredentialAvailable:
                               _apiClient.hasLocalMissionControlToken,
-                          busy: _busy,
+                          busy: workflowBusy,
                           onSelectAndImport: _selectAndImportMission,
                           onRetry: _retryMissionImport,
                         ),
@@ -980,7 +1116,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           localCredentialAvailable:
                               _apiClient.hasLocalMissionControlToken,
                           blocker: _missionDeploymentBlocker,
-                          busy: _busy,
+                          busy: workflowBusy,
                           onConfirm: _confirmMissionDeployment,
                           onDeploy: _deployMission,
                           onRefresh: _refreshMissionDeployment,
@@ -1987,9 +2123,12 @@ class _MissionDeploymentPanel extends StatelessWidget {
     final retryWindowOpen =
         current?.expiresAt?.isAfter(DateTime.now().toUtc()) ?? false;
     final outcomeUnknown = current?.status == 'outcome_unknown';
+    final reconciliationWindowOpen =
+        current?.reconcileUntil?.isAfter(DateTime.now().toUtc()) ??
+        outcomeUnknown;
     final retryable =
         current != null &&
-        (outcomeUnknown ||
+        ((outcomeUnknown && reconciliationWindowOpen) ||
             (current.status == 'temporary_error' && retryWindowOpen));
     final expiredAttempt =
         current != null &&
@@ -2004,7 +2143,9 @@ class _MissionDeploymentPanel extends StatelessWidget {
     final canConfirm =
         !busy && blocker == null && localCredentialAvailable && current == null;
     final canDeploy =
-        !busy && confirmed && blocker == null && (current == null || retryable);
+        !busy &&
+        blocker == null &&
+        ((current == null && confirmed) || (current != null && retryable));
     final status =
         current?.status ??
         (confirmed
@@ -2090,7 +2231,10 @@ class _MissionDeploymentPanel extends StatelessWidget {
               DetailLine(
                 label: 'Uploaded items',
                 value:
-                    '${current.uploadedItemCount}/${mission?.items.length ?? 0}',
+                    current.status == 'already_applied' &&
+                        current.uploadedItemCount == 0
+                    ? 'Readback only · no replacement upload'
+                    : '${current.uploadedItemCount}/${mission?.items.length ?? 0}',
               ),
               DetailLine(
                 label: 'Attempts',
@@ -2107,6 +2251,13 @@ class _MissionDeploymentPanel extends StatelessWidget {
                       : expiredAttempt
                       ? 'Expired · prepare a new deployment attempt'
                       : formatDate(current.expiresAt),
+                ),
+              if (outcomeUnknown && current.reconcileUntil != null)
+                DetailLine(
+                  label: 'Reconciliation',
+                  value: reconciliationWindowOpen
+                      ? 'Readback recovery open until ${formatDate(current.reconcileUntil)}'
+                      : 'Closed · outcome remains unresolved and blocks replacement effects',
                 ),
               if (current.onboardMissionDigest != null)
                 DetailLine(
@@ -2146,7 +2297,8 @@ class _MissionDeploymentPanel extends StatelessWidget {
                   label: const Text('Review & confirm deployment'),
                 ),
               ),
-            if (confirmed && (current == null || retryable))
+            if ((current == null && confirmed) ||
+                (current != null && retryable))
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
@@ -2247,10 +2399,12 @@ bool _missionDeploymentMatches(
       deployment.operatorId != missionOperator) {
     return false;
   }
-  if (deployment.status == 'applied' ||
-      deployment.status == 'already_applied') {
+  if (deployment.status == 'applied') {
     return deployment.uploadedItemCount == mission.items.length &&
         deployment.onboardMissionDigest == mission.missionDigest;
+  }
+  if (deployment.status == 'already_applied') {
+    return deployment.onboardMissionDigest == mission.missionDigest;
   }
   return true;
 }
