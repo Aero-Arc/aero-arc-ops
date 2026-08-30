@@ -175,6 +175,13 @@ therefore produces an overdue temporal-deviation state; it does not silently
 stop monitoring or mark the flight complete. Override these windows with
 `AERO_ARC_SITL_PLAN_MINUTES` and `AERO_ARC_SITL_MONITOR_HOURS`.
 
+The runner asks MAVProxy for a conservative 4 Hz SITL stream so the local demo
+does not overwhelm a development Agent WAL with simulator telemetry. Override
+it with `AERO_ARC_SITL_STREAM_RATE_HZ`, which must be a whole number from 1
+through 50. For example, `AERO_ARC_SITL_STREAM_RATE_HZ=8 make sitl-up` requests
+8 Hz. This is test-harness load control, not a substitute for production Agent
+ingest throughput, batching, backpressure, and durable recovery.
+
 `sitl-up` imports the checked-in WPL 110 demonstration mission and validates
 every waypoint and complete route segment against the exact intent version. It
 then asks only the API to deploy the current immutable mission. The API derives

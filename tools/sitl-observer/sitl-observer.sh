@@ -27,6 +27,7 @@ ASSIGNMENT_ID=${AERO_ARC_SITL_ASSIGNMENT_ID:-$INTENT_ID}
 TMUX_SESSION=${AERO_ARC_SITL_TMUX_SESSION:-aeroarc-sitl}
 PLAN_MINUTES=${AERO_ARC_SITL_PLAN_MINUTES:-10}
 MONITOR_HOURS=${AERO_ARC_SITL_MONITOR_HOURS:-24}
+SITL_STREAM_RATE_HZ=${AERO_ARC_SITL_STREAM_RATE_HZ:-4}
 INFLUX_PORT=${AERO_ARC_SITL_INFLUX_PORT:-28181}
 CONFORMANCE_DB_PORT=${AERO_ARC_SITL_CONFORMANCE_DB_PORT:-55433}
 export AERO_ARC_SITL_INFLUX_PORT=$INFLUX_PORT
@@ -41,6 +42,23 @@ require_safe_run_dir() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || { echo "required command not found: $1" >&2; exit 1; }
+}
+
+validate_sitl_stream_rate() {
+  case "$SITL_STREAM_RATE_HZ" in
+    [1-9] | [1-4][0-9] | 50) ;;
+    *)
+      echo "AERO_ARC_SITL_STREAM_RATE_HZ must be a whole number from 1 through 50" >&2
+      return 2
+      ;;
+  esac
+}
+
+sitl_vehicle_command() {
+  local command
+  printf -v command 'cd %q && exec %q -v ArduCopter --no-rebuild --console --out=udp:127.0.0.1:14550 %q' \
+    "$ARDUPILOT_SOURCE/ArduCopter" "$SIM_VEHICLE" "--mavproxy-args=--streamrate=$SITL_STREAM_RATE_HZ"
+  printf '%s\n' "$command"
 }
 
 require_mission_relay_source() {
@@ -481,6 +499,7 @@ activate() {
 
 up() {
   require_safe_run_dir
+  validate_sitl_stream_rate
   for command in docker curl go flutter grep jq openssl setsid tmux; do require_command "$command"; done
   require_mission_relay_source
   if [[ -d "$RUN_DIR" ]]; then
@@ -530,7 +549,7 @@ up() {
     deployment_id=$(jq -er '.deployment.id' "$RUN_DIR/mission-deployment.json")
     echo "Agent context established; waiting for SITL evidence before durable deployment reconciliation"
   fi
-  tmux new-session -d -s "$TMUX_SESSION" "cd '$ARDUPILOT_SOURCE/ArduCopter' && '$SIM_VEHICLE' -v ArduCopter --no-rebuild --console --out=udp:127.0.0.1:14550"
+  tmux new-session -d -s "$TMUX_SESSION" "$(sitl_vehicle_command)"
   sleep 5
   if [[ -n "$deployment_id" ]]; then
     wait_deploy_mission "$deployment_id"
