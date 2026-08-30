@@ -144,6 +144,8 @@ authoritative for that aircraft, intent, and version; later polling errors
 retain that last live result and never resurrect an embedded summary that the
 live dashboard omitted. A newly refreshed intent may use its own embedded
 snapshot if its first live request fails.
+Historical-only dashboard results count as live absence and cannot re-admit an
+older embedded live projection.
 
 Within one intent version, live summaries are ordered first by assignment
 generation and only then by that generation's evaluation revision. The

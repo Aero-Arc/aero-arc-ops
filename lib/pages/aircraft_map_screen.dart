@@ -242,6 +242,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
               _successfulConformanceContext == conformanceContext;
           final hasLiveContextSummary = _liveConformance.any(
             (summary) =>
+                summary.isLiveProjection &&
                 summary.aircraftId == widget.aircraftId &&
                 summary.intentId == activeIntent?.id &&
                 summary.intentVersion == activeIntent?.version,

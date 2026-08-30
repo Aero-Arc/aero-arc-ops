@@ -229,6 +229,43 @@ void main() {
     },
   );
 
+  testWidgets(
+    'legacy-only dashboard does not revive an embedded live projection',
+    (tester) async {
+      final embeddedLive = sampleConformanceDashboard().summaries.single;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(conformanceSummary: embeddedLive),
+            loadConformance: () async => const ConformanceDashboard(
+              metrics: [],
+              summaries: [
+                ConformanceSummary(
+                  id: 'legacy-summary',
+                  intentId: 'intent-1',
+                  intentVersion: 1,
+                  aircraftId: 'aircraft-1',
+                  status: 'non_conforming',
+                  alertCount: 1,
+                  reportabilityStatus: 'review',
+                ),
+              ],
+              events: [],
+            ),
+            conformanceRefreshInterval: const Duration(days: 1),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Non Conforming'), findsWidgets);
+      expect(find.text('Conforming'), findsNothing);
+    },
+  );
+
   for (final connectionStatus in ['stale', 'offline', 'unmapped']) {
     testWidgets(
       'fresh position renders navigation marker with $connectionStatus connection',
