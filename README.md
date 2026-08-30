@@ -146,7 +146,10 @@ ArduCopter SITL instance through the full observation path. It builds sibling
 Aero Arc repositories, starts isolated PostGIS and InfluxDB containers, starts
 Registry, Relay, Conformance, API, Agent, Ops, and SITL, and then creates the
 aircraft, battery installation, intent, volume, and flight through API routes.
-It does not load fixture or seed data.
+API and Conformance use separate logical databases in the same PostGIS
+instance, so their migrations remain isolated while API mission and flight
+state exercises the durable PostgreSQL implementation. It does not load
+fixture or seed data.
 
 Prerequisites are Docker Compose, Flutter, Go, OpenSSL, tmux, and an existing
 ArduPilot checkout with a built `ArduCopter` SITL binary. With the Aero Arc
@@ -235,7 +238,10 @@ Agent-driven flight completion and broader guided movement commands remain
 command-lifecycle work, not behavior simulated by this runner.
 
 Source checkouts can be selected without editing the script, for example
-`AERO_ARC_API_SOURCE=/tmp/aero-arc-api-feature make sitl-up`. Runtime binaries,
+`AERO_ARC_RELAY_SOURCE=/tmp/aero-arc-relay-mission make sitl-up`. The runner
+fails before starting services when the selected Relay does not implement the
+mission-deployment RPC. Its isolated Influx listener defaults to port `28181`
+and can be changed with `AERO_ARC_SITL_INFLUX_PORT`. Runtime binaries,
 certificates, WAL, logs, and PID files live under
 `/tmp/aero-arc-sitl-observer` by default.
 

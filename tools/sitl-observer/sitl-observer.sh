@@ -27,6 +27,10 @@ ASSIGNMENT_ID=${AERO_ARC_SITL_ASSIGNMENT_ID:-$INTENT_ID}
 TMUX_SESSION=${AERO_ARC_SITL_TMUX_SESSION:-aeroarc-sitl}
 PLAN_MINUTES=${AERO_ARC_SITL_PLAN_MINUTES:-10}
 MONITOR_HOURS=${AERO_ARC_SITL_MONITOR_HOURS:-24}
+INFLUX_PORT=${AERO_ARC_SITL_INFLUX_PORT:-28181}
+CONFORMANCE_DB_PORT=${AERO_ARC_SITL_CONFORMANCE_DB_PORT:-55433}
+export AERO_ARC_SITL_INFLUX_PORT=$INFLUX_PORT
+export AERO_ARC_SITL_CONFORMANCE_DB_PORT=$CONFORMANCE_DB_PORT
 
 require_safe_run_dir() {
   case "$RUN_DIR" in
@@ -39,11 +43,47 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || { echo "required command not found: $1" >&2; exit 1; }
 }
 
+require_mission_relay_source() {
+  if [[ ! -d "$RELAY_SOURCE/internal/relay" ]] ||
+    ! grep --recursive --fixed-strings --quiet 'func (s *Relay) DeployMission' "$RELAY_SOURCE/internal/relay"; then
+    echo "Relay source $RELAY_SOURCE does not implement RelayControl.DeployMission." >&2
+    echo "Select the mission-deployment Relay branch with AERO_ARC_RELAY_SOURCE before starting SITL." >&2
+    if [[ -d /tmp/aero-arc-relay-mission/internal/relay ]]; then
+      echo "For the current feature worktree, run:" >&2
+      echo "  AERO_ARC_RELAY_SOURCE=/tmp/aero-arc-relay-mission make sitl-up" >&2
+    fi
+    return 2
+  fi
+}
+
+report_early_process_exit() {
+  local display_name=$1
+  local process_name=${display_name,,}
+  local pid_file=$RUN_DIR/pids/$process_name.pid
+  local log_file=$RUN_DIR/logs/$process_name.log
+  local pid
+  [[ -f "$pid_file" ]] || return 1
+  pid=$(<"$pid_file")
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+  echo "$display_name exited before becoming ready; recent log output:" >&2
+  if [[ -s "$log_file" ]]; then
+    tail -n 20 "$log_file" >&2
+  else
+    echo "  no log output was written to $log_file" >&2
+  fi
+  return 0
+}
+
 wait_http() {
   local name=$1 url=$2
   for _ in $(seq 1 90); do
     if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then
       return 0
+    fi
+    if report_early_process_exit "$name"; then
+      return 1
     fi
     sleep 1
   done
@@ -58,6 +98,9 @@ wait_port() {
       exec 3>&-
       return 0
     fi
+    if report_early_process_exit "$name"; then
+      return 1
+    fi
     sleep 1
   done
   echo "$name did not listen on port $port" >&2
@@ -69,6 +112,16 @@ start_process() {
   shift
   setsid "$@" >"$RUN_DIR/logs/$name.log" 2>&1 &
   echo "$!" >"$RUN_DIR/pids/$name.pid"
+}
+
+cleanup_failed_up() {
+  local status=$?
+  trap - EXIT
+  if [[ "$status" -ne 0 ]]; then
+    echo "SITL observer startup failed; stopping processes started by this run." >&2
+    stop_processes
+  fi
+  exit "$status"
 }
 
 stop_processes() {
@@ -162,7 +215,7 @@ telemetry:
   max_retries: 3
   retry_backoff: "200ms"
   influxdb:
-    host: "http://127.0.0.1:18181"
+    host: "http://127.0.0.1:$INFLUX_PORT"
     token: "local-development-no-auth"
     database: "aero_arc"
   agent_mappings:
@@ -185,9 +238,9 @@ service:
     client_ca_file: "$RUN_DIR/tls/ca.crt"
   shutdown_timeout: 15s
 postgres:
-  url: "postgres://conformance:conformance@127.0.0.1:55433/conformance?sslmode=disable"
+  url: "postgres://conformance:conformance@127.0.0.1:$CONFORMANCE_DB_PORT/conformance?sslmode=disable"
 influx:
-  host: "http://127.0.0.1:18181"
+  host: "http://127.0.0.1:$INFLUX_PORT"
   token: "local-development-no-auth"
   database: "aero_arc"
   poll_interval: 1s
@@ -378,7 +431,8 @@ activate() {
 
 up() {
   require_safe_run_dir
-  for command in docker curl go flutter jq openssl setsid tmux; do require_command "$command"; done
+  for command in docker curl go flutter grep jq openssl setsid tmux; do require_command "$command"; done
+  require_mission_relay_source
   if [[ -d "$RUN_DIR" ]]; then
     stop_processes
   fi
@@ -387,21 +441,24 @@ up() {
     sleep 2
   fi
   tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-  for port in 8080 7357 50050 50051 50052 2113; do require_free_port "$port"; done
   docker compose -p aero-arc-sitl-observer -f "$SCRIPT_DIR/compose.yaml" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  for port in 8080 7357 50050 50051 50052 2113 "$INFLUX_PORT" "$CONFORMANCE_DB_PORT"; do require_free_port "$port"; done
   rm -rf -- "$RUN_DIR"
   mkdir -p "$RUN_DIR/logs" "$RUN_DIR/pids"
+  trap cleanup_failed_up EXIT
   generate_tls
   generate_configs
-  docker compose -p aero-arc-sitl-observer -f "$SCRIPT_DIR/compose.yaml" up -d --wait
   build_binaries
+  docker compose -p aero-arc-sitl-observer -f "$SCRIPT_DIR/compose.yaml" up -d --wait
+  wait_port PostGIS "$CONFORMANCE_DB_PORT"
+  sleep 1
   start_process registry "$RUN_DIR/bin/registry" --backend memory --grpc-listen-address 127.0.0.1 --grpc-listen-port 50051 --conformance-ttl 30s
   wait_port Registry 50051
   start_process relay "$RUN_DIR/bin/relay" --config-path "$RUN_DIR/config/relay.yaml" --grpc-port 50050 --tls-cert-path "$RUN_DIR/tls/relay.crt" --tls-key-path "$RUN_DIR/tls/relay.key"
   wait_port Relay 50050
   start_process conformance "$RUN_DIR/bin/conformance" --config-path "$RUN_DIR/config/conformance.yaml"
   wait_port Conformance 50052
-  start_process api env AERO_API_ADDR=127.0.0.1:8080 AERO_API_DURABLE_STORE=memory AERO_API_AIRSPACE_PROVIDERS=local AERO_API_TELEMETRY_STORE=influxdb AERO_API_REPLAY_STORE=memory AERO_API_INFLUXDB_HOST=http://127.0.0.1:18181 AERO_API_INFLUXDB_TOKEN=local-development-no-auth AERO_API_INFLUXDB_DATABASE=aero_arc AERO_API_REGISTRY_MODE=grpc AERO_API_REGISTRY_ADDR=127.0.0.1:50051 AERO_API_RELAY_CONTROL_CA_FILE="$RUN_DIR/tls/ca.crt" AERO_API_RELAY_CONTROL_CERT_FILE="$RUN_DIR/tls/bootstrap.crt" AERO_API_RELAY_CONTROL_KEY_FILE="$RUN_DIR/tls/bootstrap.key" AERO_API_RELAY_CONTROL_SERVER_NAME=localhost AERO_API_MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" AERO_API_SEED= "$RUN_DIR/bin/api" start
+  start_process api env AERO_API_ADDR=127.0.0.1:8080 AERO_API_DURABLE_STORE=postgres AERO_API_DATABASE_URL="postgres://aero_arc:aero_arc@127.0.0.1:$CONFORMANCE_DB_PORT/aero_arc?sslmode=disable" AERO_API_AIRSPACE_PROVIDERS=local AERO_API_TELEMETRY_STORE=influxdb AERO_API_REPLAY_STORE=memory AERO_API_INFLUXDB_HOST="http://127.0.0.1:$INFLUX_PORT" AERO_API_INFLUXDB_TOKEN=local-development-no-auth AERO_API_INFLUXDB_DATABASE=aero_arc AERO_API_REGISTRY_MODE=grpc AERO_API_REGISTRY_ADDR=127.0.0.1:50051 AERO_API_RELAY_CONTROL_CA_FILE="$RUN_DIR/tls/ca.crt" AERO_API_RELAY_CONTROL_CERT_FILE="$RUN_DIR/tls/bootstrap.crt" AERO_API_RELAY_CONTROL_KEY_FILE="$RUN_DIR/tls/bootstrap.key" AERO_API_RELAY_CONTROL_SERVER_NAME=localhost AERO_API_MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" AERO_API_SEED= "$RUN_DIR/bin/api" start
   wait_http API "$API_URL/readyz"
   start_process agent env AERO_ARC_API_KEY="$AGENT_TOKEN" "$RUN_DIR/bin/agent" --server-address 127.0.0.1 --server-port 50050 --skip-tls-verification --debug --wal-path "$RUN_DIR/agent-wal.db" --wal-flush-timeout 250ms --aircraft-command-timeout 10s
   start_process ops make -C "$OPS_DIR" web API_BASE_URL="$API_URL" MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" WEB_HOST=127.0.0.1 WEB_PORT=7357
@@ -434,6 +491,7 @@ up() {
     echo "API process exited; see $RUN_DIR/logs/api.log" >&2
     return 1
   fi
+  trap - EXIT
 }
 
 aircraft_command() {
