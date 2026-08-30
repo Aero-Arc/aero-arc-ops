@@ -211,9 +211,12 @@ make sitl-mission-run
 Reopening an accepted or active intent restores its exactly bound flight,
 current immutable mission, and current durable deployment from the API. Ops
 does not persist mission bytes, routing, command IDs, or deployment
-idempotency keys in browser state. Refreshes read the deployment by its durable
-ID, and retryable results use the empty-body reconciliation route so the API
-reuses its server-owned command and binding. An `already_applied` result may be
+idempotency keys in browser state. A non-404 restore failure blocks intent
+changes as well as mission controls until an explicit durable-state retry
+succeeds, because the failed lookup may conceal an unresolved aircraft effect.
+Refreshes read the deployment by its durable ID, and retryable results use the
+empty-body reconciliation route so the API reuses its server-owned command and
+binding. An `already_applied` result may be
 readback-only with zero uploaded items; its exact onboard digest is the success
 evidence. An `outcome_unknown` result remains visibly unresolved after its
 reconciliation window closes and must never be treated as permission for a

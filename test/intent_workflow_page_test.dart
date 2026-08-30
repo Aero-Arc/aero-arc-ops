@@ -564,6 +564,17 @@ void main() {
         findsWidgets,
       );
       expect(find.text('Retry durable state restore'), findsOneWidget);
+      var saveAndCheck = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Save & check'),
+      );
+      expect(saveAndCheck.onPressed, isNull);
+      var runChecks = tester.widget<IconButton>(
+        find.ancestor(
+          of: find.byTooltip('Run checks'),
+          matching: find.byType(IconButton),
+        ),
+      );
+      expect(runChecks.onPressed, isNull);
       var importButton = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Select & import WPL'),
       );
@@ -573,6 +584,17 @@ void main() {
 
       expect(flightLookups, 2);
       expect(find.text('Retry durable state restore'), findsNothing);
+      saveAndCheck = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Save & check'),
+      );
+      expect(saveAndCheck.onPressed, isNotNull);
+      runChecks = tester.widget<IconButton>(
+        find.ancestor(
+          of: find.byTooltip('Run checks'),
+          matching: find.byType(IconButton),
+        ),
+      );
+      expect(runChecks.onPressed, isNotNull);
       importButton = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Select & import WPL'),
       );

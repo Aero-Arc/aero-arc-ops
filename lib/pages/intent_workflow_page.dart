@@ -297,6 +297,13 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   }
 
   Future<void> _saveAndCheck() async {
+    if (_missionRestoreError != null) {
+      setState(
+        () => _error =
+            'Retry durable mission-state restoration successfully before changing the operational intent.',
+      );
+      return;
+    }
     final deployment = _missionDeployment;
     if (deployment != null &&
         _missionDeploymentRequiresResolution(deployment)) {
@@ -1214,6 +1221,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                       children: [
                         _ChecksPanel(
                           busy: workflowBusy,
+                          checksBlocked: _missionRestoreError != null,
                           sourceIntent: _sourceIntent,
                           modifyResult: _modifyResult,
                           intent: _intent,
@@ -1236,6 +1244,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           activatedIntent: _activatedIntent,
                           checksClear: _checksClear,
                           busy: workflowBusy,
+                          checksBlocked: _missionRestoreError != null,
                           onRunChecks: _saveAndCheck,
                           onAccept: _acceptIntent,
                           onActivate: _activateIntent,
@@ -2007,6 +2016,7 @@ class _VolumePointMarker extends StatelessWidget {
 class _ChecksPanel extends StatelessWidget {
   const _ChecksPanel({
     required this.busy,
+    required this.checksBlocked,
     required this.sourceIntent,
     required this.modifyResult,
     required this.intent,
@@ -2017,6 +2027,7 @@ class _ChecksPanel extends StatelessWidget {
   });
 
   final bool busy;
+  final bool checksBlocked;
   final OperationalIntent? sourceIntent;
   final ModifyOperationalIntentResult? modifyResult;
   final OperationalIntent? intent;
@@ -2031,7 +2042,7 @@ class _ChecksPanel extends StatelessWidget {
       title: 'Checks',
       trailing: IconButton.filledTonal(
         tooltip: 'Run checks',
-        onPressed: busy ? null : onRunChecks,
+        onPressed: busy || checksBlocked ? null : onRunChecks,
         icon: const Icon(Icons.refresh),
       ),
       child: Padding(
@@ -2749,6 +2760,7 @@ class _ReviewPanel extends StatelessWidget {
     required this.activatedIntent,
     required this.checksClear,
     required this.busy,
+    required this.checksBlocked,
     required this.onRunChecks,
     required this.onAccept,
     required this.onActivate,
@@ -2762,6 +2774,7 @@ class _ReviewPanel extends StatelessWidget {
   final OperationalIntent? activatedIntent;
   final bool checksClear;
   final bool busy;
+  final bool checksBlocked;
   final VoidCallback onRunChecks;
   final VoidCallback onAccept;
   final VoidCallback onActivate;
@@ -2840,7 +2853,7 @@ class _ReviewPanel extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: busy ? null : onRunChecks,
+                onPressed: busy || checksBlocked ? null : onRunChecks,
                 icon: busy
                     ? const SizedBox.square(
                         dimension: 18,
