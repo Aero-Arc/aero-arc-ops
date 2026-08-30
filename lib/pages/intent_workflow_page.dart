@@ -470,8 +470,6 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     setState(() {
       _missionSource = selected;
       _missionIdempotencyKey = 'ops-mission-import-$now';
-      _mission = null;
-      _resetMissionDeploymentState();
     });
     await _importSelectedMission();
   }

@@ -420,6 +420,71 @@ void main() {
   );
 
   testWidgets(
+    'failed replacement import preserves current mission and deployment',
+    (WidgetTester tester) async {
+      final apiClient = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          switch (request.url.path) {
+            case '/api/v1/aircraft/aircraft-1/flights':
+              return _jsonResponse({
+                'flights': [
+                  {
+                    'id': 'flight-1',
+                    'aircraft_id': 'aircraft-1',
+                    'intent_id': 'intent-1',
+                    'intent_version': 1,
+                    'status': 'planned',
+                    'mission_type': 'mavlink',
+                  },
+                ],
+              });
+            case '/api/v1/flights/flight-1/missions/current':
+              return _jsonResponse(_missionJson());
+            case '/api/v1/flights/flight-1/mission-deployments/current':
+              return _jsonResponse(_deploymentJson(status: 'applied'));
+            case '/api/v1/flights/flight-1/missions/import':
+              return http.Response('replacement invalid', 422);
+          }
+          return http.Response('unexpected ${request.method}', 404);
+        }),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              renderTiles: false,
+              apiClient: apiClient,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'accepted'),
+              ),
+              selectMissionSource: () async => const MissionSourceSelection(
+                name: 'replacement.waypoints',
+                source:
+                    'QGC WPL 110\n'
+                    '0\t1\t0\t16\t0\t0\t0\t0\t35.2\t-97.2\t120\t1\n',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Applied'), findsWidgets);
+      await _tapVisible(tester, find.text('Import new version').first);
+      await _tapVisible(tester, find.text('Import new version').last);
+
+      expect(find.textContaining('replacement invalid'), findsOneWidget);
+      expect(find.text('1 item(s) · v1'), findsOneWidget);
+      expect(find.text('deployment-1'), findsOneWidget);
+      expect(find.text('Refresh durable status'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'terminal deployment failure requires a fresh confirmation and key',
     (WidgetTester tester) async {
       final harness = _MissionDeploymentHarness(
