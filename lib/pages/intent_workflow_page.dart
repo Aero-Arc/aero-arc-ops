@@ -566,7 +566,16 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       if (!mounted) return;
       setState(() {
         if (!_sameMissionBinding(_mission, imported)) {
-          _resetMissionDeploymentState();
+          final deployment = _missionDeployment;
+          if (deployment == null ||
+              !_missionDeploymentRequiresResolution(deployment)) {
+            _resetMissionDeploymentState();
+          } else {
+            _missionDeploymentIdempotencyKey = null;
+            _missionDeploymentConfirmed = false;
+            _missionDeploymentAttempted = true;
+            _missionDeploymentReplayed = false;
+          }
         }
         _mission = imported;
         _missionImportFailed = false;
@@ -638,46 +647,79 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
     final current = _missionDeployment;
     final idempotencyKey = _missionDeploymentIdempotencyKey;
-    if (current == null &&
-        (!_missionDeploymentConfirmed || idempotencyKey == null)) {
-      setState(() => _error = 'Confirm the exact mission binding first.');
+    if (flight == null || intent == null) {
+      setState(() => _error = 'The exact deployment binding changed.');
       return;
     }
-    if (blocker != null ||
-        mission == null ||
-        flight == null ||
-        intent == null) {
-      setState(() {
-        _resetMissionDeploymentState();
-        _error = blocker ?? 'The exact deployment binding changed.';
-      });
+    if (current == null) {
+      if (!_missionDeploymentConfirmed || idempotencyKey == null) {
+        setState(() => _error = 'Confirm the exact mission binding first.');
+        return;
+      }
+      if (blocker != null || mission == null) {
+        setState(() {
+          _resetMissionDeploymentState();
+          _error = blocker ?? 'The exact deployment binding changed.';
+        });
+        return;
+      }
+    } else if (!_missionDeploymentContextMatches(
+      current,
+      flight: flight,
+      intent: intent,
+    )) {
+      setState(
+        () => _error =
+            'The retained deployment no longer matches this aircraft, flight, and intent context.',
+      );
       return;
     }
     setState(() => _missionDeploymentAttempted = true);
     await _runWorkflowAction(() async {
       final result = current == null
           ? await _apiClient.deployMission(
-              mission: mission,
+              mission: mission!,
               idempotencyKey: idempotencyKey!,
             )
           : await _apiClient.reconcileMissionDeployment(
               flightId: flight.id,
               deploymentId: current.id,
             );
-      if (!_missionDeploymentMatches(
-        result.deployment,
-        mission: mission,
-        flight: flight,
-        intent: intent,
-      )) {
+      final deployment = result.deployment;
+      if (current != null &&
+          !_sameMissionDeploymentIdentity(current, deployment)) {
+        throw const AeroArcApiException(
+          'Mission deployment reconciliation changed the durable command or binding identity.',
+        );
+      }
+      final matchesCurrentMission =
+          mission != null &&
+          _missionDeploymentMatches(
+            deployment,
+            mission: mission,
+            flight: flight,
+            intent: intent,
+          );
+      final currentMatchesDisplayedMission =
+          current != null &&
+          mission != null &&
+          _missionDeploymentMissionMatches(current, mission);
+      if ((current == null || currentMatchesDisplayedMission) &&
+          !matchesCurrentMission) {
         throw const AeroArcApiException(
           'Mission deployment response binding does not match the confirmed flight, mission, and exact intent version.',
         );
       }
       if (!mounted) return;
       setState(() {
-        _missionDeployment = result.deployment;
-        _missionDeploymentReplayed = result.replayed;
+        if (current != null &&
+            !currentMatchesDisplayedMission &&
+            !_missionDeploymentRequiresResolution(deployment)) {
+          _resetMissionDeploymentState();
+        } else {
+          _missionDeployment = deployment;
+          _missionDeploymentReplayed = result.replayed;
+        }
       });
     });
   }
@@ -687,10 +729,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     final mission = _mission;
     final flight = _flight;
     final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
-    if (current == null ||
-        mission == null ||
-        flight == null ||
-        intent == null) {
+    if (current == null || flight == null || intent == null) {
       return;
     }
     await _runWorkflowAction(() async {
@@ -698,18 +737,40 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         flightId: flight.id,
         deploymentId: current.id,
       );
-      if (!_missionDeploymentMatches(
-        deployment,
-        mission: mission,
-        flight: flight,
-        intent: intent,
-      )) {
+      if (!_sameMissionDeploymentIdentity(current, deployment) ||
+          !_missionDeploymentContextMatches(
+            deployment,
+            flight: flight,
+            intent: intent,
+          )) {
         throw const AeroArcApiException(
-          'Mission deployment status binding does not match the current flight, mission, and exact intent version.',
+          'Mission deployment status changed the durable command or operation binding identity.',
+        );
+      }
+      final matchesCurrentMission =
+          mission != null &&
+          _missionDeploymentMatches(
+            deployment,
+            mission: mission,
+            flight: flight,
+            intent: intent,
+          );
+      final currentMatchesDisplayedMission =
+          mission != null && _missionDeploymentMissionMatches(current, mission);
+      if (currentMatchesDisplayedMission && !matchesCurrentMission) {
+        throw const AeroArcApiException(
+          'Mission deployment status binding does not match the current mission evidence.',
         );
       }
       if (!mounted) return;
-      setState(() => _missionDeployment = deployment);
+      setState(() {
+        if (!currentMatchesDisplayedMission &&
+            !_missionDeploymentRequiresResolution(deployment)) {
+          _resetMissionDeploymentState();
+        } else {
+          _missionDeployment = deployment;
+        }
+      });
     });
   }
 
@@ -732,6 +793,24 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     }
     if (!_missionBindingMatches(mission, flight: flight, intent: intent)) {
       return 'Mission, flight, aircraft, and exact intent-version binding do not match.';
+    }
+    final deployment = _missionDeployment;
+    if (deployment != null &&
+        !_missionDeploymentMatches(
+          deployment,
+          mission: mission,
+          flight: flight,
+          intent: intent,
+        )) {
+      if (_missionDeploymentRequiresResolution(deployment) &&
+          _missionDeploymentContextMatches(
+            deployment,
+            flight: flight,
+            intent: intent,
+          )) {
+        return 'Unresolved deployment ${deployment.id} for mission ${deployment.missionId} v${deployment.missionVersion} blocks replacement effects until it is reconciled.';
+      }
+      return 'The retained deployment does not match the current mission binding.';
     }
     if (mission.items.isEmpty ||
         !_lowercaseSha256.hasMatch(mission.missionDigest)) {
@@ -2191,6 +2270,18 @@ class _MissionDeploymentPanel extends StatelessWidget {
         current != null &&
         ((outcomeUnknown && reconciliationWindowOpen) ||
             (current.status == 'temporary_error' && retryWindowOpen));
+    final retainedPriorMission =
+        current != null &&
+        mission != null &&
+        flight != null &&
+        intent != null &&
+        _missionDeploymentRequiresResolution(current) &&
+        _missionDeploymentContextMatches(
+          current,
+          flight: flight!,
+          intent: intent!,
+        ) &&
+        !_missionDeploymentMissionMatches(current, mission!);
     final expiredAttempt =
         current != null &&
         (current.status == 'pending' || current.status == 'temporary_error') &&
@@ -2205,7 +2296,7 @@ class _MissionDeploymentPanel extends StatelessWidget {
         !busy && blocker == null && localCredentialAvailable && current == null;
     final canDeploy =
         !busy &&
-        blocker == null &&
+        (blocker == null || retainedPriorMission) &&
         ((current == null && confirmed) || (current != null && retryable));
     final status =
         current?.status ??
@@ -2465,9 +2556,59 @@ bool _missionDeploymentMatches(
         deployment.onboardMissionDigest == mission.missionDigest;
   }
   if (deployment.status == 'already_applied') {
-    return deployment.onboardMissionDigest == mission.missionDigest;
+    return deployment.uploadedItemCount == 0 &&
+        deployment.onboardMissionDigest == mission.missionDigest;
   }
   return true;
+}
+
+bool _missionDeploymentRequiresResolution(MissionDeployment deployment) {
+  if (deployment.status == 'outcome_unknown') return true;
+  if (deployment.status != 'pending' &&
+      deployment.status != 'temporary_error') {
+    return false;
+  }
+  final expiresAt = deployment.expiresAt;
+  return expiresAt == null || expiresAt.isAfter(DateTime.now().toUtc());
+}
+
+bool _missionDeploymentContextMatches(
+  MissionDeployment deployment, {
+  required FlightRecord flight,
+  required OperationalIntent intent,
+}) {
+  return deployment.flightId == flight.id &&
+      deployment.aircraftId == flight.aircraftId &&
+      deployment.intentId == intent.id &&
+      deployment.intentVersion == intent.version &&
+      flight.aircraftId == intent.aircraftId &&
+      flight.intentId == intent.id &&
+      flight.intentVersion == intent.version;
+}
+
+bool _missionDeploymentMissionMatches(
+  MissionDeployment deployment,
+  Mission mission,
+) {
+  return deployment.missionId == mission.id &&
+      deployment.missionVersion == mission.version &&
+      deployment.missionDigest == mission.missionDigest;
+}
+
+bool _sameMissionDeploymentIdentity(
+  MissionDeployment previous,
+  MissionDeployment next,
+) {
+  return previous.id == next.id &&
+      previous.commandId == next.commandId &&
+      previous.operatorId == next.operatorId &&
+      previous.flightId == next.flightId &&
+      previous.aircraftId == next.aircraftId &&
+      previous.intentId == next.intentId &&
+      previous.intentVersion == next.intentVersion &&
+      previous.missionId == next.missionId &&
+      previous.missionVersion == next.missionVersion &&
+      previous.missionDigest == next.missionDigest;
 }
 
 class _ReviewPanel extends StatelessWidget {

@@ -217,7 +217,10 @@ reuses its server-owned command and binding. An `already_applied` result may be
 readback-only with zero uploaded items; its exact onboard digest is the success
 evidence. An `outcome_unknown` result remains visibly unresolved after its
 reconciliation window closes and must never be treated as permission for a
-replacement effect.
+replacement effect. Importing and validating a newer immutable mission does not
+discard that durable blocker: Ops retains the prior deployment ID for refresh
+or exact reconciliation and enables confirmation of the new mission only after
+the prior outcome is resolved.
 
 Mission import is deliberately constrained to a single MSL Polygon volume and
 the supported WPL 110 navigation commands. A mission cannot replace or reshape

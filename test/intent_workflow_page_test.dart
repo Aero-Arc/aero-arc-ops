@@ -504,6 +504,96 @@ void main() {
   );
 
   testWidgets(
+    'replacement import retains unresolved deployment until reconciliation',
+    (WidgetTester tester) async {
+      var reconcileRequests = 0;
+      final apiClient = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          switch (request.url.path) {
+            case '/api/v1/aircraft/aircraft-1/flights':
+              return _jsonResponse({
+                'flights': [
+                  {
+                    'id': 'flight-1',
+                    'aircraft_id': 'aircraft-1',
+                    'intent_id': 'intent-1',
+                    'intent_version': 1,
+                    'status': 'planned',
+                    'mission_type': 'mavlink',
+                  },
+                ],
+              });
+            case '/api/v1/flights/flight-1/missions/current':
+              return _jsonResponse(_missionJson());
+            case '/api/v1/flights/flight-1/mission-deployments/current':
+              return _jsonResponse(
+                _deploymentJson(status: 'outcome_unknown', expired: true),
+              );
+            case '/api/v1/flights/flight-1/missions/import':
+              final replacement = _missionJson()
+                ..['id'] = 'mission-2'
+                ..['version'] = 2
+                ..['mission_digest'] = List.filled(64, 'c').join();
+              return _jsonResponse({'mission': replacement, 'replayed': false});
+            case '/api/v1/flights/flight-1/mission-deployments/deployment-1/reconcile':
+              reconcileRequests++;
+              return _jsonResponse({
+                'deployment': _deploymentJson(status: 'already_applied'),
+                'replayed': true,
+              });
+          }
+          return http.Response('unexpected ${request.method}', 404);
+        }),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              renderTiles: false,
+              apiClient: apiClient,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'accepted'),
+              ),
+              selectMissionSource: () async => const MissionSourceSelection(
+                name: 'replacement.waypoints',
+                source:
+                    'QGC WPL 110\n'
+                    '0\t1\t0\t16\t0\t0\t0\t0\t35.2\t-97.2\t120\t1\n',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Outcome Unknown'), findsWidgets);
+      await _tapVisible(tester, find.text('Import new version').first);
+      await _tapVisible(tester, find.text('Import new version').last);
+
+      expect(find.text('1 item(s) · v2'), findsOneWidget);
+      expect(find.text('deployment-1'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'blocks replacement effects until it is reconciled',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Review & confirm deployment'), findsNothing);
+      expect(find.text('Retry exact reconciliation'), findsOneWidget);
+
+      await _tapVisible(tester, find.text('Retry exact reconciliation'));
+
+      expect(reconcileRequests, 1);
+      expect(find.text('deployment-1'), findsNothing);
+      expect(find.text('Review & confirm deployment'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'terminal deployment failure requires a fresh confirmation and key',
     (WidgetTester tester) async {
       final harness = _MissionDeploymentHarness(
