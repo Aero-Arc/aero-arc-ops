@@ -224,6 +224,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             conformanceLoading: _conformanceLoading,
             liveTrail: List.unmodifiable(_liveTrail),
             onRefresh: _refresh,
+            onWorkflowReturn: _refresh,
             renderTiles: widget.renderTiles,
           );
         },
@@ -360,6 +361,7 @@ class _AircraftMapContent extends StatelessWidget {
     required this.conformanceLoading,
     required this.liveTrail,
     required this.onRefresh,
+    required this.onWorkflowReturn,
     required this.renderTiles,
   });
 
@@ -372,6 +374,7 @@ class _AircraftMapContent extends StatelessWidget {
   final bool conformanceLoading;
   final List<LatLng> liveTrail;
   final VoidCallback onRefresh;
+  final VoidCallback onWorkflowReturn;
   final bool renderTiles;
 
   @override
@@ -418,6 +421,7 @@ class _AircraftMapContent extends StatelessWidget {
                         conformanceSummary: conformanceSummary,
                         conformanceError: conformanceError,
                         conformanceLoading: conformanceLoading,
+                        onWorkflowReturn: onWorkflowReturn,
                       ),
                     ),
                   ],
@@ -442,6 +446,7 @@ class _AircraftMapContent extends StatelessWidget {
                     conformanceSummary: conformanceSummary,
                     conformanceError: conformanceError,
                     conformanceLoading: conformanceLoading,
+                    onWorkflowReturn: onWorkflowReturn,
                   ),
                 ],
               );
@@ -969,6 +974,7 @@ class _DetailPanel extends StatelessWidget {
     required this.conformanceSummary,
     required this.conformanceError,
     required this.conformanceLoading,
+    required this.onWorkflowReturn,
   });
 
   final AircraftMapView view;
@@ -978,6 +984,7 @@ class _DetailPanel extends StatelessWidget {
   final ConformanceSummary? conformanceSummary;
   final Object? conformanceError;
   final bool conformanceLoading;
+  final VoidCallback onWorkflowReturn;
 
   @override
   Widget build(BuildContext context) {
@@ -1053,11 +1060,15 @@ class _DetailPanel extends StatelessWidget {
           trailing: intent == null
               ? IconButton.filledTonal(
                   tooltip: 'Create intent',
-                  onPressed: () => _openCreateIntent(context, view),
+                  onPressed: () => unawaited(
+                    _openCreateIntent(context, view, onWorkflowReturn),
+                  ),
                   icon: const Icon(Icons.add_task),
                 )
               : TextButton.icon(
-                  onPressed: () => _openAssignedIntent(context, view),
+                  onPressed: () => unawaited(
+                    _openAssignedIntent(context, view, onWorkflowReturn),
+                  ),
                   icon: const Icon(Icons.open_in_new, size: 18),
                   label: const Text('Open intent'),
                   style: TextButton.styleFrom(
@@ -1356,25 +1367,35 @@ String _mapTimestamp(DateTime? timestamp) {
 String _mapUnit(double? value, String unit) =>
     value == null ? 'n/a' : '${value.toStringAsFixed(1)} $unit';
 
-void _openAssignedIntent(BuildContext context, AircraftMapView view) {
+Future<void> _openAssignedIntent(
+  BuildContext context,
+  AircraftMapView view,
+  VoidCallback onReturn,
+) async {
   final intent = view.activeIntent;
   if (intent == null) return;
-  Navigator.of(context).pushNamed(
+  await Navigator.of(context).pushNamed(
     '/aircraft/${view.aircraft.id}/intent/new',
     arguments: IntentWorkflowRouteArguments(
       initialIntent: intent,
       initialVolumes: view.operationalVolumes,
     ),
   );
+  if (context.mounted) onReturn();
 }
 
-void _openCreateIntent(BuildContext context, AircraftMapView view) {
-  Navigator.of(context).pushNamed(
+Future<void> _openCreateIntent(
+  BuildContext context,
+  AircraftMapView view,
+  VoidCallback onReturn,
+) async {
+  await Navigator.of(context).pushNamed(
     '/aircraft/${view.aircraft.id}/intent/new',
     arguments: IntentWorkflowRouteArguments(
       initialVolumeCenter: mapCenterFor(view),
     ),
   );
+  if (context.mounted) onReturn();
 }
 
 LatLng mapCenterFor(AircraftMapView view, {AircraftLiveState? liveState}) {

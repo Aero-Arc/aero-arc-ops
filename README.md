@@ -237,6 +237,10 @@ replacement planned flight or importing a replacement mission. Ops preserves
 the original flight, mission, and durable deployment identity for exact status
 refresh until the command reaches a terminal outcome.
 
+Returning to the aircraft map from an intent workflow reloads the full map read
+model, including the commanded mission, active intent, volumes, history, and
+embedded conformance evidence. Live-state polling remains independently aged.
+
 Mission import is deliberately constrained to a single MSL Polygon volume and
 the supported WPL 110 navigation commands. A mission cannot replace or reshape
 the operational intent. `sitl-mission-run` configures SITL-only AUTO behavior,

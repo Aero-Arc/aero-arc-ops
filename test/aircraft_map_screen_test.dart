@@ -554,16 +554,22 @@ void main() {
     expect(args.initialVolumeCenter?.longitude, -97.2);
   });
 
-  testWidgets('AircraftMapScreen opens assigned intent workflow', (
+  testWidgets('AircraftMapScreen refreshes after assigned intent workflow', (
     tester,
   ) async {
     Object? routeArguments;
+    var loads = 0;
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
         home: AircraftMapScreen(
           aircraftId: 'aircraft-1',
-          load: () async => sampleMapView(),
+          load: () async {
+            loads += 1;
+            return sampleMapView(
+              missionDigest: List.filled(64, loads == 1 ? 'b' : 'c').join(),
+            );
+          },
           renderTiles: false,
         ),
         onGenerateRoute: (settings) {
@@ -586,6 +592,14 @@ void main() {
     final args = routeArguments as IntentWorkflowRouteArguments;
     expect(args.initialIntent?.id, 'intent-1');
     expect(args.initialVolumes, hasLength(1));
+
+    Navigator.of(
+      tester.element(find.text('route:/aircraft/aircraft-1/intent/new')),
+    ).pop();
+    await tester.pumpAndSettle();
+
+    expect(loads, 2);
+    expect(find.text('cccccccc…cccccccc'), findsOneWidget);
   });
 
   testWidgets('AircraftMapScreen handles loading and error state', (
@@ -656,6 +670,7 @@ void main() {
 AircraftMapView sampleMapView({
   bool includeActiveIntent = true,
   ConformanceSummary? conformanceSummary,
+  String? missionDigest,
 }) {
   final intent = includeActiveIntent ? sampleIntent() : null;
   return AircraftMapView(
@@ -704,7 +719,7 @@ AircraftMapView sampleMapView({
       intentVersion: 1,
       sourceFormat: 'qgc_wpl_110',
       sourceSha256: List.filled(64, 'a').join(),
-      missionDigest: List.filled(64, 'b').join(),
+      missionDigest: missionDigest ?? List.filled(64, 'b').join(),
       validationFindings: const [],
       items: const [
         MissionItem(
