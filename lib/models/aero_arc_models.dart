@@ -254,6 +254,7 @@ class AircraftMapView {
     required this.replaySamples,
     this.activeIntent,
     required this.operationalVolumes,
+    this.commandedMission,
     this.conformanceSummary,
     required this.conformanceEvents,
   });
@@ -265,8 +266,22 @@ class AircraftMapView {
   final List<TelemetrySample> replaySamples;
   final OperationalIntent? activeIntent;
   final List<OperationalVolume> operationalVolumes;
+  final Mission? commandedMission;
   final ConformanceSummary? conformanceSummary;
   final List<ConformanceEvent> conformanceEvents;
+
+  bool get missionBindingMismatch {
+    final mission = commandedMission;
+    final intent = activeIntent;
+    return mission != null &&
+        (intent == null ||
+            mission.aircraftId != aircraft.id ||
+            mission.intentId != intent.id ||
+            mission.intentVersion != intent.version);
+  }
+
+  Mission? get validatedMission =>
+      missionBindingMismatch ? null : commandedMission;
 
   factory AircraftMapView.fromJson(Map<String, dynamic> json) {
     return AircraftMapView(
@@ -283,6 +298,7 @@ class AircraftMapView {
         json['operational_volumes'],
         OperationalVolume.fromJson,
       ),
+      commandedMission: optional(json['commanded_mission'], Mission.fromJson),
       conformanceSummary: optional(
         json['conformance_summary'],
         ConformanceSummary.fromJson,
@@ -291,6 +307,297 @@ class AircraftMapView {
         json['conformance_events'],
         ConformanceEvent.fromJson,
       ),
+    );
+  }
+}
+
+class FlightRecord {
+  const FlightRecord({
+    required this.id,
+    required this.aircraftId,
+    required this.intentId,
+    required this.intentVersion,
+    required this.status,
+    this.missionType,
+    this.startedAt,
+    this.endedAt,
+  });
+
+  final String id;
+  final String aircraftId;
+  final String intentId;
+  final int intentVersion;
+  final String status;
+  final String? missionType;
+  final DateTime? startedAt;
+  final DateTime? endedAt;
+
+  factory FlightRecord.fromJson(Map<String, dynamic> json) {
+    return FlightRecord(
+      id: asString(json['id']),
+      aircraftId: asString(json['aircraft_id']),
+      intentId: asString(json['intent_id']),
+      intentVersion: asInt(json['intent_version']),
+      status: asString(json['status']),
+      missionType: asNullableString(json['mission_type']),
+      startedAt: asDate(json['started_at']),
+      endedAt: asDate(json['ended_at']),
+    );
+  }
+}
+
+class FlightListResponse {
+  const FlightListResponse({required this.flights});
+
+  final List<FlightRecord> flights;
+
+  factory FlightListResponse.fromJson(Map<String, dynamic> json) {
+    return FlightListResponse(
+      flights: listOf(json['flights'], FlightRecord.fromJson),
+    );
+  }
+}
+
+class CreateFlightRequest {
+  const CreateFlightRequest({required this.id, this.missionType});
+
+  final String id;
+  final String? missionType;
+
+  Map<String, dynamic> toJson() =>
+      withoutNullValues({'id': id, 'mission_type': missionType});
+}
+
+class MissionValidationFinding {
+  const MissionValidationFinding({
+    required this.severity,
+    required this.code,
+    required this.message,
+    this.sequence,
+  });
+
+  final String severity;
+  final String code;
+  final String message;
+  final int? sequence;
+
+  factory MissionValidationFinding.fromJson(Map<String, dynamic> json) {
+    return MissionValidationFinding(
+      severity: asString(json['severity']),
+      code: asString(json['code']),
+      message: asString(json['message']),
+      sequence: nullableInt(json['sequence']),
+    );
+  }
+}
+
+class MissionItem {
+  const MissionItem({
+    required this.sequence,
+    required this.current,
+    required this.frame,
+    required this.command,
+    required this.param1,
+    required this.param2,
+    required this.param3,
+    required this.param4,
+    required this.latitudeE7,
+    required this.longitudeE7,
+    required this.altitudeM,
+    required this.autoContinue,
+  });
+
+  final int sequence;
+  final bool current;
+  final int frame;
+  final int command;
+  final double param1;
+  final double param2;
+  final double param3;
+  final double param4;
+  final int latitudeE7;
+  final int longitudeE7;
+  final double altitudeM;
+  final bool autoContinue;
+
+  double get latitude => latitudeE7 / 1e7;
+  double get longitude => longitudeE7 / 1e7;
+
+  factory MissionItem.fromJson(Map<String, dynamic> json) {
+    return MissionItem(
+      sequence: asInt(json['sequence']),
+      current: asBool(json['current']),
+      frame: asInt(json['frame']),
+      command: asInt(json['command']),
+      param1: asDouble(json['param1']),
+      param2: asDouble(json['param2']),
+      param3: asDouble(json['param3']),
+      param4: asDouble(json['param4']),
+      latitudeE7: asInt(json['latitude_e7']),
+      longitudeE7: asInt(json['longitude_e7']),
+      altitudeM: asDouble(json['altitude_m']),
+      autoContinue: asBool(json['autocontinue'] ?? json['auto_continue']),
+    );
+  }
+}
+
+class Mission {
+  const Mission({
+    required this.id,
+    required this.version,
+    this.operatorId,
+    required this.flightId,
+    required this.aircraftId,
+    required this.intentId,
+    required this.intentVersion,
+    required this.sourceFormat,
+    required this.sourceSha256,
+    required this.missionDigest,
+    required this.validationFindings,
+    required this.items,
+    this.createdAt,
+  });
+
+  final String id;
+  final int version;
+  final String? operatorId;
+  final String flightId;
+  final String aircraftId;
+  final String intentId;
+  final int intentVersion;
+  final String sourceFormat;
+  final String sourceSha256;
+  final String missionDigest;
+  final List<MissionValidationFinding> validationFindings;
+  final List<MissionItem> items;
+  final DateTime? createdAt;
+
+  factory Mission.fromJson(Map<String, dynamic> json) {
+    return Mission(
+      id: asString(json['id']),
+      version: asInt(json['version']),
+      operatorId: asNullableString(json['operator_id']),
+      flightId: asString(json['flight_id']),
+      aircraftId: asString(json['aircraft_id']),
+      intentId: asString(json['intent_id']),
+      intentVersion: asInt(json['intent_version']),
+      sourceFormat: asString(json['source_format']),
+      sourceSha256: asString(json['source_sha256']),
+      missionDigest: asString(json['mission_digest']),
+      validationFindings: listOf(
+        json['validation_findings'],
+        MissionValidationFinding.fromJson,
+      ),
+      items: listOf(json['items'], MissionItem.fromJson),
+      createdAt: asDate(json['created_at']),
+    );
+  }
+}
+
+class MissionImportResult {
+  const MissionImportResult({required this.mission, required this.replayed});
+
+  final Mission mission;
+  final bool replayed;
+
+  factory MissionImportResult.fromJson(Map<String, dynamic> json) {
+    return MissionImportResult(
+      mission: Mission.fromJson(asMap(json['mission'])),
+      replayed: asBool(json['replayed']),
+    );
+  }
+}
+
+class MissionDeployment {
+  const MissionDeployment({
+    required this.id,
+    required this.operatorId,
+    required this.flightId,
+    required this.aircraftId,
+    required this.intentId,
+    required this.intentVersion,
+    required this.missionId,
+    required this.missionVersion,
+    required this.missionDigest,
+    required this.commandId,
+    required this.status,
+    this.message,
+    required this.uploadedItemCount,
+    this.onboardMissionDigest,
+    this.mavlinkMissionAckType,
+    this.issuedAt,
+    this.expiresAt,
+    this.reconcileUntil,
+    this.completedAt,
+    required this.attemptCount,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final String id;
+  final String operatorId;
+  final String flightId;
+  final String aircraftId;
+  final String intentId;
+  final int intentVersion;
+  final String missionId;
+  final int missionVersion;
+  final String missionDigest;
+  final String commandId;
+  final String status;
+  final String? message;
+  final int uploadedItemCount;
+  final String? onboardMissionDigest;
+  final int? mavlinkMissionAckType;
+  final DateTime? issuedAt;
+  final DateTime? expiresAt;
+  final DateTime? reconcileUntil;
+  final DateTime? completedAt;
+  final int attemptCount;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  factory MissionDeployment.fromJson(Map<String, dynamic> json) {
+    return MissionDeployment(
+      id: asString(json['id']),
+      operatorId: asString(json['operator_id']),
+      flightId: asString(json['flight_id']),
+      aircraftId: asString(json['aircraft_id']),
+      intentId: asString(json['intent_id']),
+      intentVersion: asInt(json['intent_version']),
+      missionId: asString(json['mission_id']),
+      missionVersion: asInt(json['mission_version']),
+      missionDigest: asString(json['mission_digest']),
+      commandId: asString(json['command_id']),
+      status: asString(json['status']),
+      message: asNullableString(json['message']),
+      uploadedItemCount: asInt(json['uploaded_item_count']),
+      onboardMissionDigest: asNullableString(json['onboard_mission_digest']),
+      mavlinkMissionAckType: nullableInt(json['mavlink_mission_ack_type']),
+      issuedAt: asDate(json['issued_at']),
+      expiresAt: asDate(json['expires_at']),
+      reconcileUntil: asDate(json['reconcile_until']),
+      completedAt: asDate(json['completed_at']),
+      attemptCount: asInt(json['attempt_count']),
+      createdAt: asDate(json['created_at']),
+      updatedAt: asDate(json['updated_at']),
+    );
+  }
+}
+
+class MissionDeploymentResponse {
+  const MissionDeploymentResponse({
+    required this.deployment,
+    required this.replayed,
+  });
+
+  final MissionDeployment deployment;
+  final bool replayed;
+
+  factory MissionDeploymentResponse.fromJson(Map<String, dynamic> json) {
+    return MissionDeploymentResponse(
+      deployment: MissionDeployment.fromJson(asMap(json['deployment'])),
+      replayed: asBool(json['replayed']),
     );
   }
 }
@@ -1168,6 +1475,8 @@ class ConformanceSummary {
     this.recordingStatus,
     this.observedAt,
     this.frameId,
+    this.walId,
+    this.walSequence,
     this.violations = const [],
   });
 
@@ -1190,6 +1499,8 @@ class ConformanceSummary {
   final String? recordingStatus;
   final DateTime? observedAt;
   final String? frameId;
+  final String? walId;
+  final int? walSequence;
   final List<ConformanceViolation> violations;
 
   bool get isLiveProjection => assignmentId != null;
@@ -1203,6 +1514,27 @@ class ConformanceSummary {
         (violation) => violation.phase.isNotEmpty && violation.phase != 'clear',
       )
       .toList(growable: false);
+
+  ConformanceViolation? violationFor(String type) {
+    for (final violation in violations) {
+      if (violation.type == type) return violation;
+    }
+    return null;
+  }
+
+  bool spatialAxisEvaluated(String type) {
+    final violation = violationFor(type);
+    if (violation == null || violation.phase.isEmpty) return false;
+    final watermark = observedAt;
+    final evidenceAt = violation.lastObservedAt;
+    return watermark != null &&
+        evidenceAt != null &&
+        !evidenceAt.isBefore(watermark);
+  }
+
+  bool get spatialEvaluationComplete =>
+      spatialAxisEvaluated('lateral_deviation') &&
+      spatialAxisEvaluated('altitude_deviation');
 
   factory ConformanceSummary.fromJson(Map<String, dynamic> json) {
     return ConformanceSummary(
@@ -1225,6 +1557,8 @@ class ConformanceSummary {
       recordingStatus: asNullableString(json['recording_status']),
       observedAt: asDate(json['observed_at']),
       frameId: asNullableString(json['frame_id']),
+      walId: asNullableString(json['wal_id']),
+      walSequence: nullableInt(json['wal_sequence'] ?? json['seq']),
       violations: listOf(json['violations'], ConformanceViolation.fromJson),
     );
   }

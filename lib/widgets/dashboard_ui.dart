@@ -736,6 +736,9 @@ Color statusColor(String status) {
     'closed' ||
     'connected' ||
     'fresh' ||
+    'validated' ||
+    'applied' ||
+    'already_applied' ||
     'confirmed' ||
     'no' => const Color(0xFF00CFA0),
     'review' ||
@@ -747,6 +750,9 @@ Color statusColor(String status) {
     'draft' ||
     'open' ||
     'stale' ||
+    'temporary_error' ||
+    'outcome_unknown' ||
+    'update_delayed' ||
     'action' => const Color(0xFFE4A100),
     'suspected' ||
     'pending' ||
@@ -760,11 +766,19 @@ Color statusColor(String status) {
     'emergency' ||
     'offline' ||
     'rejected' ||
+    'binding_mismatch' ||
+    'onboard_mission_mismatch' ||
     'expired' => const Color(0xFFE14A5B),
     'degraded' => const Color(0xFFE14A5B),
     'missing' ||
     'unmapped' ||
     'unavailable' ||
+    'not_available' ||
+    'not_imported' ||
+    'awaiting_acceptance' ||
+    'credential_required' ||
+    'tracking_unavailable' ||
+    'not_ready' ||
     'unknown' => const Color(0xFF7F90B6),
     _ => const Color(0xFF6B75FF),
   };

@@ -13,6 +13,12 @@ dependencies:
   flutter_map: ^7.0.2
   http: ^1.2.2
   latlong2: ^0.9.1
+  file_selector: 1.0.3
+
+# Keep the repository's Flutter 3.41 / Dart 3.11 floor. Newer Android
+# implementations require Flutter 3.44 even though file_selector 1.0.3 does not.
+dependency_overrides:
+  file_selector_android: 0.5.2+6
 
 dev_dependencies:
   flutter_test:

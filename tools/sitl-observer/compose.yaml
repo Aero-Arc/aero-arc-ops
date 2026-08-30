@@ -1,14 +1,18 @@
 services:
-  conformance-db:
+  postgis:
     image: postgis/postgis:14-3.5-alpine
     environment:
       POSTGRES_USER: conformance
       POSTGRES_PASSWORD: conformance
       POSTGRES_DB: conformance
     ports:
-      - "127.0.0.1:55433:5432"
+      - "127.0.0.1:${AERO_ARC_SITL_CONFORMANCE_DB_PORT:-55433}:5432"
+    volumes:
+      - ./init-postgis.sql:/docker-entrypoint-initdb.d/20-aero-arc-api.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U conformance -d conformance"]
+      # The image starts a temporary postmaster while running init scripts.
+      # Only PID 1 is the final postmaster that survives container bootstrap.
+      test: ["CMD-SHELL", "test \"$$(head -n 1 \"$$PGDATA/postmaster.pid\")\" = 1 && pg_isready -U conformance -d conformance && pg_isready -U aero_arc -d aero_arc"]
       interval: 1s
       timeout: 3s
       retries: 30
@@ -22,4 +26,4 @@ services:
       - --object-store=memory
       - --without-auth
     ports:
-      - "127.0.0.1:18181:8181"
+      - "127.0.0.1:${AERO_ARC_SITL_INFLUX_PORT:-28181}:8181"

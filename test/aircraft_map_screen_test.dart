@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:latlong2/latlong.dart';
 
 import 'package:aero_arc_web/models/aero_arc_models.dart';
 import 'package:aero_arc_web/pages/aircraft_map_screen.dart';
@@ -126,6 +127,218 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets(
+    'live conformance refreshes independently and retains the last good state',
+    (tester) async {
+      var calls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(),
+            loadConformance: () async {
+              calls += 1;
+              if (calls == 1) return sampleConformanceDashboard();
+              if (calls == 2) {
+                return sampleConformanceDashboard(
+                  condition: 'non_conforming',
+                  phase: 'open',
+                  worstDeviationM: 62.4,
+                );
+              }
+              throw Exception('conformance unavailable');
+            },
+            conformanceRefreshInterval: const Duration(seconds: 1),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(calls, 1);
+      expect(find.text('Conforming'), findsWidgets);
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(calls, 2);
+      expect(find.text('Non Conforming'), findsWidgets);
+      expect(find.text('Lateral Deviation'), findsOneWidget);
+      expect(find.text('Open · 62.4 m worst deviation'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(calls, 3);
+      expect(find.text('Update Delayed'), findsOneWidget);
+      expect(find.text('Non Conforming'), findsOneWidget);
+      expect(find.text('Open · 62.4 m worst deviation'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'successful live conformance absence does not revive the map snapshot',
+    (tester) async {
+      var calls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(),
+            loadConformance: () async {
+              calls += 1;
+              if (calls == 1) return sampleConformanceDashboard();
+              if (calls == 2) {
+                return const ConformanceDashboard(
+                  metrics: [],
+                  summaries: [],
+                  events: [],
+                );
+              }
+              throw Exception('conformance unavailable');
+            },
+            conformanceRefreshInterval: const Duration(seconds: 1),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(calls, 1);
+      expect(find.text('Conforming'), findsWidgets);
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(calls, 2);
+      expect(find.text('Unavailable'), findsWidgets);
+      expect(find.text('No conformance summary.'), findsOneWidget);
+      expect(find.text('Conforming'), findsNothing);
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(calls, 3);
+      expect(find.text('Update Delayed'), findsOneWidget);
+      expect(find.text('No conformance summary.'), findsOneWidget);
+      expect(find.text('Conforming'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'legacy-only dashboard does not revive an embedded live projection',
+    (tester) async {
+      final embeddedLive = sampleConformanceDashboard().summaries.single;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(conformanceSummary: embeddedLive),
+            loadConformance: () async => const ConformanceDashboard(
+              metrics: [],
+              summaries: [
+                ConformanceSummary(
+                  id: 'legacy-summary',
+                  intentId: 'intent-1',
+                  intentVersion: 1,
+                  aircraftId: 'aircraft-1',
+                  status: 'non_conforming',
+                  alertCount: 1,
+                  reportabilityStatus: 'review',
+                ),
+              ],
+              events: [],
+            ),
+            conformanceRefreshInterval: const Duration(days: 1),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Non Conforming'), findsWidgets);
+      expect(find.text('Conforming'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'different live assignment does not revive the embedded generation',
+    (tester) async {
+      final watermark = DateTime(2099, 8, 11, 12);
+      ConformanceSummary summary({
+        required String id,
+        required String assignmentId,
+        required int generation,
+        required String condition,
+      }) => ConformanceSummary(
+        id: id,
+        intentId: 'intent-1',
+        intentVersion: 1,
+        aircraftId: 'aircraft-1',
+        status: condition,
+        alertCount: condition == 'conforming' ? 0 : 1,
+        reportabilityStatus: 'review',
+        assignmentId: assignmentId,
+        assignmentGeneration: generation,
+        evaluationRevision: 1,
+        condition: condition,
+        monitoringStatus: 'current',
+        recordingStatus: 'confirmed',
+        observedAt: watermark,
+        violations: [
+          ConformanceViolation(
+            type: 'lateral_deviation',
+            phase: condition == 'conforming' ? 'clear' : 'open',
+            lastObservedAt: watermark,
+          ),
+          ConformanceViolation(
+            type: 'altitude_deviation',
+            phase: 'clear',
+            lastObservedAt: watermark,
+          ),
+        ],
+      );
+      final embedded = summary(
+        id: 'embedded-generation-2',
+        assignmentId: 'assignment-2',
+        generation: 2,
+        condition: 'conforming',
+      );
+      final dashboardSummary = summary(
+        id: 'live-generation-1',
+        assignmentId: 'assignment-1',
+        generation: 1,
+        condition: 'non_conforming',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(conformanceSummary: embedded),
+            loadConformance: () async => ConformanceDashboard(
+              metrics: const [],
+              summaries: [dashboardSummary],
+              events: const [],
+            ),
+            conformanceRefreshInterval: const Duration(days: 1),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Non Conforming'), findsWidgets);
+      expect(find.text('Conforming'), findsNothing);
+    },
+  );
+
   for (final connectionStatus in ['stale', 'offline', 'unmapped']) {
     testWidgets(
       'fresh position renders navigation marker with $connectionStatus connection',
@@ -166,6 +379,294 @@ void main() {
 
     expect(find.byIcon(Icons.navigation), findsNothing);
     expect(find.byIcon(Icons.question_mark_rounded), findsOneWidget);
+  });
+
+  testWidgets('stale HUD cannot project a fresh position', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadState: () async =>
+              sampleLiveState(includePositionMotion: false, hudStatus: 'stale'),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('no motion projection'), findsOneWidget);
+    expect(find.textContaining('10s projected track'), findsNothing);
+  });
+
+  testWidgets('superseded conformance cannot replace the active version', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadConformance: () async => sampleConformanceDashboard(
+            intentVersion: 2,
+            condition: 'non_conforming',
+            phase: 'open',
+          ),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Unavailable'), findsWidgets);
+    expect(find.text('No conformance summary.'), findsOneWidget);
+    expect(find.text('Conforming'), findsNothing);
+    expect(find.text('Non Conforming'), findsNothing);
+  });
+
+  testWidgets(
+    'new assignment generation wins before revision and observation time',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(),
+            loadConformance: () async => ConformanceDashboard(
+              metrics: const [],
+              summaries: [
+                ConformanceSummary(
+                  id: 'superseded-summary',
+                  intentId: 'intent-1',
+                  intentVersion: 1,
+                  aircraftId: 'aircraft-1',
+                  status: 'conforming',
+                  alertCount: 0,
+                  reportabilityStatus: 'no',
+                  assignmentId: 'assignment-1',
+                  assignmentGeneration: 1,
+                  evaluationRevision: 99,
+                  condition: 'conforming',
+                  monitoringStatus: 'current',
+                  recordingStatus: 'confirmed',
+                  observedAt: DateTime(2100),
+                ),
+                ConformanceSummary(
+                  id: 'same-generation-older-revision',
+                  intentId: 'intent-1',
+                  intentVersion: 1,
+                  aircraftId: 'aircraft-1',
+                  status: 'conforming',
+                  alertCount: 0,
+                  reportabilityStatus: 'no',
+                  assignmentId: 'assignment-2',
+                  assignmentGeneration: 2,
+                  evaluationRevision: 0,
+                  condition: 'conforming',
+                  monitoringStatus: 'current',
+                  recordingStatus: 'confirmed',
+                  observedAt: DateTime(2101),
+                ),
+                ConformanceSummary(
+                  id: 'current-summary',
+                  intentId: 'intent-1',
+                  intentVersion: 1,
+                  aircraftId: 'aircraft-1',
+                  status: 'non_conforming',
+                  alertCount: 1,
+                  reportabilityStatus: 'review',
+                  assignmentId: 'assignment-2',
+                  assignmentGeneration: 2,
+                  evaluationRevision: 1,
+                  condition: 'non_conforming',
+                  monitoringStatus: 'current',
+                  recordingStatus: 'confirmed',
+                  observedAt: DateTime(2099),
+                  violations: [
+                    ConformanceViolation(
+                      type: 'lateral_deviation',
+                      phase: 'open',
+                      lastObservedAt: DateTime(2099),
+                    ),
+                    ConformanceViolation(
+                      type: 'altitude_deviation',
+                      phase: 'clear',
+                      lastObservedAt: DateTime(2099),
+                    ),
+                  ],
+                ),
+              ],
+              events: const [],
+            ),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Non Conforming'), findsWidgets);
+      expect(find.text('Conforming'), findsNothing);
+    },
+  );
+
+  testWidgets('missing spatial phase is not displayed as conforming', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadConformance: () async =>
+              sampleConformanceDashboard(includeAltitudeEvaluation: false),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Not Evaluated'), findsWidgets);
+    expect(find.text('Not evaluated at this watermark'), findsOneWidget);
+    expect(find.text('Conforming'), findsNothing);
+  });
+
+  testWidgets('stale clear spatial phase is not displayed as conforming', (
+    tester,
+  ) async {
+    final watermark = DateTime(2099, 8, 11, 12);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadConformance: () async => ConformanceDashboard(
+            metrics: const [],
+            summaries: [
+              ConformanceSummary(
+                id: 'live-summary-1',
+                intentId: 'intent-1',
+                intentVersion: 1,
+                aircraftId: 'aircraft-1',
+                status: 'conforming',
+                alertCount: 0,
+                reportabilityStatus: 'no',
+                assignmentId: 'assignment-1',
+                condition: 'conforming',
+                monitoringStatus: 'current',
+                recordingStatus: 'confirmed',
+                observedAt: watermark,
+                violations: [
+                  ConformanceViolation(
+                    type: 'lateral_deviation',
+                    phase: 'clear',
+                    lastObservedAt: watermark.subtract(
+                      const Duration(seconds: 1),
+                    ),
+                  ),
+                  ConformanceViolation(
+                    type: 'altitude_deviation',
+                    phase: 'clear',
+                    lastObservedAt: watermark,
+                  ),
+                ],
+              ),
+            ],
+            events: const [],
+          ),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Not Evaluated'), findsWidgets);
+    expect(find.text('Not evaluated at this watermark'), findsOneWidget);
+    expect(find.text('Conforming'), findsNothing);
+  });
+
+  testWidgets('newer embedded conformance beats an older live snapshot', (
+    tester,
+  ) async {
+    final currentEmbedded = ConformanceSummary(
+      id: 'embedded-current',
+      intentId: 'intent-1',
+      intentVersion: 1,
+      aircraftId: 'aircraft-1',
+      status: 'conforming',
+      alertCount: 0,
+      reportabilityStatus: 'no',
+      assignmentId: 'assignment-2',
+      assignmentGeneration: 2,
+      evaluationRevision: 5,
+      condition: 'conforming',
+      monitoringStatus: 'current',
+      recordingStatus: 'confirmed',
+      observedAt: DateTime(2099, 8, 11, 12, 5),
+      violations: [
+        ConformanceViolation(
+          type: 'lateral_deviation',
+          phase: 'clear',
+          lastObservedAt: DateTime(2099, 8, 11, 12, 5),
+        ),
+        ConformanceViolation(
+          type: 'altitude_deviation',
+          phase: 'clear',
+          lastObservedAt: DateTime(2099, 8, 11, 12, 5),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(conformanceSummary: currentEmbedded),
+          loadConformance: () async => ConformanceDashboard(
+            metrics: const [],
+            summaries: [
+              ConformanceSummary(
+                id: 'live-older',
+                intentId: 'intent-1',
+                intentVersion: 1,
+                aircraftId: 'aircraft-1',
+                status: 'non_conforming',
+                alertCount: 1,
+                reportabilityStatus: 'review',
+                assignmentId: 'assignment-2',
+                assignmentGeneration: 2,
+                evaluationRevision: 4,
+                condition: 'non_conforming',
+                monitoringStatus: 'current',
+                recordingStatus: 'confirmed',
+                observedAt: DateTime(2099, 8, 11, 12, 4),
+                violations: [
+                  ConformanceViolation(
+                    type: 'lateral_deviation',
+                    phase: 'open',
+                    lastObservedAt: DateTime(2099, 8, 11, 12, 4),
+                  ),
+                  const ConformanceViolation(
+                    type: 'altitude_deviation',
+                    phase: 'clear',
+                  ),
+                ],
+              ),
+            ],
+            events: const [],
+          ),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Conforming'), findsWidgets);
+    expect(find.text('Non Conforming'), findsNothing);
   });
 
   testWidgets('missing live position keeps historical marker uncertain', (
@@ -280,16 +781,22 @@ void main() {
     expect(args.initialVolumeCenter?.longitude, -97.2);
   });
 
-  testWidgets('AircraftMapScreen opens assigned intent workflow', (
+  testWidgets('AircraftMapScreen refreshes after assigned intent workflow', (
     tester,
   ) async {
     Object? routeArguments;
+    var loads = 0;
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
         home: AircraftMapScreen(
           aircraftId: 'aircraft-1',
-          load: () async => sampleMapView(),
+          load: () async {
+            loads += 1;
+            return sampleMapView(
+              missionDigest: List.filled(64, loads == 1 ? 'b' : 'c').join(),
+            );
+          },
           renderTiles: false,
         ),
         onGenerateRoute: (settings) {
@@ -312,7 +819,160 @@ void main() {
     final args = routeArguments as IntentWorkflowRouteArguments;
     expect(args.initialIntent?.id, 'intent-1');
     expect(args.initialVolumes, hasLength(1));
+
+    Navigator.of(
+      tester.element(find.text('route:/aircraft/aircraft-1/intent/new')),
+    ).pop();
+    await tester.pumpAndSettle();
+
+    expect(loads, 2);
+    expect(find.text('cccccccc…cccccccc'), findsOneWidget);
   });
+
+  testWidgets(
+    'conformance success fence follows the assignment across refreshes',
+    (tester) async {
+      var mapLoads = 0;
+      var conformanceLoads = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async {
+              mapLoads += 1;
+              return sampleMapView(
+                conformanceSummary: sampleConformanceDashboard(
+                  assignmentId: mapLoads < 3 ? 'assignment-1' : 'assignment-2',
+                  assignmentGeneration: mapLoads < 3 ? 1 : 2,
+                ).summaries.single,
+              );
+            },
+            loadConformance: () async {
+              conformanceLoads += 1;
+              if (conformanceLoads == 1) {
+                return const ConformanceDashboard(
+                  metrics: [],
+                  summaries: [],
+                  events: [],
+                );
+              }
+              throw Exception('conformance unavailable');
+            },
+            conformanceRefreshInterval: const Duration(days: 1),
+            renderTiles: false,
+          ),
+          onGenerateRoute: (settings) => MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => Text('route:${settings.name}'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(mapLoads, 1);
+      expect(conformanceLoads, 1);
+      expect(find.text('Unavailable'), findsWidgets);
+      expect(find.text('No conformance summary.'), findsOneWidget);
+      expect(find.text('Conforming'), findsNothing);
+
+      Future<void> refreshFromWorkflow() async {
+        final openIntent = find.text('Open intent');
+        await tester.ensureVisible(openIntent);
+        await tester.tap(openIntent);
+        await tester.pumpAndSettle();
+        Navigator.of(
+          tester.element(find.text('route:/aircraft/aircraft-1/intent/new')),
+        ).pop();
+        await tester.pumpAndSettle();
+      }
+
+      await refreshFromWorkflow();
+
+      expect(mapLoads, 2);
+      expect(conformanceLoads, 2);
+      expect(find.text('Update Delayed'), findsOneWidget);
+      expect(find.text('Unavailable'), findsWidgets);
+      expect(find.text('No conformance summary.'), findsOneWidget);
+      expect(find.text('Conforming'), findsNothing);
+
+      await refreshFromWorkflow();
+
+      expect(mapLoads, 3);
+      expect(conformanceLoads, 3);
+      expect(find.text('Update Delayed'), findsOneWidget);
+      expect(find.text('Conforming'), findsWidgets);
+      expect(find.text('No conformance summary.'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'full refresh resolves map assignment before polling conformance',
+    (tester) async {
+      final refreshedMap = Completer<AircraftMapView>();
+      var mapLoads = 0;
+      var conformanceLoads = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () {
+              mapLoads += 1;
+              if (mapLoads == 2) return refreshedMap.future;
+              return Future.value(sampleMapView());
+            },
+            loadConformance: () async {
+              conformanceLoads += 1;
+              return const ConformanceDashboard(
+                metrics: [],
+                summaries: [],
+                events: [],
+              );
+            },
+            conformanceRefreshInterval: const Duration(days: 1),
+            renderTiles: false,
+          ),
+          onGenerateRoute: (settings) => MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => Text('route:${settings.name}'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(mapLoads, 1);
+      expect(conformanceLoads, 1);
+
+      final openIntent = find.text('Open intent');
+      await tester.ensureVisible(openIntent);
+      await tester.tap(openIntent);
+      await tester.pumpAndSettle();
+      Navigator.of(
+        tester.element(find.text('route:/aircraft/aircraft-1/intent/new')),
+      ).pop();
+      await tester.pump();
+      await tester.pump();
+
+      expect(mapLoads, 2);
+      expect(conformanceLoads, 1);
+
+      refreshedMap.complete(
+        sampleMapView(
+          conformanceSummary: sampleConformanceDashboard(
+            assignmentId: 'assignment-2',
+            assignmentGeneration: 2,
+          ).summaries.single,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(conformanceLoads, 2);
+      expect(find.text('Unavailable'), findsWidgets);
+      expect(find.text('No conformance summary.'), findsOneWidget);
+      expect(find.text('Conforming'), findsNothing);
+    },
+  );
 
   testWidgets('AircraftMapScreen handles loading and error state', (
     tester,
@@ -358,10 +1018,36 @@ void main() {
     expect(track.last.latitude, greaterThan(track.first.latitude));
     expect(track.last.longitude, greaterThan(track.first.longitude));
   });
+
+  test('commanded mission path preserves waypoint sequence', () {
+    final path = missionPath(sampleMapView().commandedMission);
+
+    expect(path, hasLength(2));
+    expect(path.first, const LatLng(35.15, -97.15));
+    expect(path.last, const LatLng(35.25, -97.25));
+  });
+
+  test(
+    'long mission plans declutter waypoint markers but retain endpoints',
+    () {
+      final indexes = missionMarkerIndexes(200);
+
+      expect(indexes.length, lessThanOrEqualTo(31));
+      expect(indexes.first, 0);
+      expect(indexes.last, 199);
+    },
+  );
 }
 
-AircraftMapView sampleMapView({bool includeActiveIntent = true}) {
-  final intent = includeActiveIntent ? sampleIntent() : null;
+AircraftMapView sampleMapView({
+  bool includeActiveIntent = true,
+  ConformanceSummary? conformanceSummary,
+  String? missionDigest,
+  int intentVersion = 1,
+}) {
+  final intent = includeActiveIntent
+      ? sampleIntent(version: intentVersion)
+      : null;
   return AircraftMapView(
     aircraft: const Aircraft(
       id: 'aircraft-1',
@@ -387,10 +1073,10 @@ AircraftMapView sampleMapView({bool includeActiveIntent = true}) {
     ],
     activeIntent: intent,
     operationalVolumes: [
-      const OperationalVolume(
+      OperationalVolume(
         id: 'volume-1',
         intentId: 'intent-1',
-        intentVersion: 1,
+        intentVersion: intentVersion,
         sequence: 1,
         geoJson:
             '{"type":"Polygon","coordinates":[[[-98,35],[-97,35],[-97,36],[-98,36],[-98,35]]]}',
@@ -399,15 +1085,59 @@ AircraftMapView sampleMapView({bool includeActiveIntent = true}) {
         altitudeRef: 'agl',
       ),
     ],
-    conformanceSummary: const ConformanceSummary(
-      id: 'summary-1',
-      intentId: 'intent-1',
-      intentVersion: 1,
+    commandedMission: Mission(
+      id: 'mission-1',
+      version: 1,
+      flightId: 'flight-1',
       aircraftId: 'aircraft-1',
-      status: 'conforming',
-      alertCount: 1,
-      reportabilityStatus: 'review',
+      intentId: 'intent-1',
+      intentVersion: intentVersion,
+      sourceFormat: 'qgc_wpl_110',
+      sourceSha256: List.filled(64, 'a').join(),
+      missionDigest: missionDigest ?? List.filled(64, 'b').join(),
+      validationFindings: const [],
+      items: const [
+        MissionItem(
+          sequence: 0,
+          current: true,
+          frame: 0,
+          command: 22,
+          param1: 0,
+          param2: 0,
+          param3: 0,
+          param4: 0,
+          latitudeE7: 351500000,
+          longitudeE7: -971500000,
+          altitudeM: 100,
+          autoContinue: true,
+        ),
+        MissionItem(
+          sequence: 1,
+          current: false,
+          frame: 0,
+          command: 16,
+          param1: 0,
+          param2: 0,
+          param3: 0,
+          param4: 0,
+          latitudeE7: 352500000,
+          longitudeE7: -972500000,
+          altitudeM: 110,
+          autoContinue: true,
+        ),
+      ],
     ),
+    conformanceSummary:
+        conformanceSummary ??
+        ConformanceSummary(
+          id: 'summary-1',
+          intentId: 'intent-1',
+          intentVersion: intentVersion,
+          aircraftId: 'aircraft-1',
+          status: 'conforming',
+          alertCount: 1,
+          reportabilityStatus: 'review',
+        ),
     conformanceEvents: const [
       ConformanceEvent(
         id: 'event-1',
@@ -424,11 +1154,57 @@ AircraftMapView sampleMapView({bool includeActiveIntent = true}) {
   );
 }
 
-OperationalIntent sampleIntent() {
-  return const OperationalIntent(
+ConformanceDashboard sampleConformanceDashboard({
+  int intentVersion = 1,
+  String assignmentId = 'assignment-1',
+  int? assignmentGeneration,
+  String condition = 'conforming',
+  String phase = 'clear',
+  double? worstDeviationM,
+  bool includeAltitudeEvaluation = true,
+}) {
+  return ConformanceDashboard(
+    metrics: const [],
+    summaries: [
+      ConformanceSummary(
+        id: 'live-summary-1',
+        intentId: 'intent-1',
+        intentVersion: intentVersion,
+        aircraftId: 'aircraft-1',
+        status: condition,
+        alertCount: phase == 'clear' ? 0 : 1,
+        reportabilityStatus: 'no',
+        assignmentId: assignmentId,
+        assignmentGeneration: assignmentGeneration,
+        condition: condition,
+        monitoringStatus: 'current',
+        recordingStatus: 'confirmed',
+        observedAt: DateTime(2099, 8, 11, 12),
+        violations: [
+          ConformanceViolation(
+            type: 'lateral_deviation',
+            phase: phase,
+            worstDeviationM: worstDeviationM,
+            lastObservedAt: DateTime(2099, 8, 11, 12),
+          ),
+          if (includeAltitudeEvaluation)
+            ConformanceViolation(
+              type: 'altitude_deviation',
+              phase: 'clear',
+              lastObservedAt: DateTime(2099, 8, 11, 12),
+            ),
+        ],
+      ),
+    ],
+    events: const [],
+  );
+}
+
+OperationalIntent sampleIntent({int version = 1}) {
+  return OperationalIntent(
     id: 'intent-1',
     aircraftId: 'aircraft-1',
-    version: 1,
+    version: version,
     name: 'Pipeline patrol',
     summary: 'Inspect corridor',
     authorizationPath: 'permit',
@@ -455,6 +1231,8 @@ AircraftLiveState sampleLiveState({
   String connectionStatus = 'connected',
   String positionStatus = 'fresh',
   bool includePosition = true,
+  bool includePositionMotion = true,
+  String? hudStatus,
   double latitudeDeg = 29.7604,
   double longitudeDeg = -95.3698,
   DateTime? recordedAt,
@@ -481,10 +1259,10 @@ AircraftLiveState sampleLiveState({
               latitudeDeg: latitudeDeg,
               longitudeDeg: longitudeDeg,
               relativeAltitudeM: 21.2,
-              velocityNorthMps: 8,
-              velocityEastMps: 6,
-              groundspeedMps: 10,
-              headingDeg: 36.9,
+              velocityNorthMps: includePositionMotion ? 8 : null,
+              velocityEastMps: includePositionMotion ? 6 : null,
+              groundspeedMps: includePositionMotion ? 10 : null,
+              headingDeg: includePositionMotion ? 36.9 : null,
             )
           : null,
       battery: BatteryTelemetry(
@@ -506,6 +1284,14 @@ AircraftLiveState sampleLiveState({
         mainloopLoadPct: 43.2,
         communicationDropRatePct: 0.4,
       ),
+      hud: hudStatus == null
+          ? null
+          : HudTelemetry(
+              status: hudStatus,
+              recordedAt: DateTime(2099, 8, 11, 11, 59),
+              groundspeedMps: 12,
+              headingDeg: 90,
+            ),
     ),
   );
 }

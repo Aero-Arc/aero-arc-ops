@@ -11,25 +11,38 @@ import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
 import 'intent_workflow_page.dart';
 
+typedef _ConformanceContext = ({
+  String aircraftId,
+  String? intentId,
+  int? intentVersion,
+  String? assignmentId,
+  int? assignmentGeneration,
+});
+
 class AircraftMapScreen extends StatefulWidget {
   const AircraftMapScreen({
     super.key,
     required this.aircraftId,
     this.load,
     this.loadState,
+    this.loadConformance,
     this.limit = 1000,
     this.renderTiles = true,
-    this.liveRefreshInterval = const Duration(seconds: 2),
+    this.liveRefreshInterval = const Duration(seconds: 1),
+    this.conformanceRefreshInterval = const Duration(seconds: 1),
     this.liveTrailLimit = 60,
   }) : assert(liveRefreshInterval > Duration.zero),
+       assert(conformanceRefreshInterval > Duration.zero),
        assert(liveTrailLimit > 0);
 
   final String aircraftId;
   final int limit;
   final Future<AircraftMapView> Function()? load;
   final Future<AircraftLiveState> Function()? loadState;
+  final Future<ConformanceDashboard> Function()? loadConformance;
   final bool renderTiles;
   final Duration liveRefreshInterval;
+  final Duration conformanceRefreshInterval;
   final int liveTrailLimit;
 
   @override
@@ -41,8 +54,15 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
   AircraftLiveState? _liveState;
   Object? _liveStateError;
   bool _liveStateLoading = false;
+  List<ConformanceSummary> _liveConformance = const [];
+  _ConformanceContext? _resolvedConformanceContext;
+  int? _resolvedConformanceGeneration;
+  _ConformanceContext? _successfulConformanceContext;
+  Object? _conformanceError;
+  bool _conformanceLoading = false;
   int _loadGeneration = 0;
   Timer? _liveRefreshTimer;
+  Timer? _conformanceRefreshTimer;
   final List<LatLng> _liveTrail = [];
   DateTime? _lastTrackRecordedAt;
 
@@ -69,11 +89,50 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
         (custom == null
             ? () => client.getAircraftState(widget.aircraftId)
             : null);
+    final conformanceLoader =
+        widget.loadConformance ?? (custom == null ? client.conformance : null);
+    final resolvedMapFuture = mapFuture.then((view) {
+      if (generation != _loadGeneration) return view;
+      final context = (
+        aircraftId: widget.aircraftId,
+        intentId: view.activeIntent?.id,
+        intentVersion: view.activeIntent?.version,
+        assignmentId: view.conformanceSummary?.assignmentId,
+        assignmentGeneration: view.conformanceSummary?.assignmentGeneration,
+      );
+      _resolvedConformanceContext = context;
+      _resolvedConformanceGeneration = generation;
+      return view;
+    });
     _liveStateLoading = stateLoader != null;
     if (stateLoader != null) {
       unawaited(_loadLiveState(stateLoader, generation));
     }
-    return mapFuture;
+    _conformanceLoading = conformanceLoader != null;
+    if (conformanceLoader != null) {
+      unawaited(
+        _loadConformanceAfterMap(
+          resolvedMapFuture,
+          conformanceLoader,
+          generation,
+        ),
+      );
+    }
+    return resolvedMapFuture;
+  }
+
+  Future<void> _loadConformanceAfterMap(
+    Future<AircraftMapView> mapFuture,
+    Future<ConformanceDashboard> Function() loader,
+    int generation,
+  ) async {
+    try {
+      await mapFuture;
+    } catch (_) {
+      return;
+    }
+    if (!mounted || generation != _loadGeneration) return;
+    await _loadConformance(loader, generation);
   }
 
   Future<void> _loadLiveState(
@@ -99,6 +158,31 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
     );
   }
 
+  Future<void> _loadConformance(
+    Future<ConformanceDashboard> Function() loader,
+    int generation,
+  ) async {
+    final result = await _captureConformance(
+      Future<ConformanceDashboard>.sync(loader),
+    );
+    if (!mounted || generation != _loadGeneration) return;
+    setState(() {
+      if (result.dashboard != null) {
+        _liveConformance = result.dashboard!.summaries;
+        if (_resolvedConformanceGeneration == generation) {
+          _successfulConformanceContext = _resolvedConformanceContext;
+        }
+      }
+      _conformanceError = result.error;
+      _conformanceLoading = false;
+    });
+    _conformanceRefreshTimer?.cancel();
+    _conformanceRefreshTimer = Timer(
+      widget.conformanceRefreshInterval,
+      () => _loadConformance(loader, generation),
+    );
+  }
+
   void _recordLiveTrack(AircraftLiveState state) {
     final position = state.telemetry.position;
     if (position == null || position.status != 'fresh') return;
@@ -114,9 +198,11 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
 
   void _refresh() {
     _liveRefreshTimer?.cancel();
+    _conformanceRefreshTimer?.cancel();
     setState(() {
       _liveState = null;
       _liveStateError = null;
+      _conformanceError = null;
       _liveTrail.clear();
       _lastTrackRecordedAt = null;
       _future = _load();
@@ -126,6 +212,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
   @override
   void dispose() {
     _liveRefreshTimer?.cancel();
+    _conformanceRefreshTimer?.cancel();
     super.dispose();
   }
 
@@ -164,19 +251,109 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             );
           }
 
+          final activeIntent = view.activeIntent;
+          final conformanceContext = (
+            aircraftId: widget.aircraftId,
+            intentId: activeIntent?.id,
+            intentVersion: activeIntent?.version,
+            assignmentId: view.conformanceSummary?.assignmentId,
+            assignmentGeneration: view.conformanceSummary?.assignmentGeneration,
+          );
+          final hasSuccessfulConformanceResponse =
+              _successfulConformanceContext == conformanceContext;
+          final embeddedConformance = view.conformanceSummary;
+          final hasLiveEmbeddedAssignment =
+              embeddedConformance?.isLiveProjection == true &&
+              _liveConformance.any(
+                (summary) =>
+                    summary.isLiveProjection &&
+                    summary.aircraftId == widget.aircraftId &&
+                    summary.intentId == activeIntent?.id &&
+                    summary.intentVersion == activeIntent?.version &&
+                    summary.assignmentId == embeddedConformance?.assignmentId &&
+                    summary.assignmentGeneration ==
+                        embeddedConformance?.assignmentGeneration,
+              );
+          final conformance = _selectConformanceSummary(
+            [
+              ..._liveConformance,
+              if ((!hasSuccessfulConformanceResponse ||
+                      hasLiveEmbeddedAssignment) &&
+                  embeddedConformance != null)
+                embeddedConformance,
+            ],
+            aircraftId: widget.aircraftId,
+            intentId: activeIntent?.id,
+            intentVersion: activeIntent?.version,
+          );
+
           return _AircraftMapContent(
             view: view,
             liveState: _liveState,
             liveStateError: _liveStateError,
             liveStateLoading: _liveStateLoading,
+            conformanceSummary: conformance,
+            conformanceError: _conformanceError,
+            conformanceLoading: _conformanceLoading,
             liveTrail: List.unmodifiable(_liveTrail),
             onRefresh: _refresh,
+            onWorkflowReturn: _refresh,
             renderTiles: widget.renderTiles,
           );
         },
       ),
     );
   }
+}
+
+ConformanceSummary? _selectConformanceSummary(
+  List<ConformanceSummary> summaries, {
+  required String aircraftId,
+  String? intentId,
+  int? intentVersion,
+}) {
+  if (intentId == null || intentVersion == null) return null;
+  final matchingAircraft = summaries
+      .where((summary) => summary.aircraftId == aircraftId)
+      .toList();
+  if (matchingAircraft.isEmpty) return null;
+  final candidates = matchingAircraft
+      .where(
+        (summary) =>
+            summary.intentId == intentId &&
+            summary.intentVersion == intentVersion,
+      )
+      .toList();
+  if (candidates.isEmpty) return null;
+  candidates.sort((left, right) {
+    if (left.isLiveProjection != right.isLiveProjection) {
+      return left.isLiveProjection ? -1 : 1;
+    }
+    final generationOrder = (right.assignmentGeneration ?? -1).compareTo(
+      left.assignmentGeneration ?? -1,
+    );
+    if (generationOrder != 0) return generationOrder;
+    final revisionOrder = (right.evaluationRevision ?? -1).compareTo(
+      left.evaluationRevision ?? -1,
+    );
+    if (revisionOrder != 0) return revisionOrder;
+    final leftAt = left.observedAt ?? left.updatedAt;
+    final rightAt = right.observedAt ?? right.updatedAt;
+    if (leftAt == null) return rightAt == null ? 0 : 1;
+    if (rightAt == null) return -1;
+    return rightAt.compareTo(leftAt);
+  });
+  return candidates.first;
+}
+
+String _mapConformanceStatus(ConformanceSummary summary) {
+  final condition = summary.condition ?? summary.status;
+  if (summary.isLiveProjection &&
+      condition == 'conforming' &&
+      !summary.spatialEvaluationComplete) {
+    return 'not_evaluated';
+  }
+  return condition;
 }
 
 Future<_LiveStateResult> _captureLiveState(
@@ -189,10 +366,27 @@ Future<_LiveStateResult> _captureLiveState(
   }
 }
 
+Future<_ConformanceResult> _captureConformance(
+  Future<ConformanceDashboard> future,
+) async {
+  try {
+    return _ConformanceResult(dashboard: await future);
+  } catch (error) {
+    return _ConformanceResult(error: error);
+  }
+}
+
 class _LiveStateResult {
   const _LiveStateResult({this.state, this.error});
 
   final AircraftLiveState? state;
+  final Object? error;
+}
+
+class _ConformanceResult {
+  const _ConformanceResult({this.dashboard, this.error});
+
+  final ConformanceDashboard? dashboard;
   final Object? error;
 }
 
@@ -235,8 +429,12 @@ class _AircraftMapContent extends StatelessWidget {
     required this.liveState,
     required this.liveStateError,
     required this.liveStateLoading,
+    required this.conformanceSummary,
+    required this.conformanceError,
+    required this.conformanceLoading,
     required this.liveTrail,
     required this.onRefresh,
+    required this.onWorkflowReturn,
     required this.renderTiles,
   });
 
@@ -244,8 +442,12 @@ class _AircraftMapContent extends StatelessWidget {
   final AircraftLiveState? liveState;
   final Object? liveStateError;
   final bool liveStateLoading;
+  final ConformanceSummary? conformanceSummary;
+  final Object? conformanceError;
+  final bool conformanceLoading;
   final List<LatLng> liveTrail;
   final VoidCallback onRefresh;
+  final VoidCallback onWorkflowReturn;
   final bool renderTiles;
 
   @override
@@ -289,6 +491,10 @@ class _AircraftMapContent extends StatelessWidget {
                         liveState: liveState,
                         liveStateError: liveStateError,
                         liveStateLoading: liveStateLoading,
+                        conformanceSummary: conformanceSummary,
+                        conformanceError: conformanceError,
+                        conformanceLoading: conformanceLoading,
+                        onWorkflowReturn: onWorkflowReturn,
                       ),
                     ),
                   ],
@@ -310,6 +516,10 @@ class _AircraftMapContent extends StatelessWidget {
                     liveState: liveState,
                     liveStateError: liveStateError,
                     liveStateLoading: liveStateLoading,
+                    conformanceSummary: conformanceSummary,
+                    conformanceError: conformanceError,
+                    conformanceLoading: conformanceLoading,
+                    onWorkflowReturn: onWorkflowReturn,
                   ),
                 ],
               );
@@ -405,23 +615,26 @@ class _MapPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final path = replayPath(view.replaySamples);
+    final mission = view.validatedMission;
+    final commandedRoute = missionPath(mission);
     final polygons = volumePolygons(view.operationalVolumes);
     final livePosition = liveState?.telemetry.position;
     final livePositionAvailable = livePosition?.status == 'fresh';
     final hud = liveState?.telemetry.hud;
-    final heading = livePosition?.headingDeg ?? hud?.headingDeg;
+    final freshHud = hud?.status == 'fresh' ? hud : null;
+    final heading = livePosition?.headingDeg ?? freshHud?.headingDeg;
     final projectedTrack = livePositionAvailable
         ? projectedPositionTrack(
             livePosition!,
-            fallbackGroundspeedMps: hud?.groundspeedMps,
-            fallbackHeadingDeg: hud?.headingDeg,
+            fallbackGroundspeedMps: freshHud?.groundspeedMps,
+            fallbackHeadingDeg: freshHud?.headingDeg,
           )
         : const <LatLng>[];
     final speed = livePosition == null
         ? null
         : positionGroundspeed(
             livePosition,
-            fallbackGroundspeedMps: hud?.groundspeedMps,
+            fallbackGroundspeedMps: freshHud?.groundspeedMps,
           );
     final markers = <Marker>[
       if (path.isNotEmpty)
@@ -452,6 +665,13 @@ class _MapPanel extends StatelessWidget {
                 ? heading * math.pi / 180
                 : 0,
           ),
+        ),
+      for (final index in missionMarkerIndexes(commandedRoute.length))
+        Marker(
+          point: commandedRoute[index],
+          width: 34,
+          height: 34,
+          child: _MissionWaypointMarker(item: mission!.items[index]),
         ),
       for (final event in view.conformanceEvents)
         if (event.latitude != null && event.longitude != null)
@@ -512,6 +732,16 @@ class _MapPanel extends StatelessWidget {
                       ),
                     ],
                   ),
+                if (commandedRoute.length >= 2)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: commandedRoute,
+                        strokeWidth: 4,
+                        color: const Color(0xFF43C6FF),
+                      ),
+                    ],
+                  ),
                 if (liveTrail.length >= 2)
                   PolylineLayer(
                     polylines: [
@@ -528,7 +758,7 @@ class _MapPanel extends StatelessWidget {
                       Polyline(
                         points: projectedTrack,
                         strokeWidth: 3,
-                        color: const Color(0xFF43C6FF),
+                        color: const Color(0xFFE4A100),
                       ),
                     ],
                   ),
@@ -549,6 +779,38 @@ class _MapPanel extends StatelessWidget {
             ),
             const Positioned(bottom: 12, left: 12, child: _MapLegend()),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MissionWaypointMarker extends StatelessWidget {
+  const _MissionWaypointMarker({required this.item});
+
+  final MissionItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label:
+          'Mission item ${item.sequence}, ${missionCommandLabel(item.command)}, ${item.altitudeM.toStringAsFixed(0)} meters MSL',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF07132E),
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0xFF43C6FF), width: 2),
+          boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 8)],
+        ),
+        child: Center(
+          child: Text(
+            '${item.sequence}',
+            style: const TextStyle(
+              color: Color(0xFFDFF6FF),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ),
       ),
     );
@@ -737,8 +999,13 @@ class _MapLegend extends StatelessWidget {
           runSpacing: 6,
           children: [
             _MapLegendItem(color: Color(0xFF5E6FFF), label: 'History'),
+            _MapLegendItem(
+              color: Color(0xFF6B75FF),
+              label: 'Authorized volume',
+            ),
+            _MapLegendItem(color: Color(0xFF43C6FF), label: 'Validated plan'),
             _MapLegendItem(color: Color(0xFF00CFA0), label: 'Live trail'),
-            _MapLegendItem(color: Color(0xFF43C6FF), label: '10s projection'),
+            _MapLegendItem(color: Color(0xFFE4A100), label: '10s projection'),
           ],
         ),
       ),
@@ -777,18 +1044,27 @@ class _DetailPanel extends StatelessWidget {
     required this.liveState,
     required this.liveStateError,
     required this.liveStateLoading,
+    required this.conformanceSummary,
+    required this.conformanceError,
+    required this.conformanceLoading,
+    required this.onWorkflowReturn,
   });
 
   final AircraftMapView view;
   final AircraftLiveState? liveState;
   final Object? liveStateError;
   final bool liveStateLoading;
+  final ConformanceSummary? conformanceSummary;
+  final Object? conformanceError;
+  final bool conformanceLoading;
+  final VoidCallback onWorkflowReturn;
 
   @override
   Widget build(BuildContext context) {
     final telemetry = view.latestTelemetry;
     final intent = view.activeIntent;
-    final summary = view.conformanceSummary;
+    final mission = view.validatedMission;
+    final summary = conformanceSummary;
     final skippedVolumes = view.operationalVolumes
         .where((volume) => (volume.geoJson ?? '').isEmpty)
         .length;
@@ -802,15 +1078,70 @@ class _DetailPanel extends StatelessWidget {
         ),
         const SizedBox(height: 18),
         Panel(
+          title: 'Validated Mission Plan',
+          trailing: StatusBadge(
+            label: view.missionBindingMismatch
+                ? 'binding_mismatch'
+                : mission == null
+                ? 'not_available'
+                : 'validated',
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+            child: Column(
+              children: [
+                DetailLine(
+                  label: 'Route',
+                  value: view.missionBindingMismatch
+                      ? 'Mission hidden because its aircraft or exact intent-version binding is inconsistent.'
+                      : mission == null
+                      ? 'No mission is bound to this active intent.'
+                      : '${mission.items.length} waypoint item(s)',
+                ),
+                if (mission != null) ...[
+                  DetailLine(label: 'Flight', value: mission.flightId),
+                  DetailLine(
+                    label: 'Intent binding',
+                    value: '${mission.intentId} v${mission.intentVersion}',
+                  ),
+                  DetailLine(
+                    label: 'Mission version',
+                    value: '${mission.version}',
+                  ),
+                  DetailLine(
+                    label: 'Digest',
+                    value: _mapShortDigest(mission.missionDigest),
+                  ),
+                ],
+                const DetailLine(
+                  label: 'Meaning',
+                  value:
+                      'Cyan is the API-validated plan. Violet is authorization. Green is observed flight.',
+                ),
+                const DetailLine(
+                  label: 'Aircraft deployment',
+                  value:
+                      'Not reported by this API view. Validation alone does not prove the route is onboard.',
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        Panel(
           title: 'Operation',
           trailing: intent == null
               ? IconButton.filledTonal(
                   tooltip: 'Create intent',
-                  onPressed: () => _openCreateIntent(context, view),
+                  onPressed: () => unawaited(
+                    _openCreateIntent(context, view, onWorkflowReturn),
+                  ),
                   icon: const Icon(Icons.add_task),
                 )
               : TextButton.icon(
-                  onPressed: () => _openAssignedIntent(context, view),
+                  onPressed: () => unawaited(
+                    _openAssignedIntent(context, view, onWorkflowReturn),
+                  ),
                   icon: const Icon(Icons.open_in_new, size: 18),
                   label: const Text('Open intent'),
                   style: TextButton.styleFrom(
@@ -860,6 +1191,15 @@ class _DetailPanel extends StatelessWidget {
         const SizedBox(height: 18),
         Panel(
           title: 'Conformance',
+          trailing: StatusBadge(
+            label: conformanceError != null
+                ? 'update_delayed'
+                : conformanceLoading
+                ? 'loading'
+                : summary == null
+                ? 'unavailable'
+                : _mapConformanceStatus(summary),
+          ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
             child: Column(
@@ -868,13 +1208,52 @@ class _DetailPanel extends StatelessWidget {
                   label: 'Status',
                   value: summary == null
                       ? 'No conformance summary.'
-                      : displayEnum(summary.status),
+                      : displayEnum(_mapConformanceStatus(summary)),
                 ),
                 DetailLine(
-                  label: 'Alerts',
+                  label: summary?.isLiveProjection == true
+                      ? 'Active findings'
+                      : 'Alerts',
                   value:
-                      '${summary?.alertCount ?? view.conformanceEvents.length}',
+                      '${summary?.isLiveProjection == true ? summary?.activeViolationCount : summary?.alertCount ?? view.conformanceEvents.length}',
                 ),
+                if (summary?.isLiveProjection == true) ...[
+                  DetailLine(
+                    label: 'Monitoring',
+                    value: displayEnum(
+                      summary?.monitoringStatus ?? 'unavailable',
+                    ),
+                  ),
+                  DetailLine(
+                    label: 'Recording',
+                    value: displayEnum(
+                      summary?.recordingStatus ?? 'unavailable',
+                    ),
+                  ),
+                  DetailLine(
+                    label: 'Observed',
+                    value: formatDate(summary?.observedAt),
+                  ),
+                  for (final axis in const [
+                    ('lateral_deviation', 'Lateral evaluation'),
+                    ('altitude_deviation', 'Altitude evaluation'),
+                  ])
+                    DetailLine(
+                      label: axis.$2,
+                      value: summary!.spatialAxisEvaluated(axis.$1)
+                          ? displayEnum(summary.violationFor(axis.$1)!.phase)
+                          : 'Not evaluated at this watermark',
+                    ),
+                  for (final violation in summary?.activeViolations ?? const [])
+                    DetailLine(
+                      label: displayEnum(violation.type),
+                      value: [
+                        displayEnum(violation.phase),
+                        if (violation.worstDeviationM != null)
+                          '${violation.worstDeviationM!.toStringAsFixed(1)} m worst deviation',
+                      ].join(' · '),
+                    ),
+                ],
                 DetailLine(
                   label: 'Reportability',
                   value: summary == null
@@ -1061,25 +1440,35 @@ String _mapTimestamp(DateTime? timestamp) {
 String _mapUnit(double? value, String unit) =>
     value == null ? 'n/a' : '${value.toStringAsFixed(1)} $unit';
 
-void _openAssignedIntent(BuildContext context, AircraftMapView view) {
+Future<void> _openAssignedIntent(
+  BuildContext context,
+  AircraftMapView view,
+  VoidCallback onReturn,
+) async {
   final intent = view.activeIntent;
   if (intent == null) return;
-  Navigator.of(context).pushNamed(
+  await Navigator.of(context).pushNamed(
     '/aircraft/${view.aircraft.id}/intent/new',
     arguments: IntentWorkflowRouteArguments(
       initialIntent: intent,
       initialVolumes: view.operationalVolumes,
     ),
   );
+  if (context.mounted) onReturn();
 }
 
-void _openCreateIntent(BuildContext context, AircraftMapView view) {
-  Navigator.of(context).pushNamed(
+Future<void> _openCreateIntent(
+  BuildContext context,
+  AircraftMapView view,
+  VoidCallback onReturn,
+) async {
+  await Navigator.of(context).pushNamed(
     '/aircraft/${view.aircraft.id}/intent/new',
     arguments: IntentWorkflowRouteArguments(
       initialVolumeCenter: mapCenterFor(view),
     ),
   );
+  if (context.mounted) onReturn();
 }
 
 LatLng mapCenterFor(AircraftMapView view, {AircraftLiveState? liveState}) {
@@ -1092,6 +1481,8 @@ LatLng mapCenterFor(AircraftMapView view, {AircraftLiveState? liveState}) {
   if (view.replaySamples.isNotEmpty) {
     return telemetryPoint(view.replaySamples.first);
   }
+  final commandedRoute = missionPath(view.validatedMission);
+  if (commandedRoute.isNotEmpty) return commandedRoute.first;
   final polygons = volumePolygons(view.operationalVolumes);
   if (polygons.isNotEmpty && polygons.first.isNotEmpty) {
     return polygons.first.first;
@@ -1166,6 +1557,36 @@ List<LatLng> projectedPositionTrack(
       position.longitudeDeg + east * seconds / longitudeScale,
     ),
   ];
+}
+
+List<LatLng> missionPath(Mission? mission) {
+  if (mission == null) return const [];
+  return [
+    for (final item in mission.items) LatLng(item.latitude, item.longitude),
+  ];
+}
+
+List<int> missionMarkerIndexes(int itemCount, {int maxMarkers = 30}) {
+  if (itemCount <= 0 || maxMarkers <= 0) return const [];
+  if (itemCount <= maxMarkers) return [for (var i = 0; i < itemCount; i++) i];
+  final stride = (itemCount / maxMarkers).ceil();
+  final indexes = [for (var i = 0; i < itemCount; i += stride) i];
+  if (indexes.last != itemCount - 1) indexes.add(itemCount - 1);
+  return indexes;
+}
+
+String missionCommandLabel(int command) {
+  return switch (command) {
+    16 => 'waypoint',
+    21 => 'land',
+    22 => 'takeoff',
+    _ => 'command $command',
+  };
+}
+
+String _mapShortDigest(String digest) {
+  if (digest.length <= 16) return digest;
+  return '${digest.substring(0, 8)}…${digest.substring(digest.length - 8)}';
 }
 
 List<List<LatLng>> volumePolygons(List<OperationalVolume> volumes) {

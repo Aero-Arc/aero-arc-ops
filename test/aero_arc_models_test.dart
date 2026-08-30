@@ -6,6 +6,50 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aero_arc_web/models/aero_arc_models.dart';
 
 void main() {
+  test('spatial clear phases require evidence at the summary watermark', () {
+    final watermark = DateTime.utc(2026, 8, 30, 10);
+
+    ConformanceSummary summaryWith(DateTime? lateralObservedAt) {
+      return ConformanceSummary(
+        id: 'summary-1',
+        intentId: 'intent-1',
+        intentVersion: 1,
+        aircraftId: 'aircraft-1',
+        status: 'conforming',
+        alertCount: 0,
+        reportabilityStatus: 'no',
+        observedAt: watermark,
+        violations: [
+          ConformanceViolation(
+            type: 'lateral_deviation',
+            phase: 'clear',
+            lastObservedAt: lateralObservedAt,
+          ),
+          ConformanceViolation(
+            type: 'altitude_deviation',
+            phase: 'clear',
+            lastObservedAt: watermark,
+          ),
+        ],
+      );
+    }
+
+    expect(summaryWith(null).spatialEvaluationComplete, isFalse);
+    expect(
+      summaryWith(
+        watermark.subtract(const Duration(microseconds: 1)),
+      ).spatialEvaluationComplete,
+      isFalse,
+    );
+    expect(summaryWith(watermark).spatialEvaluationComplete, isTrue);
+    expect(
+      summaryWith(
+        watermark.add(const Duration(microseconds: 1)),
+      ).spatialEvaluationComplete,
+      isTrue,
+    );
+  });
+
   test('parses independently timestamped live telemetry groups', () {
     final json =
         jsonDecode(
