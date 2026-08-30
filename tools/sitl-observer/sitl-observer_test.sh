@@ -84,6 +84,31 @@ curl() {
 
 sleep() { :; }
 
+CLEANUP_CALLS_FILE=$TEST_RUN_DIR/cleanup-calls
+if (
+  set +e
+  stop_processes() { printf 'stop-processes\n' >>"$CLEANUP_CALLS_FILE"; }
+  tmux() {
+    printf 'tmux %s\n' "$*" >>"$CLEANUP_CALLS_FILE"
+    return 0
+  }
+  docker() {
+    printf 'docker %s\n' "$*" >>"$CLEANUP_CALLS_FILE"
+    return 0
+  }
+  false
+  cleanup_failed_up
+); then
+  echo "failed startup cleanup unexpectedly succeeded" >&2
+  exit 1
+fi
+grep --fixed-strings --quiet 'stop-processes' "$CLEANUP_CALLS_FILE"
+grep --fixed-strings --quiet "tmux send-keys -t $TMUX_SESSION C-c" "$CLEANUP_CALLS_FILE"
+grep --fixed-strings --quiet "tmux kill-session -t $TMUX_SESSION" "$CLEANUP_CALLS_FILE"
+grep --fixed-strings --quiet \
+  "docker compose -p aero-arc-sitl-observer -f $SCRIPT_DIR/compose.yaml down --volumes --remove-orphans" \
+  "$CLEANUP_CALLS_FILE"
+
 if deploy_mission; then
   echo "initial deployment unexpectedly completed" >&2
   exit 1

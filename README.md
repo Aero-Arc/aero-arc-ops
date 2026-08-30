@@ -134,6 +134,10 @@ normal live results are produced by Agent telemetry flowing through Relay,
 Conformance, and Registry. Missing optional live fields degrade locally without
 hiding durable conformance history.
 
+An active intent that requires conformance but has no current summary is marked
+unavailable and remains in both Needs Attention and Conformance alerts; a
+partial projection cannot be interpreted as evidence of conformance.
+
 Within one intent version, live summaries are ordered first by assignment
 generation and only then by that generation's evaluation revision. The
 evaluation event time and frame/WAL cursor remain visible as provenance. A
@@ -214,6 +218,9 @@ does not persist mission bytes, routing, command IDs, or deployment
 idempotency keys in browser state. A non-404 restore failure blocks intent
 changes as well as mission controls until an explicit durable-state retry
 succeeds, because the failed lookup may conceal an unresolved aircraft effect.
+An accepted or active workflow with a bound mission also remains blocked when
+the local deployment credential is absent, because Ops cannot authenticate a
+claim that no durable command exists.
 Refreshes read the deployment by its durable ID, and retryable results use the
 empty-body reconciliation route so the API reuses its server-owned command and
 binding. An `already_applied` result may be
@@ -306,7 +313,9 @@ fails before starting services when the selected Relay does not implement the
 mission-deployment RPC. Its isolated Influx listener defaults to port `28181`
 and can be changed with `AERO_ARC_SITL_INFLUX_PORT`. Runtime binaries,
 certificates, WAL, logs, and PID files live under
-`/tmp/aero-arc-sitl-observer` by default.
+`/tmp/aero-arc-sitl-observer` by default. If startup fails after resources are
+created, the failure trap tears down child process groups, the tmux simulator,
+and the isolated Compose stack before returning the startup error.
 
 ## Roadmap
 

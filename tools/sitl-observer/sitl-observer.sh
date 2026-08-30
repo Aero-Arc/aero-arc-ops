@@ -136,10 +136,24 @@ cleanup_failed_up() {
   local status=$?
   trap - EXIT
   if [[ "$status" -ne 0 ]]; then
-    echo "SITL observer startup failed; stopping processes started by this run." >&2
+    echo "SITL observer startup failed; stopping processes, simulator, and containers started by this run." >&2
     stop_processes
+    stop_sitl_session
+    stop_compose_stack --volumes >/dev/null 2>&1 || true
   fi
   exit "$status"
+}
+
+stop_sitl_session() {
+  if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+    tmux send-keys -t "$TMUX_SESSION" C-c || true
+    sleep 2
+  fi
+  tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+}
+
+stop_compose_stack() {
+  docker compose -p aero-arc-sitl-observer -f "$SCRIPT_DIR/compose.yaml" down "$@" --remove-orphans
 }
 
 stop_processes() {
@@ -505,12 +519,8 @@ up() {
   if [[ -d "$RUN_DIR" ]]; then
     stop_processes
   fi
-  if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
-    tmux send-keys -t "$TMUX_SESSION" C-c
-    sleep 2
-  fi
-  tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-  docker compose -p aero-arc-sitl-observer -f "$SCRIPT_DIR/compose.yaml" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  stop_sitl_session
+  stop_compose_stack --volumes >/dev/null 2>&1 || true
   for port in 8080 7357 50050 50051 50052 2113 "$INFLUX_PORT" "$CONFORMANCE_DB_PORT"; do require_free_port "$port"; done
   rm -rf -- "$RUN_DIR"
   mkdir -p "$RUN_DIR/logs" "$RUN_DIR/pids"
@@ -693,12 +703,8 @@ console() {
 down() {
   require_safe_run_dir
   stop_processes
-  if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
-    tmux send-keys -t "$TMUX_SESSION" C-c
-    sleep 2
-  fi
-  tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-  docker compose -p aero-arc-sitl-observer -f "$SCRIPT_DIR/compose.yaml" down --remove-orphans
+  stop_sitl_session
+  stop_compose_stack
   echo "Aero Arc SITL observer processes stopped; runtime artifacts remain in $RUN_DIR"
 }
 

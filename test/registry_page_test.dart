@@ -162,6 +162,56 @@ void main() {
   });
 
   testWidgets(
+    'active required intent without conformance is surfaced as attention',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1800, 1000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final dashboard = OperationsDashboard(
+        metrics: const [],
+        operationalIntents: [
+          OperationalIntent(
+            id: 'intent-missing-conformance',
+            aircraftId: 'aircraft-missing-conformance',
+            version: 1,
+            name: 'Missing conformance',
+            summary: 'Monitoring projection unavailable',
+            authorizationPath: 'demo',
+            populationCategory: 'cat_1',
+            status: 'active',
+            conformanceRequired: true,
+            plannedStartAt: DateTime.utc(2099, 1, 1, 11),
+            plannedEndAt: DateTime.utc(2099, 1, 1, 12),
+          ),
+        ],
+        conformance: const [],
+        liveAircraft: const [],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: Scaffold(body: RegistryPage(load: () async => dashboard)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Unavailable'), findsWidgets);
+      expect(
+        find.textContaining('Required conformance is unavailable'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Needs attention'));
+      await tester.pumpAndSettle();
+      expect(find.text('Missing conformance v1'), findsOneWidget);
+
+      await tester.tap(find.text('Conformance alerts'));
+      await tester.pumpAndSettle();
+      expect(find.text('Missing conformance v1'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'new assignment generation wins before its local evaluation revision',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(1800, 1000));

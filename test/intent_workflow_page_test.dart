@@ -1093,6 +1093,14 @@ void main() {
       find.text('Blocked · set AERO_ARC_MISSION_DEPLOYMENT_TOKEN'),
       findsOneWidget,
     );
+    expect(
+      find.textContaining('durable deployment state cannot be authenticated'),
+      findsWidgets,
+    );
+    final saveAndCheck = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Save & check'),
+    );
+    expect(saveAndCheck.onPressed, isNull);
     final import = find.widgetWithText(FilledButton, 'Select & import WPL');
     expect(tester.widget<FilledButton>(import).onPressed, isNull);
     expect(sourceSelected, isFalse);
@@ -1566,6 +1574,9 @@ class _MissionDeploymentHarness {
       return _jsonResponse({'mission': _missionJson(), 'replayed': false});
     }
     if (path == '/api/v1/flights/flight-1/missions/current') {
+      if (token.trim().isEmpty) {
+        return _jsonResponse(_missionJson());
+      }
       return http.Response('missing', 404);
     }
     if (path == '/api/v1/flights/flight-1/missions/mission-1/deploy') {

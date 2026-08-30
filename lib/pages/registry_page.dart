@@ -612,11 +612,10 @@ class _IntentTableState extends State<_IntentTable> {
       _IntentFilter.conformanceAlerts =>
         widget.intents
             .where(
-              (intent) =>
-                  switch (_conformanceForIntent(conformanceByIntent, intent)) {
-                    final summary? => _conformanceNeedsAttention(summary),
-                    null => false,
-                  },
+              (intent) => _intentConformanceNeedsAttention(
+                intent,
+                _conformanceForIntent(conformanceByIntent, intent),
+              ),
             )
             .toList(),
     };
@@ -1058,6 +1057,9 @@ String _intentPosture(
   if (_intentIsOverdue(intent)) {
     return 'overdue';
   }
+  if (_requiredConformanceIsMissing(intent, conformance)) {
+    return 'unavailable';
+  }
   if (conformance != null && _conformanceNeedsAttention(conformance)) {
     return _conformanceAttentionStatus(conformance);
   }
@@ -1087,6 +1089,11 @@ List<String> _intentAttentionReasons(
   if (_intentIsOverdue(intent)) {
     reasons.add(
       'Active flight is beyond its planned end (${_ageLabel(intent.plannedEndAt)}); monitoring must continue until explicit completion.',
+    );
+  }
+  if (_requiredConformanceIsMissing(intent, conformance)) {
+    reasons.add(
+      'Required conformance is unavailable; no current summary is linked.',
     );
   }
   if (conformance != null && _conformanceNeedsAttention(conformance)) {
@@ -1134,6 +1141,23 @@ bool _conformanceNeedsAttention(ConformanceSummary summary) {
       summary.recordingStatus != 'confirmed' ||
       !summary.spatialEvaluationComplete ||
       summary.activeViolationCount > 0;
+}
+
+bool _requiredConformanceIsMissing(
+  OperationalIntent intent,
+  ConformanceSummary? summary,
+) {
+  return intent.status == 'active' &&
+      intent.conformanceRequired &&
+      summary == null;
+}
+
+bool _intentConformanceNeedsAttention(
+  OperationalIntent intent,
+  ConformanceSummary? summary,
+) {
+  return _requiredConformanceIsMissing(intent, summary) ||
+      (summary != null && _conformanceNeedsAttention(summary));
 }
 
 String _conformanceAttentionStatus(ConformanceSummary summary) {
