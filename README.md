@@ -188,6 +188,11 @@ the API mission digest. Reconcile or retry the same durable command with:
 make sitl-mission-deploy
 ```
 
+The observer retains the API deployment ID. If the first request is pending,
+temporarily unavailable, or outcome-unknown, startup and the manual command
+POST an empty body to that deployment's reconciliation route; they never replay
+the mission payload or create a replacement deployment.
+
 Ops presents mission validation and durable aircraft-deployment status as
 separate steps. The map also keeps the authorization, validated plan, and
 observed flight visually separate. Start the AUTO mission with:

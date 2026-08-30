@@ -258,6 +258,14 @@ ConformanceSummary? _selectConformanceSummary(
     if (left.isLiveProjection != right.isLiveProjection) {
       return left.isLiveProjection ? -1 : 1;
     }
+    final generationOrder = (right.assignmentGeneration ?? -1).compareTo(
+      left.assignmentGeneration ?? -1,
+    );
+    if (generationOrder != 0) return generationOrder;
+    final revisionOrder = (right.evaluationRevision ?? -1).compareTo(
+      left.evaluationRevision ?? -1,
+    );
+    if (revisionOrder != 0) return revisionOrder;
     final leftAt = left.observedAt ?? left.updatedAt;
     final rightAt = right.observedAt ?? right.updatedAt;
     if (leftAt == null) return rightAt == null ? 0 : 1;
@@ -279,6 +287,16 @@ ConformanceSummary? _boundConformanceSummary(
           summary.intentVersion == intentVersion
       ? summary
       : null;
+}
+
+String _mapConformanceStatus(ConformanceSummary summary) {
+  final condition = summary.condition ?? summary.status;
+  if (summary.isLiveProjection &&
+      condition == 'conforming' &&
+      !summary.spatialEvaluationComplete) {
+    return 'not_evaluated';
+  }
+  return condition;
 }
 
 Future<_LiveStateResult> _captureLiveState(
@@ -1111,7 +1129,9 @@ class _DetailPanel extends StatelessWidget {
                 ? 'update_delayed'
                 : conformanceLoading
                 ? 'loading'
-                : summary?.condition ?? summary?.status ?? 'unavailable',
+                : summary == null
+                ? 'unavailable'
+                : _mapConformanceStatus(summary),
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
@@ -1121,7 +1141,7 @@ class _DetailPanel extends StatelessWidget {
                   label: 'Status',
                   value: summary == null
                       ? 'No conformance summary.'
-                      : displayEnum(summary.condition ?? summary.status),
+                      : displayEnum(_mapConformanceStatus(summary)),
                 ),
                 DetailLine(
                   label: summary?.isLiveProjection == true
@@ -1147,6 +1167,16 @@ class _DetailPanel extends StatelessWidget {
                     label: 'Observed',
                     value: formatDate(summary?.observedAt),
                   ),
+                  for (final axis in const [
+                    ('lateral_deviation', 'Lateral evaluation'),
+                    ('altitude_deviation', 'Altitude evaluation'),
+                  ])
+                    DetailLine(
+                      label: axis.$2,
+                      value: summary!.spatialAxisEvaluated(axis.$1)
+                          ? displayEnum(summary.violationFor(axis.$1)!.phase)
+                          : 'Not evaluated at this watermark',
+                    ),
                   for (final violation in summary?.activeViolations ?? const [])
                     DetailLine(
                       label: displayEnum(violation.type),

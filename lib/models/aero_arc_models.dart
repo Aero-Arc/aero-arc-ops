@@ -1533,6 +1533,10 @@ class ConformanceSummary {
         !evidenceAt.isBefore(watermark);
   }
 
+  bool get spatialEvaluationComplete =>
+      spatialAxisEvaluated('lateral_deviation') &&
+      spatialAxisEvaluated('altitude_deviation');
+
   factory ConformanceSummary.fromJson(Map<String, dynamic> json) {
     return ConformanceSummary(
       id: asString(json['id']),

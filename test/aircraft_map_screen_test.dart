@@ -263,6 +263,113 @@ void main() {
     expect(find.text('Non Conforming'), findsNothing);
   });
 
+  testWidgets(
+    'new assignment generation wins before revision and observation time',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(),
+            loadConformance: () async => ConformanceDashboard(
+              metrics: const [],
+              summaries: [
+                ConformanceSummary(
+                  id: 'superseded-summary',
+                  intentId: 'intent-1',
+                  intentVersion: 1,
+                  aircraftId: 'aircraft-1',
+                  status: 'conforming',
+                  alertCount: 0,
+                  reportabilityStatus: 'no',
+                  assignmentId: 'assignment-1',
+                  assignmentGeneration: 1,
+                  evaluationRevision: 99,
+                  condition: 'conforming',
+                  monitoringStatus: 'current',
+                  recordingStatus: 'confirmed',
+                  observedAt: DateTime(2100),
+                ),
+                ConformanceSummary(
+                  id: 'same-generation-older-revision',
+                  intentId: 'intent-1',
+                  intentVersion: 1,
+                  aircraftId: 'aircraft-1',
+                  status: 'conforming',
+                  alertCount: 0,
+                  reportabilityStatus: 'no',
+                  assignmentId: 'assignment-2',
+                  assignmentGeneration: 2,
+                  evaluationRevision: 0,
+                  condition: 'conforming',
+                  monitoringStatus: 'current',
+                  recordingStatus: 'confirmed',
+                  observedAt: DateTime(2101),
+                ),
+                ConformanceSummary(
+                  id: 'current-summary',
+                  intentId: 'intent-1',
+                  intentVersion: 1,
+                  aircraftId: 'aircraft-1',
+                  status: 'non_conforming',
+                  alertCount: 1,
+                  reportabilityStatus: 'review',
+                  assignmentId: 'assignment-2',
+                  assignmentGeneration: 2,
+                  evaluationRevision: 1,
+                  condition: 'non_conforming',
+                  monitoringStatus: 'current',
+                  recordingStatus: 'confirmed',
+                  observedAt: DateTime(2099),
+                  violations: [
+                    ConformanceViolation(
+                      type: 'lateral_deviation',
+                      phase: 'open',
+                      lastObservedAt: DateTime(2099),
+                    ),
+                    const ConformanceViolation(
+                      type: 'altitude_deviation',
+                      phase: 'clear',
+                    ),
+                  ],
+                ),
+              ],
+              events: const [],
+            ),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Non Conforming'), findsWidgets);
+      expect(find.text('Conforming'), findsNothing);
+    },
+  );
+
+  testWidgets('missing spatial phase is not displayed as conforming', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AircraftMapScreen(
+          aircraftId: 'aircraft-1',
+          load: () async => sampleMapView(),
+          loadConformance: () async =>
+              sampleConformanceDashboard(includeAltitudeEvaluation: false),
+          renderTiles: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Not Evaluated'), findsWidgets);
+    expect(find.text('Not evaluated at this watermark'), findsOneWidget);
+    expect(find.text('Conforming'), findsNothing);
+  });
+
   testWidgets('missing live position keeps historical marker uncertain', (
     tester,
   ) async {
@@ -585,6 +692,7 @@ ConformanceDashboard sampleConformanceDashboard({
   String condition = 'conforming',
   String phase = 'clear',
   double? worstDeviationM,
+  bool includeAltitudeEvaluation = true,
 }) {
   return ConformanceDashboard(
     metrics: const [],
@@ -607,7 +715,14 @@ ConformanceDashboard sampleConformanceDashboard({
             type: 'lateral_deviation',
             phase: phase,
             worstDeviationM: worstDeviationM,
+            lastObservedAt: DateTime(2099, 8, 11, 12),
           ),
+          if (includeAltitudeEvaluation)
+            ConformanceViolation(
+              type: 'altitude_deviation',
+              phase: 'clear',
+              lastObservedAt: DateTime(2099, 8, 11, 12),
+            ),
         ],
       ),
     ],

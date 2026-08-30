@@ -111,6 +111,7 @@ void main() {
 
     expect(find.text('Transition v1'), findsOneWidget);
     expect(find.text('Armed'), findsWidgets);
+    expect(find.text('Not Evaluated'), findsWidgets);
     expect(find.textContaining('Armed monitoring'), findsWidgets);
   });
 
@@ -212,6 +213,18 @@ void main() {
             monitoringStatus: 'current',
             recordingStatus: 'confirmed',
             observedAt: DateTime.utc(2026, 8, 30, 9),
+            violations: [
+              ConformanceViolation(
+                type: 'lateral_deviation',
+                phase: 'clear',
+                lastObservedAt: DateTime.utc(2026, 8, 30, 9),
+              ),
+              ConformanceViolation(
+                type: 'altitude_deviation',
+                phase: 'clear',
+                lastObservedAt: DateTime.utc(2026, 8, 30, 9),
+              ),
+            ],
           ),
         ],
       );
@@ -287,6 +300,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Spatial conformance is not fully evaluated'),
+      findsWidgets,
+    );
     await tester.tap(find.textContaining('intent-spatial v1').last);
     await tester.pumpAndSettle();
 

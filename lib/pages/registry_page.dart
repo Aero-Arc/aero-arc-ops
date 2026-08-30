@@ -910,7 +910,7 @@ class _ConformanceCell extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          StatusBadge(label: _operationConformanceCondition(summary)),
+          StatusBadge(label: _operationConformanceDisplayStatus(summary)),
           if (summary.isLiveProjection) ...[
             const SizedBox(height: 4),
             Text(
@@ -1032,7 +1032,9 @@ class _ConformanceLinkPanel extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  StatusBadge(label: _operationConformanceCondition(summary)),
+                  StatusBadge(
+                    label: _operationConformanceDisplayStatus(summary),
+                  ),
                 ],
               ),
             ),
@@ -1088,11 +1090,18 @@ List<String> _intentAttentionReasons(
     );
   }
   if (conformance != null && _conformanceNeedsAttention(conformance)) {
-    reasons.add(
-      conformance.isLiveProjection
-          ? '${displayEnum(_operationConformanceCondition(conformance))} condition, ${displayEnum(conformance.monitoringStatus ?? 'unknown')} monitoring, and ${conformance.activeViolationCount} active findings.'
-          : '${conformance.alertCount} conformance alert${conformance.alertCount == 1 ? '' : 's'} linked.',
-    );
+    if (conformance.isLiveProjection &&
+        !conformance.spatialEvaluationComplete) {
+      reasons.add(
+        'Spatial conformance is not fully evaluated at the current watermark; missing or older retained phases are not clear evidence.',
+      );
+    } else {
+      reasons.add(
+        conformance.isLiveProjection
+            ? '${displayEnum(_operationConformanceCondition(conformance))} condition, ${displayEnum(conformance.monitoringStatus ?? 'unknown')} monitoring, and ${conformance.activeViolationCount} active findings.'
+            : '${conformance.alertCount} conformance alert${conformance.alertCount == 1 ? '' : 's'} linked.',
+      );
+    }
   }
   return reasons;
 }
@@ -1108,11 +1117,22 @@ String _operationConformanceCondition(ConformanceSummary summary) {
   return condition == null || condition.isEmpty ? summary.status : condition;
 }
 
+String _operationConformanceDisplayStatus(ConformanceSummary summary) {
+  final condition = _operationConformanceCondition(summary);
+  if (summary.isLiveProjection &&
+      condition == 'conforming' &&
+      !summary.spatialEvaluationComplete) {
+    return 'not_evaluated';
+  }
+  return condition;
+}
+
 bool _conformanceNeedsAttention(ConformanceSummary summary) {
   if (!summary.isLiveProjection) return summary.alertCount > 0;
   return _operationConformanceCondition(summary) != 'conforming' ||
       summary.monitoringStatus != 'current' ||
       summary.recordingStatus != 'confirmed' ||
+      !summary.spatialEvaluationComplete ||
       summary.activeViolationCount > 0;
 }
 
@@ -1126,6 +1146,7 @@ String _conformanceAttentionStatus(ConformanceSummary summary) {
   if (summary.recordingStatus != 'confirmed') {
     return summary.recordingStatus ?? 'unavailable';
   }
+  if (!summary.spatialEvaluationComplete) return 'not_evaluated';
   return summary.activeViolationCount > 0 ? 'warning' : 'ready';
 }
 
@@ -1273,7 +1294,7 @@ void _showConformanceSummaryDetails(
   showDetailsSheet(
     context,
     title: summary.intentId,
-    status: StatusBadge(label: _operationConformanceCondition(summary)),
+    status: StatusBadge(label: _operationConformanceDisplayStatus(summary)),
     children: [
       detailSection('Linked Conformance', [
         DetailLine(label: 'Summary ID', value: summary.id),

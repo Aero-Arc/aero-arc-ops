@@ -342,7 +342,7 @@ import_mission() {
 
 deploy_mission() {
   local response_file=$RUN_DIR/mission-deployment.json
-  local status deployment_status mission_id mission_digest
+  local status mission_id mission_digest
   api_get_file "/api/v1/flights/$FLIGHT_ID/missions/current" "$RUN_DIR/current-mission.json"
   mission_id=$(jq -er '.id' "$RUN_DIR/current-mission.json")
   mission_digest=$(jq -er '.mission_digest' "$RUN_DIR/current-mission.json")
@@ -358,6 +358,11 @@ deploy_mission() {
     echo >&2
     return 2
   fi
+  report_mission_deployment "$response_file"
+}
+
+report_mission_deployment() {
+  local response_file=$1 deployment_status
   deployment_status=$(jq -er '.deployment.status' "$response_file")
   case "$deployment_status" in
     applied|already_applied)
@@ -374,24 +379,69 @@ deploy_mission() {
   esac
 }
 
+reconcile_mission_deployment() {
+  local deployment_id=$1
+  local response_file=$RUN_DIR/mission-deployment-reconcile.json
+  local status
+  echo "POST /api/v1/flights/$FLIGHT_ID/mission-deployments/$deployment_id/reconcile" >&2
+  status=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+    -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN" \
+    -X POST "$API_URL/api/v1/flights/$FLIGHT_ID/mission-deployments/$deployment_id/reconcile")
+  if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+    echo "API returned HTTP $status while reconciling mission deployment $deployment_id:" >&2
+    sed 's/^/  /' "$response_file" >&2
+    echo >&2
+    return 2
+  fi
+  mv -- "$response_file" "$RUN_DIR/mission-deployment.json"
+  report_mission_deployment "$RUN_DIR/mission-deployment.json"
+}
+
+resume_mission_deployment() {
+  local response_file=$RUN_DIR/mission-deployment.json
+  local deployment_id deployment_status
+  if [[ -s "$response_file" ]]; then
+    deployment_id=$(jq -er '.deployment.id' "$response_file")
+    deployment_status=$(jq -er '.deployment.status' "$response_file")
+    case "$deployment_status" in
+      pending|temporary_error|outcome_unknown)
+        reconcile_mission_deployment "$deployment_id"
+        return
+        ;;
+    esac
+  fi
+  deploy_mission
+}
+
 wait_deploy_mission() {
-  local attempt
-  for attempt in $(seq 1 15); do
+  local attempt deployment_id=${1:-} status
+  if [[ -z "$deployment_id" ]]; then
     if deploy_mission; then
       return 0
     else
-      local status=$?
+      status=$?
       if [[ "$status" -eq 2 ]]; then
-        echo "mission deployment failed permanently; exact retry would only replay the same result" >&2
+        echo "mission deployment failed permanently; durable reconciliation cannot continue" >&2
         return "$status"
       fi
     fi
-    if [[ "$attempt" -lt 15 ]]; then
-      echo "mission deployment not ready (attempt $attempt/15); retrying the exact command" >&2
-      sleep 2
+    deployment_id=$(jq -er '.deployment.id' "$RUN_DIR/mission-deployment.json")
+  fi
+
+  for attempt in $(seq 2 15); do
+    echo "mission deployment not ready (attempt $((attempt - 1))/15); reconciling durable deployment $deployment_id" >&2
+    sleep 2
+    if reconcile_mission_deployment "$deployment_id"; then
+      return 0
+    else
+      status=$?
+      if [[ "$status" -eq 2 ]]; then
+        echo "mission deployment reconciliation failed permanently" >&2
+        return "$status"
+      fi
     fi
   done
-  echo "mission deployment did not complete after 15 exact retries" >&2
+  echo "mission deployment did not complete after 15 total attempts" >&2
   return 1
 }
 
@@ -468,7 +518,7 @@ up() {
   # The first API deployment attempt establishes Agent operation context while
   # its Relay stream is quiet. Mission upload is expected to remain retryable
   # until SITL supplies fresh heartbeat and landed-state evidence.
-  local deployment_status
+  local deployment_id= deployment_status
   if deploy_mission; then
     echo "mission deployed before SITL telemetry became available"
   else
@@ -477,11 +527,14 @@ up() {
       echo "mission deployment failed permanently before SITL startup" >&2
       return "$deployment_status"
     fi
-    echo "Agent context established; waiting for SITL evidence before exact deployment retry"
+    deployment_id=$(jq -er '.deployment.id' "$RUN_DIR/mission-deployment.json")
+    echo "Agent context established; waiting for SITL evidence before durable deployment reconciliation"
   fi
   tmux new-session -d -s "$TMUX_SESSION" "cd '$ARDUPILOT_SOURCE/ArduCopter' && '$SIM_VEHICLE' -v ArduCopter --no-rebuild --console --out=udp:127.0.0.1:14550"
   sleep 5
-  wait_deploy_mission
+  if [[ -n "$deployment_id" ]]; then
+    wait_deploy_mission "$deployment_id"
+  fi
   status
   if [[ "${AERO_ARC_SITL_FOREGROUND:-0}" == 1 ]]; then
     echo "SITL observer stack is running in the foreground; press Ctrl-C to release this terminal."
@@ -630,12 +683,16 @@ down() {
   echo "Aero Arc SITL observer processes stopped; runtime artifacts remain in $RUN_DIR"
 }
 
+if [[ "${AERO_ARC_SITL_OBSERVER_SOURCE_ONLY:-0}" == 1 ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 case "${1:-}" in
   up) up ;;
   activate) activate ;;
   status) status ;;
   aircraft-command) aircraft_command "${2:-}" ;;
-  deploy-mission) deploy_mission ;;
+  deploy-mission) resume_mission_deployment ;;
   mission-run) mission_run ;;
   move-outside) move_outside ;;
   move-inside) move_inside ;;
