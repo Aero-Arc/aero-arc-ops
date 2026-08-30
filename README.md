@@ -224,7 +224,9 @@ the local deployment credential is absent, because Ops cannot authenticate a
 claim that no durable command exists.
 Refreshes read the deployment by its durable ID, and retryable results use the
 empty-body reconciliation route so the API reuses its server-owned command and
-binding. An `already_applied` result may be
+binding. An unexpired `pending` result is reconciled through that exact durable
+identity; it is never resubmitted as a new deployment. An `already_applied`
+result may be
 readback-only with zero uploaded items; its exact onboard digest is the success
 evidence. An `outcome_unknown` result remains visibly unresolved after its
 reconciliation window closes and must never be treated as permission for a

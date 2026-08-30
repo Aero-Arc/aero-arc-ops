@@ -947,7 +947,28 @@ void main() {
     },
   );
 
-  testWidgets('pending is refresh-only until its command window expires', (
+  testWidgets('pending uses exact reconciliation while its window is open', (
+    WidgetTester tester,
+  ) async {
+    final harness = _MissionDeploymentHarness(
+      deploymentStatuses: ['pending', 'applied'],
+    );
+    await _pumpImportedMission(tester, harness.client);
+    await _confirmDeployment(tester);
+    await _tapVisible(tester, find.text('Deploy validated mission'));
+
+    expect(find.text('Retry same deployment'), findsOneWidget);
+    expect(find.text('Prepare new deployment attempt'), findsNothing);
+    await _tapVisible(tester, find.text('Retry same deployment'));
+
+    expect(find.text('Applied'), findsWidgets);
+    expect(harness.deploymentKeys, hasLength(1));
+    expect(harness.reconcileRequests, hasLength(1));
+    expect(harness.reconcileRequests.single.bodyBytes, isEmpty);
+    expect(harness.reconcileRequests.single.headers['idempotency-key'], isNull);
+  });
+
+  testWidgets('pending becomes terminal when refresh proves expiry', (
     WidgetTester tester,
   ) async {
     final harness = _MissionDeploymentHarness(
@@ -959,7 +980,7 @@ void main() {
     await _confirmDeployment(tester);
     await _tapVisible(tester, find.text('Deploy validated mission'));
 
-    expect(find.text('Retry same deployment'), findsNothing);
+    expect(find.text('Retry same deployment'), findsOneWidget);
     expect(find.text('Prepare new deployment attempt'), findsNothing);
     expect(find.text('Refresh durable status'), findsOneWidget);
 

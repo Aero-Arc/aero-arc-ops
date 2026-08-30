@@ -2323,6 +2323,7 @@ class _MissionDeploymentPanel extends StatelessWidget {
     final retryable =
         current != null &&
         ((outcomeUnknown && reconciliationWindowOpen) ||
+            (current.status == 'pending' && retryWindowOpen) ||
             (current.status == 'temporary_error' && retryWindowOpen));
     final retainedPriorMission =
         current != null &&
