@@ -91,6 +91,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   Mission? _mission;
   MissionSourceSelection? _missionSource;
   String? _missionIdempotencyKey;
+  bool _missionImportFailed = false;
   MissionDeployment? _missionDeployment;
   String? _missionDeploymentIdempotencyKey;
   bool _missionDeploymentConfirmed = false;
@@ -145,6 +146,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       _mission = null;
       _missionSource = null;
       _missionIdempotencyKey = null;
+      _missionImportFailed = false;
       _missionRestoreError = null;
       _resetMissionDeploymentState();
       _startMissionStateRestore();
@@ -249,6 +251,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         _mission = mission;
         _missionSource = null;
         _missionIdempotencyKey = null;
+        _missionImportFailed = false;
         _missionDeployment = deployment;
         _missionDeploymentIdempotencyKey = null;
         _missionDeploymentConfirmed = false;
@@ -470,6 +473,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     setState(() {
       _missionSource = selected;
       _missionIdempotencyKey = 'ops-mission-import-$now';
+      _missionImportFailed = false;
     });
     await _importSelectedMission();
   }
@@ -492,7 +496,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     final idempotencyKey = _missionIdempotencyKey;
     if (intent == null || selected == null || idempotencyKey == null) return;
 
-    await _runWorkflowAction(() async {
+    final succeeded = await _runWorkflowAction(() async {
       var flight = _flight;
       if (flight != null &&
           (flight.aircraftId != widget.aircraftId ||
@@ -565,8 +569,12 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           _resetMissionDeploymentState();
         }
         _mission = imported;
+        _missionImportFailed = false;
       });
     });
+    if (!succeeded && mounted) {
+      setState(() => _missionImportFailed = true);
+    }
   }
 
   Future<void> _confirmMissionDeployment() async {
@@ -767,6 +775,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       _mission = null;
       _missionSource = null;
       _missionIdempotencyKey = null;
+      _missionImportFailed = false;
       _resetMissionDeploymentState();
     }
   }
@@ -791,16 +800,18 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     );
   }
 
-  Future<void> _runWorkflowAction(Future<void> Function() action) async {
+  Future<bool> _runWorkflowAction(Future<void> Function() action) async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
       await action();
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() => _error = error.toString());
+      return false;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1118,6 +1129,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           flight: _flight,
                           mission: _mission,
                           selectedSource: _missionSource,
+                          importFailed: _missionImportFailed,
                           localCredentialAvailable:
                               _apiClient.hasLocalMissionControlToken,
                           busy: workflowBusy,
@@ -1992,6 +2004,7 @@ class _MissionImportPanel extends StatelessWidget {
     required this.flight,
     required this.mission,
     required this.selectedSource,
+    required this.importFailed,
     required this.localCredentialAvailable,
     required this.busy,
     required this.restorationError,
@@ -2004,6 +2017,7 @@ class _MissionImportPanel extends StatelessWidget {
   final FlightRecord? flight;
   final Mission? mission;
   final MissionSourceSelection? selectedSource;
+  final bool importFailed;
   final bool localCredentialAvailable;
   final bool busy;
   final String? restorationError;
@@ -2017,7 +2031,7 @@ class _MissionImportPanel extends StatelessWidget {
         intent?.status == 'accepted' || intent?.status == 'active';
     final canImport =
         intentReady && localCredentialAvailable && restorationError == null;
-    final hasFailedSelection = selectedSource != null && mission == null;
+    final hasFailedSelection = importFailed && selectedSource != null;
     return Panel(
       title: 'Mission plan',
       trailing: StatusBadge(

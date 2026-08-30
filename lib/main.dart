@@ -462,7 +462,10 @@ Widget _sectionPage(
   bool renderMapTiles = true,
 }) {
   if (aircraftMapId != null) {
-    return AircraftMapScreen(aircraftId: aircraftMapId);
+    return AircraftMapScreen(
+      aircraftId: aircraftMapId,
+      renderTiles: renderMapTiles,
+    );
   }
   if (intentAircraftId != null) {
     return IntentWorkflowPage(

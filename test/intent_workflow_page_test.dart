@@ -422,6 +422,7 @@ void main() {
   testWidgets(
     'failed replacement import preserves current mission and deployment',
     (WidgetTester tester) async {
+      final importKeys = <String?>[];
       final apiClient = AeroArcApiClient(
         baseUri: Uri.parse('http://api.test'),
         missionControlToken: 'local-dev-token',
@@ -445,7 +446,15 @@ void main() {
             case '/api/v1/flights/flight-1/mission-deployments/current':
               return _jsonResponse(_deploymentJson(status: 'applied'));
             case '/api/v1/flights/flight-1/missions/import':
-              return http.Response('replacement invalid', 422);
+              importKeys.add(request.headers['idempotency-key']);
+              if (importKeys.length == 1) {
+                return http.Response('response lost', 503);
+              }
+              final replacement = _missionJson()
+                ..['id'] = 'mission-2'
+                ..['version'] = 2
+                ..['mission_digest'] = List.filled(64, 'c').join();
+              return _jsonResponse({'mission': replacement, 'replayed': true});
           }
           return http.Response('unexpected ${request.method}', 404);
         }),
@@ -477,10 +486,20 @@ void main() {
       await _tapVisible(tester, find.text('Import new version').first);
       await _tapVisible(tester, find.text('Import new version').last);
 
-      expect(find.textContaining('replacement invalid'), findsOneWidget);
+      expect(find.textContaining('response lost'), findsOneWidget);
       expect(find.text('1 item(s) · v1'), findsOneWidget);
       expect(find.text('deployment-1'), findsOneWidget);
       expect(find.text('Refresh durable status'), findsOneWidget);
+      expect(find.text('Retry same import'), findsOneWidget);
+
+      await _tapVisible(tester, find.text('Retry same import'));
+
+      expect(importKeys, hasLength(2));
+      expect(importKeys[0], isNotEmpty);
+      expect(importKeys[1], importKeys[0]);
+      expect(find.text('1 item(s) · v2'), findsOneWidget);
+      expect(find.text('deployment-1'), findsNothing);
+      expect(find.text('Retry same import'), findsNothing);
     },
   );
 
