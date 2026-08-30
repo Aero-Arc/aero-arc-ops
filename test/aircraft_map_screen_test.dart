@@ -178,6 +178,57 @@ void main() {
     },
   );
 
+  testWidgets(
+    'successful live conformance absence does not revive the map snapshot',
+    (tester) async {
+      var calls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(),
+            loadConformance: () async {
+              calls += 1;
+              if (calls == 1) return sampleConformanceDashboard();
+              if (calls == 2) {
+                return const ConformanceDashboard(
+                  metrics: [],
+                  summaries: [],
+                  events: [],
+                );
+              }
+              throw Exception('conformance unavailable');
+            },
+            conformanceRefreshInterval: const Duration(seconds: 1),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(calls, 1);
+      expect(find.text('Conforming'), findsWidgets);
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(calls, 2);
+      expect(find.text('Unavailable'), findsWidgets);
+      expect(find.text('No conformance summary.'), findsOneWidget);
+      expect(find.text('Conforming'), findsNothing);
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(calls, 3);
+      expect(find.text('Update Delayed'), findsOneWidget);
+      expect(find.text('No conformance summary.'), findsOneWidget);
+      expect(find.text('Conforming'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   for (final connectionStatus in ['stale', 'offline', 'unmapped']) {
     testWidgets(
       'fresh position renders navigation marker with $connectionStatus connection',
@@ -259,7 +310,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Conforming'), findsWidgets);
+    expect(find.text('Unavailable'), findsWidgets);
+    expect(find.text('No conformance summary.'), findsOneWidget);
+    expect(find.text('Conforming'), findsNothing);
     expect(find.text('Non Conforming'), findsNothing);
   });
 

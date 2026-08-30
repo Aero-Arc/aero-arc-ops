@@ -47,6 +47,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
   Object? _liveStateError;
   bool _liveStateLoading = false;
   List<ConformanceSummary> _liveConformance = const [];
+  bool _hasSuccessfulConformanceResponse = false;
   Object? _conformanceError;
   bool _conformanceLoading = false;
   int _loadGeneration = 0;
@@ -125,6 +126,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
     setState(() {
       if (result.dashboard != null) {
         _liveConformance = result.dashboard!.summaries;
+        _hasSuccessfulConformanceResponse = true;
       }
       _conformanceError = result.error;
       _conformanceLoading = false;
@@ -204,14 +206,24 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             );
           }
 
+          final activeIntent = view.activeIntent;
+          final hasLiveContextSummary = _liveConformance.any(
+            (summary) =>
+                summary.aircraftId == widget.aircraftId &&
+                summary.intentId == activeIntent?.id &&
+                summary.intentVersion == activeIntent?.version,
+          );
           final conformance = _selectConformanceSummary(
             [
               ..._liveConformance,
-              if (view.conformanceSummary != null) view.conformanceSummary!,
+              if ((!_hasSuccessfulConformanceResponse ||
+                      hasLiveContextSummary) &&
+                  view.conformanceSummary != null)
+                view.conformanceSummary!,
             ],
             aircraftId: widget.aircraftId,
-            intentId: view.activeIntent?.id,
-            intentVersion: view.activeIntent?.version,
+            intentId: activeIntent?.id,
+            intentVersion: activeIntent?.version,
           );
 
           return _AircraftMapContent(
