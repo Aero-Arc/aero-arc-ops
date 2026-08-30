@@ -1057,7 +1057,7 @@ String _intentPosture(
   if (_intentIsOverdue(intent)) {
     return 'overdue';
   }
-  if (_requiredConformanceIsMissing(intent, conformance)) {
+  if (_requiredLiveConformanceIsUnavailable(intent, conformance)) {
     return 'unavailable';
   }
   if (conformance != null && _conformanceNeedsAttention(conformance)) {
@@ -1091,9 +1091,11 @@ List<String> _intentAttentionReasons(
       'Active flight is beyond its planned end (${_ageLabel(intent.plannedEndAt)}); monitoring must continue until explicit completion.',
     );
   }
-  if (_requiredConformanceIsMissing(intent, conformance)) {
+  if (_requiredLiveConformanceIsUnavailable(intent, conformance)) {
     reasons.add(
-      'Required conformance is unavailable; no current summary is linked.',
+      conformance == null
+          ? 'Required conformance is unavailable; no current summary is linked.'
+          : 'Required live conformance is unavailable; only a historical summary is linked.',
     );
   }
   if (conformance != null && _conformanceNeedsAttention(conformance)) {
@@ -1143,20 +1145,20 @@ bool _conformanceNeedsAttention(ConformanceSummary summary) {
       summary.activeViolationCount > 0;
 }
 
-bool _requiredConformanceIsMissing(
+bool _requiredLiveConformanceIsUnavailable(
   OperationalIntent intent,
   ConformanceSummary? summary,
 ) {
   return intent.status == 'active' &&
       intent.conformanceRequired &&
-      summary == null;
+      (summary == null || !summary.isLiveProjection);
 }
 
 bool _intentConformanceNeedsAttention(
   OperationalIntent intent,
   ConformanceSummary? summary,
 ) {
-  return _requiredConformanceIsMissing(intent, summary) ||
+  return _requiredLiveConformanceIsUnavailable(intent, summary) ||
       (summary != null && _conformanceNeedsAttention(summary));
 }
 

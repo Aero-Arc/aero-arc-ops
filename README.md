@@ -134,9 +134,10 @@ normal live results are produced by Agent telemetry flowing through Relay,
 Conformance, and Registry. Missing optional live fields degrade locally without
 hiding durable conformance history.
 
-An active intent that requires conformance but has no current summary is marked
-unavailable and remains in both Needs Attention and Conformance alerts; a
-partial projection cannot be interpreted as evidence of conformance.
+An active intent that requires conformance but has no live summary is marked
+unavailable and remains in both Needs Attention and Conformance alerts. A
+missing summary or a legacy historical summary without assignment identity,
+monitoring, recording, and watermark evidence cannot establish conformance.
 
 Within one intent version, live summaries are ordered first by assignment
 generation and only then by that generation's evaluation revision. The

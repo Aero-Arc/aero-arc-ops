@@ -182,8 +182,31 @@ void main() {
             plannedStartAt: DateTime.utc(2099, 1, 1, 11),
             plannedEndAt: DateTime.utc(2099, 1, 1, 12),
           ),
+          OperationalIntent(
+            id: 'intent-historical-conformance',
+            aircraftId: 'aircraft-historical-conformance',
+            version: 1,
+            name: 'Historical conformance',
+            summary: 'Only legacy evidence is available',
+            authorizationPath: 'demo',
+            populationCategory: 'cat_1',
+            status: 'active',
+            conformanceRequired: true,
+            plannedStartAt: DateTime.utc(2099, 1, 1, 11),
+            plannedEndAt: DateTime.utc(2099, 1, 1, 12),
+          ),
         ],
-        conformance: const [],
+        conformance: const [
+          ConformanceSummary(
+            id: 'legacy-summary',
+            intentId: 'intent-historical-conformance',
+            intentVersion: 1,
+            aircraftId: 'aircraft-historical-conformance',
+            status: 'conforming',
+            alertCount: 0,
+            reportabilityStatus: 'no',
+          ),
+        ],
         liveAircraft: const [],
       );
 
@@ -200,14 +223,20 @@ void main() {
         find.textContaining('Required conformance is unavailable'),
         findsOneWidget,
       );
+      expect(
+        find.textContaining('Required live conformance is unavailable'),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('Needs attention'));
       await tester.pumpAndSettle();
       expect(find.text('Missing conformance v1'), findsOneWidget);
+      expect(find.text('Historical conformance v1'), findsOneWidget);
 
       await tester.tap(find.text('Conformance alerts'));
       await tester.pumpAndSettle();
       expect(find.text('Missing conformance v1'), findsOneWidget);
+      expect(find.text('Historical conformance v1'), findsOneWidget);
     },
   );
 
