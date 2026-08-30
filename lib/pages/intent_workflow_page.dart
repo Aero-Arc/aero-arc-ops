@@ -233,9 +233,18 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
               flight: flight,
               intent: intent,
             )) {
-          throw const AeroArcApiException(
-            'Current deployment identity is stale or does not match the current flight, exact intent version, and current or unresolved prior mission.',
-          );
+          if (_missionDeploymentIsTerminalPriorMission(
+            deployment,
+            mission: mission,
+            flight: flight,
+            intent: intent,
+          )) {
+            deployment = null;
+          } else {
+            throw const AeroArcApiException(
+              'Current deployment identity is stale or does not match the current flight, exact intent version, and current or unresolved prior mission.',
+            );
+          }
         }
       }
 
@@ -2596,11 +2605,47 @@ bool _missionDeploymentCanRestore(
   // A newer immutable mission may coexist with one older command whose effect
   // remains unresolved. Restore that durable blocker only when the API returns
   // a complete identity for an earlier mission version in the exact same
-  // operation context; terminal or unrelated historical deployments remain
-  // invalid for the current screen.
-  final missionOperator = mission.operatorId;
+  // operation context. Exact terminal history is ignored separately, while
+  // unrelated or malformed history remains invalid for the current screen.
   return _missionDeploymentRequiresResolution(deployment) &&
-      _missionDeploymentContextMatches(
+      _missionDeploymentIsPriorMission(
+        deployment,
+        mission: mission,
+        flight: flight,
+        intent: intent,
+      );
+}
+
+bool _missionDeploymentIsTerminalPriorMission(
+  MissionDeployment deployment, {
+  required Mission mission,
+  required FlightRecord flight,
+  required OperationalIntent intent,
+}) {
+  const terminalStatuses = {
+    'applied',
+    'already_applied',
+    'rejected',
+    'binding_mismatch',
+    'onboard_mission_mismatch',
+  };
+  return terminalStatuses.contains(deployment.status) &&
+      _missionDeploymentIsPriorMission(
+        deployment,
+        mission: mission,
+        flight: flight,
+        intent: intent,
+      );
+}
+
+bool _missionDeploymentIsPriorMission(
+  MissionDeployment deployment, {
+  required Mission mission,
+  required FlightRecord flight,
+  required OperationalIntent intent,
+}) {
+  final missionOperator = mission.operatorId;
+  return _missionDeploymentContextMatches(
         deployment,
         flight: flight,
         intent: intent,

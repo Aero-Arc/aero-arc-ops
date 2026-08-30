@@ -225,7 +225,10 @@ the superseded mission because that could request an old replacement upload; it
 permits exact-ID status refresh only and directs unresolved cases to manual
 resolution. The same blocker is restored after a reload when the API returns
 its complete durable identity for the exact flight and intent context, even
-though the flight's current immutable mission is now newer.
+though the flight's current immutable mission is now newer. Context-matched
+terminal history for an earlier mission version is ignored so it cannot poison
+deployment of the newer current mission; unrelated or malformed history still
+fails restoration closed.
 
 Mission import is deliberately constrained to a single MSL Polygon volume and
 the supported WPL 110 navigation commands. A mission cannot replace or reshape

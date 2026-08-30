@@ -397,6 +397,65 @@ void main() {
     },
   );
 
+  testWidgets(
+    'reload ignores terminal deployment history from a prior mission version',
+    (WidgetTester tester) async {
+      final apiClient = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          switch (request.url.path) {
+            case '/api/v1/aircraft/aircraft-1/flights':
+              return _jsonResponse({
+                'flights': [
+                  {
+                    'id': 'flight-1',
+                    'aircraft_id': 'aircraft-1',
+                    'intent_id': 'intent-1',
+                    'intent_version': 1,
+                    'status': 'planned',
+                    'mission_type': 'mavlink',
+                  },
+                ],
+              });
+            case '/api/v1/flights/flight-1/missions/current':
+              final current = _missionJson()
+                ..['id'] = 'mission-2'
+                ..['version'] = 2
+                ..['mission_digest'] = List.filled(64, 'c').join();
+              return _jsonResponse(current);
+            case '/api/v1/flights/flight-1/mission-deployments/current':
+              return _jsonResponse(_deploymentJson(status: 'applied'));
+          }
+          return http.Response('unexpected ${request.method}', 404);
+        }),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              renderTiles: false,
+              apiClient: apiClient,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'accepted'),
+              ),
+              initialVolumes: [_volumeModel()],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 item(s) · v2'), findsOneWidget);
+      expect(find.text('deployment-1'), findsNothing);
+      expect(find.text('Restore Failed'), findsNothing);
+      expect(find.text('Retry durable state restore'), findsNothing);
+      expect(find.text('Review & confirm deployment'), findsOneWidget);
+    },
+  );
+
   testWidgets('restore rejects a stale current mission identity', (
     WidgetTester tester,
   ) async {
