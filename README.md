@@ -227,8 +227,10 @@ resolution. The same blocker is restored after a reload when the API returns
 its complete durable identity for the exact flight and intent context, even
 though the flight's current immutable mission is now newer. Context-matched
 terminal history for an earlier mission version is ignored so it cannot poison
-deployment of the newer current mission; unrelated or malformed history still
-fails restoration closed.
+deployment of the newer current mission. An expired prior pending or temporary
+attempt counts as terminal only when the API provides positive `expires_at`
+evidence; a missing expiry remains unresolved and refresh-only. Unrelated or
+malformed history still fails restoration closed.
 
 Mission import is deliberately constrained to a single MSL Polygon volume and
 the supported WPL 110 navigation commands. A mission cannot replace or reshape

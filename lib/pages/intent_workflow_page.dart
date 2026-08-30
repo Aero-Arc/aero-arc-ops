@@ -2301,9 +2301,7 @@ class _MissionDeploymentPanel extends StatelessWidget {
         ) &&
         !_missionDeploymentMissionMatches(current, mission!);
     final expiredAttempt =
-        current != null &&
-        (current.status == 'pending' || current.status == 'temporary_error') &&
-        !retryWindowOpen;
+        current != null && _missionDeploymentRetryWindowExpired(current);
     final terminalFailure =
         current != null &&
         (current.status == 'rejected' ||
@@ -2629,13 +2627,22 @@ bool _missionDeploymentIsTerminalPriorMission(
     'binding_mismatch',
     'onboard_mission_mismatch',
   };
-  return terminalStatuses.contains(deployment.status) &&
+  return (terminalStatuses.contains(deployment.status) ||
+          _missionDeploymentRetryWindowExpired(deployment)) &&
       _missionDeploymentIsPriorMission(
         deployment,
         mission: mission,
         flight: flight,
         intent: intent,
       );
+}
+
+bool _missionDeploymentRetryWindowExpired(MissionDeployment deployment) {
+  final expiresAt = deployment.expiresAt;
+  return (deployment.status == 'pending' ||
+          deployment.status == 'temporary_error') &&
+      expiresAt != null &&
+      !expiresAt.isAfter(DateTime.now().toUtc());
 }
 
 bool _missionDeploymentIsPriorMission(
