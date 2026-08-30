@@ -266,6 +266,79 @@ void main() {
     },
   );
 
+  testWidgets(
+    'different live assignment does not revive the embedded generation',
+    (tester) async {
+      final watermark = DateTime(2099, 8, 11, 12);
+      ConformanceSummary summary({
+        required String id,
+        required String assignmentId,
+        required int generation,
+        required String condition,
+      }) => ConformanceSummary(
+        id: id,
+        intentId: 'intent-1',
+        intentVersion: 1,
+        aircraftId: 'aircraft-1',
+        status: condition,
+        alertCount: condition == 'conforming' ? 0 : 1,
+        reportabilityStatus: 'review',
+        assignmentId: assignmentId,
+        assignmentGeneration: generation,
+        evaluationRevision: 1,
+        condition: condition,
+        monitoringStatus: 'current',
+        recordingStatus: 'confirmed',
+        observedAt: watermark,
+        violations: [
+          ConformanceViolation(
+            type: 'lateral_deviation',
+            phase: condition == 'conforming' ? 'clear' : 'open',
+            lastObservedAt: watermark,
+          ),
+          ConformanceViolation(
+            type: 'altitude_deviation',
+            phase: 'clear',
+            lastObservedAt: watermark,
+          ),
+        ],
+      );
+      final embedded = summary(
+        id: 'embedded-generation-2',
+        assignmentId: 'assignment-2',
+        generation: 2,
+        condition: 'conforming',
+      );
+      final dashboardSummary = summary(
+        id: 'live-generation-1',
+        assignmentId: 'assignment-1',
+        generation: 1,
+        condition: 'non_conforming',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(conformanceSummary: embedded),
+            loadConformance: () async => ConformanceDashboard(
+              metrics: const [],
+              summaries: [dashboardSummary],
+              events: const [],
+            ),
+            conformanceRefreshInterval: const Duration(days: 1),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Non Conforming'), findsWidgets);
+      expect(find.text('Conforming'), findsNothing);
+    },
+  );
+
   for (final connectionStatus in ['stale', 'offline', 'unmapped']) {
     testWidgets(
       'fresh position renders navigation marker with $connectionStatus connection',

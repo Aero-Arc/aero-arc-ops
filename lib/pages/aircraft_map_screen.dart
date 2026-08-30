@@ -240,20 +240,26 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
           final hasSuccessfulConformanceResponse =
               _successfulConformanceGeneration == _loadGeneration ||
               _successfulConformanceContext == conformanceContext;
-          final hasLiveContextSummary = _liveConformance.any(
-            (summary) =>
-                summary.isLiveProjection &&
-                summary.aircraftId == widget.aircraftId &&
-                summary.intentId == activeIntent?.id &&
-                summary.intentVersion == activeIntent?.version,
-          );
+          final embeddedConformance = view.conformanceSummary;
+          final hasLiveEmbeddedAssignment =
+              embeddedConformance?.isLiveProjection == true &&
+              _liveConformance.any(
+                (summary) =>
+                    summary.isLiveProjection &&
+                    summary.aircraftId == widget.aircraftId &&
+                    summary.intentId == activeIntent?.id &&
+                    summary.intentVersion == activeIntent?.version &&
+                    summary.assignmentId == embeddedConformance?.assignmentId &&
+                    summary.assignmentGeneration ==
+                        embeddedConformance?.assignmentGeneration,
+              );
           final conformance = _selectConformanceSummary(
             [
               ..._liveConformance,
               if ((!hasSuccessfulConformanceResponse ||
-                      hasLiveContextSummary) &&
-                  view.conformanceSummary != null)
-                view.conformanceSummary!,
+                      hasLiveEmbeddedAssignment) &&
+                  embeddedConformance != null)
+                embeddedConformance,
             ],
             aircraftId: widget.aircraftId,
             intentId: activeIntent?.id,
