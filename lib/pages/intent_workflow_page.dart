@@ -507,17 +507,19 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
 
     final succeeded = await _runWorkflowAction(() async {
       var flight = _flight;
-      if (flight != null &&
+      final flightNeedsReplacement =
+          flight != null &&
           (flight.aircraftId != widget.aircraftId ||
               flight.intentId != intent.id ||
               flight.intentVersion != intent.version ||
-              flight.status != 'planned')) {
-        if (mounted) {
-          setState(() {
-            _flight = null;
-            _mission = null;
-            _resetMissionDeploymentState();
-          });
+              flight.status != 'planned');
+      if (flightNeedsReplacement) {
+        final deployment = _missionDeployment;
+        if (deployment != null &&
+            _missionDeploymentRequiresResolution(deployment)) {
+          throw AeroArcApiException(
+            'Unresolved deployment ${deployment.id} must reach a terminal outcome before switching flights or importing a replacement mission.',
+          );
         }
         flight = null;
       }
@@ -549,11 +551,6 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
             ),
           );
         }
-        if (!mounted) return;
-        setState(() {
-          if (_flight?.id != flight!.id) _resetMissionDeploymentState();
-          _flight = flight;
-        });
       }
       final result = await _apiClient.importMission(
         flightId: flight.id,
@@ -574,6 +571,10 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       }
       if (!mounted) return;
       setState(() {
+        if (_flight?.id != flight!.id) {
+          _resetMissionDeploymentState();
+        }
+        _flight = flight;
         if (!_sameMissionBinding(_mission, imported)) {
           final deployment = _missionDeployment;
           if (deployment == null ||

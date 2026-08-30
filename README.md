@@ -232,6 +232,11 @@ attempt counts as terminal only when the API provides positive `expires_at`
 evidence; a missing expiry remains unresolved and refresh-only. Unrelated or
 malformed history still fails restoration closed.
 
+An unresolved deployment on a non-planned flight also blocks switching to a
+replacement planned flight or importing a replacement mission. Ops preserves
+the original flight, mission, and durable deployment identity for exact status
+refresh until the command reaches a terminal outcome.
+
 Mission import is deliberately constrained to a single MSL Polygon volume and
 the supported WPL 110 navigation commands. A mission cannot replace or reshape
 the operational intent. `sitl-mission-run` configures SITL-only AUTO behavior,
