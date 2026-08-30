@@ -149,7 +149,9 @@ older embedded live projection. An embedded live projection is merged only
 while the successful dashboard still contains that exact assignment ID and
 generation. Cached live absence is scoped to the same assignment, so a newly
 refreshed assignment can still use its embedded snapshot if its first live
-request fails.
+request fails. Each full refresh resolves the map's assignment identity before
+starting that generation's conformance request, so an early dashboard response
+cannot be retroactively rebound to a newly discovered assignment.
 
 Within one intent version, live summaries are ordered first by assignment
 generation and only then by that generation's evaluation revision. The

@@ -58,7 +58,6 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
   _ConformanceContext? _resolvedConformanceContext;
   int? _resolvedConformanceGeneration;
   _ConformanceContext? _successfulConformanceContext;
-  int? _successfulConformanceGeneration;
   Object? _conformanceError;
   bool _conformanceLoading = false;
   int _loadGeneration = 0;
@@ -92,15 +91,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             : null);
     final conformanceLoader =
         widget.loadConformance ?? (custom == null ? client.conformance : null);
-    _liveStateLoading = stateLoader != null;
-    if (stateLoader != null) {
-      unawaited(_loadLiveState(stateLoader, generation));
-    }
-    _conformanceLoading = conformanceLoader != null;
-    if (conformanceLoader != null) {
-      unawaited(_loadConformance(conformanceLoader, generation));
-    }
-    return mapFuture.then((view) {
+    final resolvedMapFuture = mapFuture.then((view) {
       if (generation != _loadGeneration) return view;
       final context = (
         aircraftId: widget.aircraftId,
@@ -111,11 +102,37 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
       );
       _resolvedConformanceContext = context;
       _resolvedConformanceGeneration = generation;
-      if (_successfulConformanceGeneration == generation) {
-        _successfulConformanceContext = context;
-      }
       return view;
     });
+    _liveStateLoading = stateLoader != null;
+    if (stateLoader != null) {
+      unawaited(_loadLiveState(stateLoader, generation));
+    }
+    _conformanceLoading = conformanceLoader != null;
+    if (conformanceLoader != null) {
+      unawaited(
+        _loadConformanceAfterMap(
+          resolvedMapFuture,
+          conformanceLoader,
+          generation,
+        ),
+      );
+    }
+    return resolvedMapFuture;
+  }
+
+  Future<void> _loadConformanceAfterMap(
+    Future<AircraftMapView> mapFuture,
+    Future<ConformanceDashboard> Function() loader,
+    int generation,
+  ) async {
+    try {
+      await mapFuture;
+    } catch (_) {
+      return;
+    }
+    if (!mounted || generation != _loadGeneration) return;
+    await _loadConformance(loader, generation);
   }
 
   Future<void> _loadLiveState(
@@ -152,7 +169,6 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
     setState(() {
       if (result.dashboard != null) {
         _liveConformance = result.dashboard!.summaries;
-        _successfulConformanceGeneration = generation;
         if (_resolvedConformanceGeneration == generation) {
           _successfulConformanceContext = _resolvedConformanceContext;
         }
@@ -244,7 +260,6 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             assignmentGeneration: view.conformanceSummary?.assignmentGeneration,
           );
           final hasSuccessfulConformanceResponse =
-              _successfulConformanceGeneration == _loadGeneration ||
               _successfulConformanceContext == conformanceContext;
           final embeddedConformance = view.conformanceSummary;
           final hasLiveEmbeddedAssignment =

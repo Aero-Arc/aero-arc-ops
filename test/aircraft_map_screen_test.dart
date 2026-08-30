@@ -906,6 +906,74 @@ void main() {
     },
   );
 
+  testWidgets(
+    'full refresh resolves map assignment before polling conformance',
+    (tester) async {
+      final refreshedMap = Completer<AircraftMapView>();
+      var mapLoads = 0;
+      var conformanceLoads = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () {
+              mapLoads += 1;
+              if (mapLoads == 2) return refreshedMap.future;
+              return Future.value(sampleMapView());
+            },
+            loadConformance: () async {
+              conformanceLoads += 1;
+              return const ConformanceDashboard(
+                metrics: [],
+                summaries: [],
+                events: [],
+              );
+            },
+            conformanceRefreshInterval: const Duration(days: 1),
+            renderTiles: false,
+          ),
+          onGenerateRoute: (settings) => MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => Text('route:${settings.name}'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(mapLoads, 1);
+      expect(conformanceLoads, 1);
+
+      final openIntent = find.text('Open intent');
+      await tester.ensureVisible(openIntent);
+      await tester.tap(openIntent);
+      await tester.pumpAndSettle();
+      Navigator.of(
+        tester.element(find.text('route:/aircraft/aircraft-1/intent/new')),
+      ).pop();
+      await tester.pump();
+      await tester.pump();
+
+      expect(mapLoads, 2);
+      expect(conformanceLoads, 1);
+
+      refreshedMap.complete(
+        sampleMapView(
+          conformanceSummary: sampleConformanceDashboard(
+            assignmentId: 'assignment-2',
+            assignmentGeneration: 2,
+          ).summaries.single,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(conformanceLoads, 2);
+      expect(find.text('Unavailable'), findsWidgets);
+      expect(find.text('No conformance summary.'), findsOneWidget);
+      expect(find.text('Conforming'), findsNothing);
+    },
+  );
+
   testWidgets('AircraftMapScreen handles loading and error state', (
     tester,
   ) async {
