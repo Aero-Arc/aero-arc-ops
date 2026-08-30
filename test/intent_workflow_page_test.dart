@@ -353,7 +353,7 @@ void main() {
 
     expect(
       find.textContaining('Current mission binding does not match'),
-      findsOneWidget,
+      findsWidgets,
     );
     expect(find.text('Retry same deployment'), findsNothing);
     expect(find.text('Retry exact reconciliation'), findsNothing);
@@ -362,6 +362,62 @@ void main() {
       isNot(contains('/api/v1/flights/flight-1/mission-deployments/current')),
     );
   });
+
+  testWidgets(
+    'failed durable restore blocks mission mutation until retry succeeds',
+    (WidgetTester tester) async {
+      var flightLookups = 0;
+      final apiClient = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/api/v1/aircraft/aircraft-1/flights') {
+            flightLookups += 1;
+            if (flightLookups == 1) {
+              return http.Response('registry unavailable', 503);
+            }
+            return _jsonResponse({'flights': []});
+          }
+          return http.Response('unexpected ${request.method}', 404);
+        }),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              renderTiles: false,
+              apiClient: apiClient,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'accepted'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Could not restore durable mission state'),
+        findsWidgets,
+      );
+      expect(find.text('Retry durable state restore'), findsOneWidget);
+      var importButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Select & import WPL'),
+      );
+      expect(importButton.onPressed, isNull);
+
+      await _tapVisible(tester, find.text('Retry durable state restore'));
+
+      expect(flightLookups, 2);
+      expect(find.text('Retry durable state restore'), findsNothing);
+      importButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Select & import WPL'),
+      );
+      expect(importButton.onPressed, isNotNull);
+    },
+  );
 
   testWidgets(
     'terminal deployment failure requires a fresh confirmation and key',

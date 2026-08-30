@@ -97,6 +97,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   bool _missionDeploymentAttempted = false;
   bool _missionDeploymentReplayed = false;
   bool _restoringMissionState = false;
+  String? _missionRestoreError;
   int _missionRestoreGeneration = 0;
   late final LatLng? _initialVolumeCenter;
   late List<LatLng> _volumePoints;
@@ -144,6 +145,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       _mission = null;
       _missionSource = null;
       _missionIdempotencyKey = null;
+      _missionRestoreError = null;
       _resetMissionDeploymentState();
       _startMissionStateRestore();
     }
@@ -155,6 +157,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         (intent.status != 'accepted' && intent.status != 'active') ||
         intent.aircraftId != widget.aircraftId) {
       _restoringMissionState = false;
+      _missionRestoreError = null;
       return;
     }
     final generation = ++_missionRestoreGeneration;
@@ -252,14 +255,33 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         _missionDeploymentAttempted = deployment != null;
         _missionDeploymentReplayed = false;
         _restoringMissionState = false;
+        _missionRestoreError = null;
       });
     } catch (error) {
       if (!mounted || generation != _missionRestoreGeneration) return;
+      final message = 'Could not restore durable mission state: $error';
       setState(() {
         _restoringMissionState = false;
-        _error = 'Could not restore durable mission state: $error';
+        _missionRestoreError = message;
+        _error = message;
       });
     }
+  }
+
+  void _retryMissionStateRestore() {
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    if (intent == null ||
+        (intent.status != 'accepted' && intent.status != 'active') ||
+        intent.aircraftId != widget.aircraftId) {
+      return;
+    }
+    final generation = ++_missionRestoreGeneration;
+    setState(() {
+      _restoringMissionState = true;
+      _missionRestoreError = null;
+      _error = null;
+    });
+    unawaited(_restoreMissionState(intent, generation));
   }
 
   Future<void> _saveAndCheck() async {
@@ -1101,8 +1123,10 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           localCredentialAvailable:
                               _apiClient.hasLocalMissionControlToken,
                           busy: workflowBusy,
+                          restorationError: _missionRestoreError,
                           onSelectAndImport: _selectAndImportMission,
                           onRetry: _retryMissionImport,
+                          onRetryRestoration: _retryMissionStateRestore,
                         ),
                         const SizedBox(height: 18),
                         _MissionDeploymentPanel(
@@ -1115,7 +1139,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           attempted: _missionDeploymentAttempted,
                           localCredentialAvailable:
                               _apiClient.hasLocalMissionControlToken,
-                          blocker: _missionDeploymentBlocker,
+                          blocker:
+                              _missionRestoreError ?? _missionDeploymentBlocker,
                           busy: workflowBusy,
                           onConfirm: _confirmMissionDeployment,
                           onDeploy: _deployMission,
@@ -1971,8 +1996,10 @@ class _MissionImportPanel extends StatelessWidget {
     required this.selectedSource,
     required this.localCredentialAvailable,
     required this.busy,
+    required this.restorationError,
     required this.onSelectAndImport,
     required this.onRetry,
+    required this.onRetryRestoration,
   });
 
   final OperationalIntent? intent;
@@ -1981,19 +2008,24 @@ class _MissionImportPanel extends StatelessWidget {
   final MissionSourceSelection? selectedSource;
   final bool localCredentialAvailable;
   final bool busy;
+  final String? restorationError;
   final VoidCallback onSelectAndImport;
   final VoidCallback onRetry;
+  final VoidCallback onRetryRestoration;
 
   @override
   Widget build(BuildContext context) {
     final intentReady =
         intent?.status == 'accepted' || intent?.status == 'active';
-    final canImport = intentReady && localCredentialAvailable;
+    final canImport =
+        intentReady && localCredentialAvailable && restorationError == null;
     final hasFailedSelection = selectedSource != null && mission == null;
     return Panel(
       title: 'Mission plan',
       trailing: StatusBadge(
-        label: mission != null
+        label: restorationError != null
+            ? 'restore_failed'
+            : mission != null
             ? 'validated'
             : !localCredentialAvailable
             ? 'credential_required'
@@ -2031,6 +2063,12 @@ class _MissionImportPanel extends StatelessWidget {
                   ? 'Local credential configured'
                   : 'Blocked · set AERO_ARC_MISSION_DEPLOYMENT_TOKEN',
             ),
+            if (restorationError != null)
+              DetailLine(
+                label: 'Durable restore',
+                value:
+                    'Blocked · existing mission state could not be inspected.',
+              ),
             DetailLine(
               label: 'Route',
               value: mission == null
@@ -2049,6 +2087,17 @@ class _MissionImportPanel extends StatelessWidget {
                   value: finding.message,
                 ),
             const SizedBox(height: 10),
+            if (restorationError != null) ...[
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: busy ? null : onRetryRestoration,
+                  icon: const Icon(Icons.sync),
+                  label: const Text('Retry durable state restore'),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
             SizedBox(
               width: double.infinity,
               child: FilledButton.tonalIcon(

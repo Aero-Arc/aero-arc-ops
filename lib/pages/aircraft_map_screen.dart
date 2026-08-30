@@ -204,14 +204,11 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             );
           }
 
-          final liveConformance = _selectConformanceSummary(
-            _liveConformance,
-            aircraftId: widget.aircraftId,
-            intentId: view.activeIntent?.id,
-            intentVersion: view.activeIntent?.version,
-          );
-          final embeddedConformance = _boundConformanceSummary(
-            view.conformanceSummary,
+          final conformance = _selectConformanceSummary(
+            [
+              ..._liveConformance,
+              if (view.conformanceSummary != null) view.conformanceSummary!,
+            ],
             aircraftId: widget.aircraftId,
             intentId: view.activeIntent?.id,
             intentVersion: view.activeIntent?.version,
@@ -222,7 +219,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
             liveState: _liveState,
             liveStateError: _liveStateError,
             liveStateLoading: _liveStateLoading,
-            conformanceSummary: liveConformance ?? embeddedConformance,
+            conformanceSummary: conformance,
             conformanceError: _conformanceError,
             conformanceLoading: _conformanceLoading,
             liveTrail: List.unmodifiable(_liveTrail),
@@ -273,20 +270,6 @@ ConformanceSummary? _selectConformanceSummary(
     return rightAt.compareTo(leftAt);
   });
   return candidates.first;
-}
-
-ConformanceSummary? _boundConformanceSummary(
-  ConformanceSummary? summary, {
-  required String aircraftId,
-  String? intentId,
-  int? intentVersion,
-}) {
-  if (summary == null || intentId == null || intentVersion == null) return null;
-  return summary.aircraftId == aircraftId &&
-          summary.intentId == intentId &&
-          summary.intentVersion == intentVersion
-      ? summary
-      : null;
 }
 
 String _mapConformanceStatus(ConformanceSummary summary) {
