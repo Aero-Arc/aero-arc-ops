@@ -305,6 +305,95 @@ void main() {
     },
   );
 
+  testWidgets(
+    'reload restores unresolved deployment from the prior mission version',
+    (WidgetTester tester) async {
+      final requests = <http.Request>[];
+      final apiClient = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          switch (request.url.path) {
+            case '/api/v1/aircraft/aircraft-1/flights':
+              return _jsonResponse({
+                'flights': [
+                  {
+                    'id': 'flight-1',
+                    'aircraft_id': 'aircraft-1',
+                    'intent_id': 'intent-1',
+                    'intent_version': 1,
+                    'status': 'planned',
+                    'mission_type': 'mavlink',
+                  },
+                ],
+              });
+            case '/api/v1/flights/flight-1/missions/current':
+              final current = _missionJson()
+                ..['id'] = 'mission-2'
+                ..['version'] = 2
+                ..['mission_digest'] = List.filled(64, 'c').join();
+              return _jsonResponse(current);
+            case '/api/v1/flights/flight-1/mission-deployments/current':
+              return _jsonResponse(
+                _deploymentJson(status: 'outcome_unknown', expired: true),
+              );
+            case '/api/v1/flights/flight-1/mission-deployments/deployment-1/reconcile':
+              expect(request.bodyBytes, isEmpty);
+              expect(request.headers['idempotency-key'], isNull);
+              return _jsonResponse({
+                'deployment': _deploymentJson(status: 'already_applied'),
+                'replayed': true,
+              });
+          }
+          return http.Response('unexpected ${request.method}', 404);
+        }),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              renderTiles: false,
+              apiClient: apiClient,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'accepted'),
+              ),
+              initialVolumes: [_volumeModel()],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 item(s) · v2'), findsOneWidget);
+      expect(find.text('deployment-1'), findsOneWidget);
+      expect(find.text('Outcome Unknown'), findsWidgets);
+      expect(
+        find.textContaining(
+          'blocks replacement effects until it is reconciled',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Review & confirm deployment'), findsNothing);
+      expect(find.text('Retry exact reconciliation'), findsOneWidget);
+
+      await _tapVisible(tester, find.text('Retry exact reconciliation'));
+
+      expect(find.text('deployment-1'), findsNothing);
+      expect(find.text('Review & confirm deployment'), findsOneWidget);
+      expect(
+        requests.where((request) => request.url.path.endsWith('/deploy')),
+        isEmpty,
+      );
+      expect(
+        requests.where((request) => request.url.path.endsWith('/reconcile')),
+        hasLength(1),
+      );
+    },
+  );
+
   testWidgets('restore rejects a stale current mission identity', (
     WidgetTester tester,
   ) async {

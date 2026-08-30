@@ -227,14 +227,14 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           if (error.statusCode != 404) rethrow;
         }
         if (deployment != null &&
-            !_missionDeploymentMatches(
+            !_missionDeploymentCanRestore(
               deployment,
               mission: mission,
               flight: flight,
               intent: intent,
             )) {
           throw const AeroArcApiException(
-            'Current deployment identity is stale or does not match the current flight, mission, and exact intent version.',
+            'Current deployment identity is stale or does not match the current flight, exact intent version, and current or unresolved prior mission.',
           );
         }
       }
@@ -2560,6 +2560,46 @@ bool _missionDeploymentMatches(
         deployment.onboardMissionDigest == mission.missionDigest;
   }
   return true;
+}
+
+bool _missionDeploymentCanRestore(
+  MissionDeployment deployment, {
+  required Mission mission,
+  required FlightRecord flight,
+  required OperationalIntent intent,
+}) {
+  if (_missionDeploymentMatches(
+    deployment,
+    mission: mission,
+    flight: flight,
+    intent: intent,
+  )) {
+    return true;
+  }
+
+  // A newer immutable mission may coexist with one older command whose effect
+  // remains unresolved. Restore that durable blocker only when the API returns
+  // a complete identity for an earlier mission version in the exact same
+  // operation context; terminal or unrelated historical deployments remain
+  // invalid for the current screen.
+  final missionOperator = mission.operatorId;
+  return _missionDeploymentRequiresResolution(deployment) &&
+      _missionDeploymentContextMatches(
+        deployment,
+        flight: flight,
+        intent: intent,
+      ) &&
+      deployment.id.isNotEmpty &&
+      deployment.commandId.isNotEmpty &&
+      deployment.operatorId.isNotEmpty &&
+      deployment.missionId.isNotEmpty &&
+      deployment.missionId != mission.id &&
+      deployment.missionVersion > 0 &&
+      deployment.missionVersion < mission.version &&
+      _lowercaseSha256.hasMatch(deployment.missionDigest) &&
+      (missionOperator == null ||
+          missionOperator.isEmpty ||
+          deployment.operatorId == missionOperator);
 }
 
 bool _missionDeploymentRequiresResolution(MissionDeployment deployment) {
