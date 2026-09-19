@@ -21,6 +21,13 @@ void main() {
     expect(statusColor('fresh'), const Color(0xFF00CFA0));
     expect(statusColor('stale'), const Color(0xFFE4A100));
     expect(statusColor('unavailable'), const Color(0xFF7F90B6));
+    expect(statusColor('validated'), const Color(0xFF00CFA0));
+    expect(statusColor('not_imported'), const Color(0xFF7F90B6));
+    expect(statusColor('binding_mismatch'), const Color(0xFFE14A5B));
+    expect(statusColor('applied'), const Color(0xFF00CFA0));
+    expect(statusColor('outcome_unknown'), const Color(0xFFE4A100));
+    expect(statusColor('temporary_error'), const Color(0xFFE4A100));
+    expect(statusColor('onboard_mission_mismatch'), const Color(0xFFE14A5B));
   });
 
   testWidgets('DashboardPage renders loaded data', (tester) async {

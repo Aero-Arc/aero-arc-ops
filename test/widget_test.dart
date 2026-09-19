@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aero_arc_web/main.dart';
 import 'package:aero_arc_web/models/aero_arc_models.dart';
 import 'package:aero_arc_web/pages/agents_page.dart';
+import 'package:aero_arc_web/pages/aircraft_map_screen.dart';
 
 void main() {
   testWidgets('shows readiness dashboard shell', (WidgetTester tester) async {
@@ -59,6 +60,7 @@ void main() {
         home: const AppShell(
           section: AppSection.aircraft,
           intentAircraftId: 'aircraft-1',
+          renderMapTiles: false,
         ),
       ),
     );
@@ -70,6 +72,27 @@ void main() {
     expect(
       find.widgetWithText(TextFormField, 'Mission aircraft-1'),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('aircraft map route preserves tile rendering opt-out', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: AppShell(
+          section: AppSection.aircraft,
+          aircraftMapId: 'aircraft-1',
+          renderMapTiles: false,
+        ),
+      ),
+    );
+
+    expect(
+      tester
+          .widget<AircraftMapScreen>(find.byType(AircraftMapScreen))
+          .renderTiles,
+      isFalse,
     );
   });
 }

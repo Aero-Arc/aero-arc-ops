@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../api/aero_arc_api.dart';
@@ -21,6 +23,13 @@ class IntentWorkflowRouteArguments {
   final LatLng? initialVolumeCenter;
 }
 
+class MissionSourceSelection {
+  const MissionSourceSelection({required this.name, required this.source});
+
+  final String name;
+  final String source;
+}
+
 class IntentWorkflowPage extends StatefulWidget {
   const IntentWorkflowPage({
     super.key,
@@ -29,6 +38,8 @@ class IntentWorkflowPage extends StatefulWidget {
     this.initialIntent,
     this.initialVolumes = const [],
     this.initialVolumeCenter,
+    this.selectMissionSource,
+    this.renderTiles = true,
   });
 
   final String aircraftId;
@@ -36,6 +47,8 @@ class IntentWorkflowPage extends StatefulWidget {
   final OperationalIntent? initialIntent;
   final List<OperationalVolume> initialVolumes;
   final LatLng? initialVolumeCenter;
+  final Future<MissionSourceSelection?> Function()? selectMissionSource;
+  final bool renderTiles;
 
   @override
   State<IntentWorkflowPage> createState() => _IntentWorkflowPageState();
@@ -74,6 +87,19 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   DeconflictionResult? _deconfliction;
   OperationalIntent? _acceptedIntent;
   OperationalIntent? _activatedIntent;
+  FlightRecord? _flight;
+  Mission? _mission;
+  MissionSourceSelection? _missionSource;
+  String? _missionIdempotencyKey;
+  bool _missionImportFailed = false;
+  MissionDeployment? _missionDeployment;
+  String? _missionDeploymentIdempotencyKey;
+  bool _missionDeploymentConfirmed = false;
+  bool _missionDeploymentAttempted = false;
+  bool _missionDeploymentReplayed = false;
+  bool _restoringMissionState = false;
+  String? _missionRestoreError;
+  int _missionRestoreGeneration = 0;
   late final LatLng? _initialVolumeCenter;
   late List<LatLng> _volumePoints;
 
@@ -89,6 +115,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     _volumePoints = _defaultRoutePoints(center: _initialVolumeCenter);
     _sourceIntent = widget.initialIntent;
     _hydrateFromInitialIntent(now);
+    _startMissionStateRestore();
   }
 
   @override
@@ -105,7 +132,192 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant IntentWorkflowPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final previousIntent = oldWidget.initialIntent;
+    final nextIntent = widget.initialIntent;
+    if (oldWidget.aircraftId != widget.aircraftId ||
+        previousIntent?.id != nextIntent?.id ||
+        previousIntent?.version != nextIntent?.version) {
+      _missionRestoreGeneration++;
+      _sourceIntent = nextIntent;
+      _flight = null;
+      _mission = null;
+      _missionSource = null;
+      _missionIdempotencyKey = null;
+      _missionImportFailed = false;
+      _missionRestoreError = null;
+      _resetMissionDeploymentState();
+      _startMissionStateRestore();
+    }
+  }
+
+  void _startMissionStateRestore() {
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    if (intent == null ||
+        (intent.status != 'accepted' && intent.status != 'active') ||
+        intent.aircraftId != widget.aircraftId) {
+      _restoringMissionState = false;
+      _missionRestoreError = null;
+      return;
+    }
+    final generation = ++_missionRestoreGeneration;
+    _restoringMissionState = true;
+    unawaited(_restoreMissionState(intent, generation));
+  }
+
+  Future<void> _restoreMissionState(
+    OperationalIntent intent,
+    int generation,
+  ) async {
+    try {
+      final flights = await _apiClient.listAircraftFlights(widget.aircraftId);
+      final exactFlights = flights.flights
+          .where(
+            (flight) =>
+                flight.aircraftId == widget.aircraftId &&
+                flight.intentId == intent.id &&
+                flight.intentVersion == intent.version,
+          )
+          .toList(growable: false);
+      final missionFlights = <MapEntry<FlightRecord, Mission>>[];
+      for (final flight in exactFlights) {
+        try {
+          final mission = await _apiClient.getCurrentMission(flight.id);
+          if (!_missionBindingMatches(
+            mission,
+            flight: flight,
+            intent: intent,
+          )) {
+            throw const AeroArcApiException(
+              'Current mission binding does not match its flight, aircraft, and exact intent version.',
+            );
+          }
+          missionFlights.add(MapEntry(flight, mission));
+        } on AeroArcApiException catch (error) {
+          if (error.statusCode != 404) rethrow;
+        }
+      }
+      if (missionFlights.length > 1) {
+        throw const AeroArcApiException(
+          'Multiple flights have a current mission for this exact intent version. Resolve the ambiguity before issuing aircraft commands.',
+        );
+      }
+
+      FlightRecord? flight;
+      Mission? mission;
+      if (missionFlights.isNotEmpty) {
+        flight = missionFlights.single.key;
+        mission = missionFlights.single.value;
+      } else {
+        final planned = exactFlights
+            .where((candidate) => candidate.status == 'planned')
+            .toList(growable: false);
+        if (planned.length == 1) flight = planned.single;
+      }
+
+      MissionDeployment? deployment;
+      if (flight != null &&
+          mission != null &&
+          !_apiClient.hasLocalMissionControlToken) {
+        throw const AeroArcApiException(
+          'Mission deployment credential is unavailable, so durable deployment state cannot be authenticated. Configure the credential and retry durable state restoration before changing the intent.',
+        );
+      }
+      if (flight != null && mission != null) {
+        try {
+          deployment = await _apiClient.getCurrentMissionDeployment(flight.id);
+        } on AeroArcApiException catch (error) {
+          if (error.statusCode != 404) rethrow;
+        }
+        if (deployment != null &&
+            !_missionDeploymentCanRestore(
+              deployment,
+              mission: mission,
+              flight: flight,
+              intent: intent,
+            )) {
+          if (_missionDeploymentIsTerminalPriorMission(
+            deployment,
+            mission: mission,
+            flight: flight,
+            intent: intent,
+          )) {
+            deployment = null;
+          } else {
+            throw const AeroArcApiException(
+              'Current deployment identity is stale or does not match the current flight, exact intent version, and current or unresolved prior mission.',
+            );
+          }
+        }
+      }
+
+      if (!mounted || generation != _missionRestoreGeneration) return;
+      final currentIntent = _acceptedIntent ?? _intent ?? _sourceIntent;
+      if (currentIntent?.id != intent.id ||
+          currentIntent?.version != intent.version ||
+          currentIntent?.aircraftId != widget.aircraftId) {
+        return;
+      }
+      setState(() {
+        _flight = flight;
+        _mission = mission;
+        _missionSource = null;
+        _missionIdempotencyKey = null;
+        _missionImportFailed = false;
+        _missionDeployment = deployment;
+        _missionDeploymentIdempotencyKey = null;
+        _missionDeploymentConfirmed = false;
+        _missionDeploymentAttempted = deployment != null;
+        _missionDeploymentReplayed = false;
+        _restoringMissionState = false;
+        _missionRestoreError = null;
+      });
+    } catch (error) {
+      if (!mounted || generation != _missionRestoreGeneration) return;
+      final message = 'Could not restore durable mission state: $error';
+      setState(() {
+        _restoringMissionState = false;
+        _missionRestoreError = message;
+        _error = message;
+      });
+    }
+  }
+
+  void _retryMissionStateRestore() {
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    if (intent == null ||
+        (intent.status != 'accepted' && intent.status != 'active') ||
+        intent.aircraftId != widget.aircraftId) {
+      return;
+    }
+    final generation = ++_missionRestoreGeneration;
+    setState(() {
+      _restoringMissionState = true;
+      _missionRestoreError = null;
+      _error = null;
+    });
+    unawaited(_restoreMissionState(intent, generation));
+  }
+
   Future<void> _saveAndCheck() async {
+    if (_missionRestoreError != null) {
+      setState(
+        () => _error =
+            'Retry durable mission-state restoration successfully before changing the operational intent.',
+      );
+      return;
+    }
+    final deployment = _missionDeployment;
+    if (deployment != null &&
+        _missionDeploymentRequiresResolution(deployment)) {
+      setState(
+        () => _error =
+            'Unresolved deployment ${deployment.id} must reach a terminal outcome before changing the operational intent.',
+      );
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
     final timeWindowError = _validateTimeWindow();
     if (timeWindowError != null) {
@@ -134,7 +346,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         volume = modified.volumes.isEmpty ? null : modified.volumes.first;
         if (!mounted) return;
         setState(() {
-          _intent = intent;
+          _adoptIntent(intent!);
           _volume = volume;
           _modifyResult = modified;
         });
@@ -147,7 +359,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         volume = modified.volumes.isEmpty ? null : modified.volumes.first;
         if (!mounted) return;
         setState(() {
-          _intent = intent;
+          _adoptIntent(intent!);
           _volume = volume;
           _modifyResult = modified;
         });
@@ -155,7 +367,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         if (intent == null) {
           intent = await _apiClient.createOperationalIntent(_intentRequest());
           if (!mounted) return;
-          setState(() => _intent = intent);
+          setState(() => _adoptIntent(intent!));
         }
         if (volume == null) {
           volume = await _apiClient.addOperationalIntentVolume(
@@ -170,7 +382,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           ? await _apiClient.submitOperationalIntent(intent.id)
           : intent;
       if (!mounted) return;
-      setState(() => _intent = submitted);
+      setState(() => _adoptIntent(submitted));
       final preflight = await _apiClient.evaluateOperationalIntentPreflight(
         submitted.id,
       );
@@ -179,7 +391,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       final deconfliction = await _apiClient
           .checkOperationalIntentDeconfliction(submitted.id);
       setState(() {
-        _intent = submitted;
+        _adoptIntent(submitted);
         _volume = volume;
         _preflight = preflight;
         _deconfliction = deconfliction;
@@ -195,34 +407,540 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     await _runWorkflowAction(() async {
       final accepted = await _apiClient.acceptOperationalIntent(intent.id);
       setState(() {
-        _intent = accepted;
+        _adoptIntent(accepted);
         _acceptedIntent = accepted;
       });
     });
   }
 
   Future<void> _activateIntent() async {
-    final intent = _acceptedIntent ?? _intent;
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
     if (intent == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Activate operational intent?'),
+        content: Text(
+          'Aircraft ${widget.aircraftId}\n'
+          'Intent ${intent.id} v${intent.version}\n'
+          'Window ${formatDate(intent.plannedStartAt)} → ${formatDate(intent.plannedEndAt)}\n'
+          'Altitude ${formatFeetRange(intent.minAltitudeFtAgl, intent.maxAltitudeFtAgl)}\n'
+          'Mission plan ${_mission == null ? 'not validated in this view' : '${_mission!.items.length} item(s), API validated'}\n\n'
+          'Activation authorizes monitoring for this intent. It does not deploy a mission, start the flight, arm, or move the aircraft.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Activate intent'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     await _runWorkflowAction(() async {
       final activated = await _apiClient.activateOperationalIntent(intent.id);
       setState(() {
-        _intent = activated;
+        _adoptIntent(activated);
         _activatedIntent = activated;
       });
     });
   }
 
-  Future<void> _runWorkflowAction(Future<void> Function() action) async {
+  Future<void> _selectAndImportMission() async {
+    if (!_apiClient.hasLocalMissionControlToken) {
+      setState(
+        () => _error =
+            'Mission import is unavailable: no local mission-control credential is configured.',
+      );
+      return;
+    }
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    if (intent == null ||
+        (intent.status != 'accepted' && intent.status != 'active')) {
+      setState(() => _error = 'Accept the operational intent first.');
+      return;
+    }
+
+    final MissionSourceSelection? selected;
+    try {
+      selected = await (widget.selectMissionSource ?? _pickMissionSource)();
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+      return;
+    }
+    if (selected == null || !mounted) return;
+    if (_mission != null) {
+      final replace = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Import a new mission version?'),
+          content: Text(
+            'File ${selected!.name}\n'
+            'Flight ${_flight?.id ?? 'not selected'}\n'
+            'Intent ${intent.id} v${intent.version}\n'
+            'Current mission ${_mission!.id} v${_mission!.version}\n\n'
+            'The API will validate and create an immutable new version. This does not deploy it to the aircraft.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Import new version'),
+            ),
+          ],
+        ),
+      );
+      if (replace != true || !mounted) return;
+    }
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    setState(() {
+      _missionSource = selected;
+      _missionIdempotencyKey = 'ops-mission-import-$now';
+      _missionImportFailed = false;
+    });
+    await _importSelectedMission();
+  }
+
+  Future<void> _retryMissionImport() async {
+    if (!_apiClient.hasLocalMissionControlToken) {
+      setState(
+        () => _error =
+            'Mission import is unavailable: no local mission-control credential is configured.',
+      );
+      return;
+    }
+    if (_missionSource == null || _missionIdempotencyKey == null) return;
+    await _importSelectedMission();
+  }
+
+  Future<void> _importSelectedMission() async {
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    final selected = _missionSource;
+    final idempotencyKey = _missionIdempotencyKey;
+    if (intent == null || selected == null || idempotencyKey == null) return;
+
+    final succeeded = await _runWorkflowAction(() async {
+      var flight = _flight;
+      final flightNeedsReplacement =
+          flight != null &&
+          (flight.aircraftId != widget.aircraftId ||
+              flight.intentId != intent.id ||
+              flight.intentVersion != intent.version ||
+              flight.status != 'planned');
+      if (flightNeedsReplacement) {
+        final deployment = _missionDeployment;
+        if (deployment != null &&
+            _missionDeploymentRequiresResolution(deployment)) {
+          throw AeroArcApiException(
+            'Unresolved deployment ${deployment.id} must reach a terminal outcome before switching flights or importing a replacement mission.',
+          );
+        }
+        flight = null;
+      }
+      if (flight == null) {
+        final flights = await _apiClient.listAircraftFlights(widget.aircraftId);
+        final candidates = flights.flights
+            .where(
+              (candidate) =>
+                  candidate.status == 'planned' &&
+                  candidate.aircraftId == widget.aircraftId &&
+                  candidate.intentId == intent.id &&
+                  candidate.intentVersion == intent.version,
+            )
+            .toList();
+        if (candidates.length > 1) {
+          throw const AeroArcApiException(
+            'Multiple planned flights match this exact intent version. Resolve the ambiguity before importing a mission.',
+          );
+        }
+        if (candidates.isNotEmpty) {
+          flight = candidates.single;
+        } else {
+          final suffix = DateTime.now().toUtc().microsecondsSinceEpoch;
+          flight = await _apiClient.createPlannedFlight(
+            intent.id,
+            CreateFlightRequest(
+              id: 'flight-${widget.aircraftId}-$suffix',
+              missionType: 'mavlink',
+            ),
+          );
+        }
+      }
+      final result = await _apiClient.importMission(
+        flightId: flight.id,
+        aircraftId: widget.aircraftId,
+        intentId: intent.id,
+        intentVersion: intent.version,
+        source: selected.source,
+        idempotencyKey: idempotencyKey,
+      );
+      final imported = result.mission;
+      if (imported.flightId != flight.id ||
+          imported.aircraftId != widget.aircraftId ||
+          imported.intentId != intent.id ||
+          imported.intentVersion != intent.version) {
+        throw const AeroArcApiException(
+          'Mission import response binding does not match the selected flight and exact intent version.',
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        if (_flight?.id != flight!.id) {
+          _resetMissionDeploymentState();
+        }
+        _flight = flight;
+        if (!_sameMissionBinding(_mission, imported)) {
+          final deployment = _missionDeployment;
+          if (deployment == null ||
+              !_missionDeploymentRequiresResolution(deployment)) {
+            _resetMissionDeploymentState();
+          } else {
+            _missionDeploymentIdempotencyKey = null;
+            _missionDeploymentConfirmed = false;
+            _missionDeploymentAttempted = true;
+            _missionDeploymentReplayed = false;
+          }
+        }
+        _mission = imported;
+        _missionImportFailed = false;
+      });
+    });
+    if (!succeeded && mounted) {
+      setState(() => _missionImportFailed = true);
+    }
+  }
+
+  Future<void> _confirmMissionDeployment() async {
+    final blocker = _missionDeploymentBlocker;
+    final mission = _mission;
+    final flight = _flight;
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    if (blocker != null ||
+        mission == null ||
+        flight == null ||
+        intent == null) {
+      setState(
+        () => _error = blocker ?? 'The exact deployment binding is not ready.',
+      );
+      return;
+    }
+    if (!_apiClient.hasLocalMissionControlToken) {
+      setState(
+        () => _error =
+            'Mission deployment is unavailable: no local mission-control credential is configured.',
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm mission deployment binding'),
+        content: Text(
+          'Aircraft ${mission.aircraftId}\n'
+          'Flight ${flight.id} (${flight.status})\n'
+          'Intent ${mission.intentId} v${mission.intentVersion}\n'
+          'Mission ${mission.id} v${mission.version}\n'
+          'Items ${mission.items.length}\n'
+          'Digest ${_shortDigest(mission.missionDigest)}\n\n'
+          'This confirmation applies only to this exact immutable binding. The next action uploads the mission; it does not arm the aircraft, start the flight, or begin mission execution.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Confirm exact binding'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _missionDeploymentConfirmed = true;
+      _missionDeploymentIdempotencyKey ??=
+          'ops-mission-deploy-${DateTime.now().toUtc().microsecondsSinceEpoch}';
+    });
+  }
+
+  Future<void> _deployMission() async {
+    final blocker = _missionDeploymentBlocker;
+    final mission = _mission;
+    final flight = _flight;
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    final current = _missionDeployment;
+    final idempotencyKey = _missionDeploymentIdempotencyKey;
+    if (flight == null || intent == null) {
+      setState(() => _error = 'The exact deployment binding changed.');
+      return;
+    }
+    if (current == null) {
+      if (!_missionDeploymentConfirmed || idempotencyKey == null) {
+        setState(() => _error = 'Confirm the exact mission binding first.');
+        return;
+      }
+      if (blocker != null || mission == null) {
+        setState(() {
+          _resetMissionDeploymentState();
+          _error = blocker ?? 'The exact deployment binding changed.';
+        });
+        return;
+      }
+    } else if (!_missionDeploymentContextMatches(
+      current,
+      flight: flight,
+      intent: intent,
+    )) {
+      setState(
+        () => _error =
+            'The retained deployment no longer matches this aircraft, flight, and intent context.',
+      );
+      return;
+    }
+    if (current != null &&
+        (mission == null ||
+            !_missionDeploymentMissionMatches(current, mission))) {
+      setState(
+        () => _error =
+            'Automatic reconciliation is disabled because this unresolved deployment belongs to a superseded mission. Refresh its exact durable status or escalate for manual resolution.',
+      );
+      return;
+    }
+    setState(() => _missionDeploymentAttempted = true);
+    await _runWorkflowAction(() async {
+      final result = current == null
+          ? await _apiClient.deployMission(
+              mission: mission!,
+              idempotencyKey: idempotencyKey!,
+            )
+          : await _apiClient.reconcileMissionDeployment(
+              flightId: flight.id,
+              deploymentId: current.id,
+            );
+      final deployment = result.deployment;
+      if (current != null &&
+          !_sameMissionDeploymentIdentity(current, deployment)) {
+        throw const AeroArcApiException(
+          'Mission deployment reconciliation changed the durable command or binding identity.',
+        );
+      }
+      final matchesCurrentMission =
+          mission != null &&
+          _missionDeploymentMatches(
+            deployment,
+            mission: mission,
+            flight: flight,
+            intent: intent,
+          );
+      final currentMatchesDisplayedMission =
+          current != null &&
+          mission != null &&
+          _missionDeploymentMissionMatches(current, mission);
+      if ((current == null || currentMatchesDisplayedMission) &&
+          !matchesCurrentMission) {
+        throw const AeroArcApiException(
+          'Mission deployment response binding does not match the confirmed flight, mission, and exact intent version.',
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        if (current != null &&
+            !currentMatchesDisplayedMission &&
+            !_missionDeploymentRequiresResolution(deployment)) {
+          _resetMissionDeploymentState();
+        } else {
+          _missionDeployment = deployment;
+          _missionDeploymentReplayed = result.replayed;
+        }
+      });
+    });
+  }
+
+  Future<void> _refreshMissionDeployment() async {
+    final current = _missionDeployment;
+    final mission = _mission;
+    final flight = _flight;
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    if (current == null || flight == null || intent == null) {
+      return;
+    }
+    await _runWorkflowAction(() async {
+      final deployment = await _apiClient.getMissionDeployment(
+        flightId: flight.id,
+        deploymentId: current.id,
+      );
+      if (!_sameMissionDeploymentIdentity(current, deployment) ||
+          !_missionDeploymentContextMatches(
+            deployment,
+            flight: flight,
+            intent: intent,
+          )) {
+        throw const AeroArcApiException(
+          'Mission deployment status changed the durable command or operation binding identity.',
+        );
+      }
+      final matchesCurrentMission =
+          mission != null &&
+          _missionDeploymentMatches(
+            deployment,
+            mission: mission,
+            flight: flight,
+            intent: intent,
+          );
+      final currentMatchesDisplayedMission =
+          mission != null && _missionDeploymentMissionMatches(current, mission);
+      if (currentMatchesDisplayedMission && !matchesCurrentMission) {
+        throw const AeroArcApiException(
+          'Mission deployment status binding does not match the current mission evidence.',
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        if (!currentMatchesDisplayedMission &&
+            !_missionDeploymentRequiresResolution(deployment)) {
+          _resetMissionDeploymentState();
+        } else {
+          _missionDeployment = deployment;
+        }
+      });
+    });
+  }
+
+  void _prepareNewMissionDeploymentAttempt() {
+    setState(_resetMissionDeploymentState);
+  }
+
+  String? get _missionDeploymentBlocker {
+    final mission = _mission;
+    final flight = _flight;
+    final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    if (mission == null) return 'Import and validate a mission first.';
+    if (flight == null) return 'No mission-bound flight is selected.';
+    if (flight.status != 'planned') {
+      return 'Mission deployment requires a planned flight.';
+    }
+    if (intent == null ||
+        (intent.status != 'accepted' && intent.status != 'active')) {
+      return 'Mission deployment requires the current accepted or active intent.';
+    }
+    if (!_missionBindingMatches(mission, flight: flight, intent: intent)) {
+      return 'Mission, flight, aircraft, and exact intent-version binding do not match.';
+    }
+    final deployment = _missionDeployment;
+    if (deployment != null &&
+        !_missionDeploymentMatches(
+          deployment,
+          mission: mission,
+          flight: flight,
+          intent: intent,
+        )) {
+      if (_missionDeploymentRequiresResolution(deployment) &&
+          _missionDeploymentContextMatches(
+            deployment,
+            flight: flight,
+            intent: intent,
+          )) {
+        return 'Unresolved deployment ${deployment.id} for superseded mission ${deployment.missionId} v${deployment.missionVersion} blocks replacement effects. Automatic reconciliation is disabled; refresh its exact durable status or escalate for manual resolution.';
+      }
+      return 'The retained deployment does not match the current mission binding.';
+    }
+    if (mission.items.isEmpty ||
+        !_lowercaseSha256.hasMatch(mission.missionDigest)) {
+      return 'The current mission is not a complete validated plan.';
+    }
+    if (mission.validationFindings.any(
+      (finding) => finding.severity.toLowerCase() == 'error',
+    )) {
+      return 'The current mission contains validation errors.';
+    }
+    return null;
+  }
+
+  void _resetMissionDeploymentState() {
+    _missionDeployment = null;
+    _missionDeploymentIdempotencyKey = null;
+    _missionDeploymentConfirmed = false;
+    _missionDeploymentAttempted = false;
+    _missionDeploymentReplayed = false;
+  }
+
+  void _adoptIntent(OperationalIntent next) {
+    final previous = _intent ?? _sourceIntent;
+    final mission = _mission;
+    final flight = _flight;
+    final bindingChanged =
+        (_missionSource != null &&
+            previous != null &&
+            (previous.id != next.id || previous.version != next.version)) ||
+        (mission != null &&
+            (mission.intentId != next.id ||
+                mission.intentVersion != next.version ||
+                mission.aircraftId != widget.aircraftId)) ||
+        (flight != null &&
+            (flight.intentId != next.id ||
+                flight.intentVersion != next.version ||
+                flight.aircraftId != widget.aircraftId));
+    _intent = next;
+    final accepted = _acceptedIntent;
+    if (accepted != null &&
+        (accepted.id != next.id || accepted.version != next.version)) {
+      _acceptedIntent = null;
+    }
+    final activated = _activatedIntent;
+    if (activated != null &&
+        (activated.id != next.id || activated.version != next.version)) {
+      _activatedIntent = null;
+    }
+    if (bindingChanged) {
+      _flight = null;
+      _mission = null;
+      _missionSource = null;
+      _missionIdempotencyKey = null;
+      _missionImportFailed = false;
+      _resetMissionDeploymentState();
+    }
+  }
+
+  Future<MissionSourceSelection?> _pickMissionSource() async {
+    const typeGroup = XTypeGroup(
+      label: 'QGroundControl WPL 110 mission',
+      extensions: ['waypoints', 'txt'],
+    );
+    final file = await openFile(acceptedTypeGroups: const [typeGroup]);
+    if (file == null) return null;
+    const maxMissionBytes = 1 << 20;
+    final length = await file.length();
+    if (length == 0 || length > maxMissionBytes) {
+      throw const FormatException(
+        'Mission source must contain 1 byte to 1 MiB.',
+      );
+    }
+    return MissionSourceSelection(
+      name: file.name,
+      source: await file.readAsString(),
+    );
+  }
+
+  Future<bool> _runWorkflowAction(Future<void> Function() action) async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
       await action();
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() => _error = error.toString());
+      return false;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -385,6 +1103,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   @override
   Widget build(BuildContext context) {
     final editingLocked = _editingLocked;
+    final workflowBusy = _busy || _restoringMissionState;
     return Container(
       decoration: const BoxDecoration(gradient: aeroPageGradient),
       child: Stack(
@@ -407,6 +1126,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                   ),
                   const SizedBox(height: 18),
                   _VolumesPanel(
+                    renderTiles: widget.renderTiles,
                     points: _volumePoints,
                     deconfliction: _deconfliction,
                     bufferMeters: _bufferMeters,
@@ -505,7 +1225,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                     right: Column(
                       children: [
                         _ChecksPanel(
-                          busy: _busy,
+                          busy: workflowBusy,
+                          checksBlocked: _missionRestoreError != null,
                           sourceIntent: _sourceIntent,
                           modifyResult: _modifyResult,
                           intent: _intent,
@@ -517,16 +1238,56 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                         const SizedBox(height: 18),
                         _ReviewPanel(
                           aircraftId: widget.aircraftId,
-                          intent: _intent,
-                          volume: _volume,
+                          intent: _intent ?? _sourceIntent,
+                          volume:
+                              _volume ??
+                              (widget.initialVolumes.isEmpty
+                                  ? null
+                                  : widget.initialVolumes.first),
                           preflight: _preflight,
                           deconfliction: _deconfliction,
                           activatedIntent: _activatedIntent,
                           checksClear: _checksClear,
-                          busy: _busy,
+                          busy: workflowBusy,
+                          checksBlocked: _missionRestoreError != null,
                           onRunChecks: _saveAndCheck,
                           onAccept: _acceptIntent,
                           onActivate: _activateIntent,
+                        ),
+                        const SizedBox(height: 18),
+                        _MissionImportPanel(
+                          intent: _acceptedIntent ?? _intent ?? _sourceIntent,
+                          flight: _flight,
+                          mission: _mission,
+                          selectedSource: _missionSource,
+                          importFailed: _missionImportFailed,
+                          localCredentialAvailable:
+                              _apiClient.hasLocalMissionControlToken,
+                          busy: workflowBusy,
+                          restorationError: _missionRestoreError,
+                          onSelectAndImport: _selectAndImportMission,
+                          onRetry: _retryMissionImport,
+                          onRetryRestoration: _retryMissionStateRestore,
+                        ),
+                        const SizedBox(height: 18),
+                        _MissionDeploymentPanel(
+                          intent: _acceptedIntent ?? _intent ?? _sourceIntent,
+                          flight: _flight,
+                          mission: _mission,
+                          deployment: _missionDeployment,
+                          replayed: _missionDeploymentReplayed,
+                          confirmed: _missionDeploymentConfirmed,
+                          attempted: _missionDeploymentAttempted,
+                          localCredentialAvailable:
+                              _apiClient.hasLocalMissionControlToken,
+                          blocker:
+                              _missionRestoreError ?? _missionDeploymentBlocker,
+                          busy: workflowBusy,
+                          onConfirm: _confirmMissionDeployment,
+                          onDeploy: _deployMission,
+                          onRefresh: _refreshMissionDeployment,
+                          onPrepareNewAttempt:
+                              _prepareNewMissionDeploymentAttempt,
                         ),
                       ],
                     ),
@@ -930,6 +1691,7 @@ class _MissionPanel extends StatelessWidget {
 
 class _VolumesPanel extends StatelessWidget {
   const _VolumesPanel({
+    required this.renderTiles,
     required this.points,
     required this.deconfliction,
     required this.bufferMeters,
@@ -947,6 +1709,7 @@ class _VolumesPanel extends StatelessWidget {
     required this.onBufferMetersChanged,
   });
 
+  final bool renderTiles;
   final List<LatLng> points;
   final DeconflictionResult? deconfliction;
   final TextEditingController bufferMeters;
@@ -1040,11 +1803,12 @@ class _VolumesPanel extends StatelessWidget {
                     onTap: locked ? null : (_, point) => onAddPoint(point),
                   ),
                   children: [
-                    TileLayer(
-                      urlTemplate:
-                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'aero_arc_web',
-                    ),
+                    if (renderTiles)
+                      TileLayer(
+                        urlTemplate:
+                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        userAgentPackageName: 'aero_arc_web',
+                      ),
                     if (volumePolygon.length >= 3)
                       PolygonLayer(
                         polygons: [
@@ -1257,6 +2021,7 @@ class _VolumePointMarker extends StatelessWidget {
 class _ChecksPanel extends StatelessWidget {
   const _ChecksPanel({
     required this.busy,
+    required this.checksBlocked,
     required this.sourceIntent,
     required this.modifyResult,
     required this.intent,
@@ -1267,6 +2032,7 @@ class _ChecksPanel extends StatelessWidget {
   });
 
   final bool busy;
+  final bool checksBlocked;
   final OperationalIntent? sourceIntent;
   final ModifyOperationalIntentResult? modifyResult;
   final OperationalIntent? intent;
@@ -1281,7 +2047,7 @@ class _ChecksPanel extends StatelessWidget {
       title: 'Checks',
       trailing: IconButton.filledTonal(
         tooltip: 'Run checks',
-        onPressed: busy ? null : onRunChecks,
+        onPressed: busy || checksBlocked ? null : onRunChecks,
         icon: const Icon(Icons.refresh),
       ),
       child: Padding(
@@ -1365,6 +2131,637 @@ class _ChecksPanel extends StatelessWidget {
   }
 }
 
+class _MissionImportPanel extends StatelessWidget {
+  const _MissionImportPanel({
+    required this.intent,
+    required this.flight,
+    required this.mission,
+    required this.selectedSource,
+    required this.importFailed,
+    required this.localCredentialAvailable,
+    required this.busy,
+    required this.restorationError,
+    required this.onSelectAndImport,
+    required this.onRetry,
+    required this.onRetryRestoration,
+  });
+
+  final OperationalIntent? intent;
+  final FlightRecord? flight;
+  final Mission? mission;
+  final MissionSourceSelection? selectedSource;
+  final bool importFailed;
+  final bool localCredentialAvailable;
+  final bool busy;
+  final String? restorationError;
+  final VoidCallback onSelectAndImport;
+  final VoidCallback onRetry;
+  final VoidCallback onRetryRestoration;
+
+  @override
+  Widget build(BuildContext context) {
+    final intentReady =
+        intent?.status == 'accepted' || intent?.status == 'active';
+    final canImport =
+        intentReady && localCredentialAvailable && restorationError == null;
+    final hasFailedSelection = importFailed && selectedSource != null;
+    return Panel(
+      title: 'Mission plan',
+      trailing: StatusBadge(
+        label: restorationError != null
+            ? 'restore_failed'
+            : mission != null
+            ? 'validated'
+            : !localCredentialAvailable
+            ? 'credential_required'
+            : intentReady
+            ? 'not_imported'
+            : 'awaiting_acceptance',
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Import a QGC WPL 110 route after accepting the intent. The route is checked against this exact authorization version; it never changes the authorized volume.',
+              style: TextStyle(color: Color(0xFF93A3C7), height: 1.4),
+            ),
+            const SizedBox(height: 10),
+            DetailLine(
+              label: 'Binding',
+              value: intent == null
+                  ? 'No intent yet'
+                  : '${intent!.id} v${intent!.version}',
+            ),
+            DetailLine(
+              label: 'Flight',
+              value: flight?.id ?? 'Created when a mission is imported',
+            ),
+            DetailLine(
+              label: 'Source',
+              value: selectedSource?.name ?? 'No WPL selected',
+            ),
+            DetailLine(
+              label: 'Mission control',
+              value: localCredentialAvailable
+                  ? 'Local credential configured'
+                  : 'Blocked · set AERO_ARC_MISSION_DEPLOYMENT_TOKEN',
+            ),
+            if (restorationError != null)
+              DetailLine(
+                label: 'Durable restore',
+                value:
+                    'Blocked · existing mission state could not be inspected.',
+              ),
+            DetailLine(
+              label: 'Route',
+              value: mission == null
+                  ? 'Not validated'
+                  : '${mission!.items.length} item(s) · v${mission!.version}',
+            ),
+            if (mission != null)
+              DetailLine(
+                label: 'Digest',
+                value: _shortDigest(mission!.missionDigest),
+              ),
+            if (mission != null && mission!.validationFindings.isNotEmpty)
+              for (final finding in mission!.validationFindings)
+                DetailLine(
+                  label: displayEnum(finding.severity),
+                  value: finding.message,
+                ),
+            const SizedBox(height: 10),
+            if (restorationError != null) ...[
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: busy ? null : onRetryRestoration,
+                  icon: const Icon(Icons.sync),
+                  label: const Text('Retry durable state restore'),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: busy || !canImport ? null : onSelectAndImport,
+                icon: const Icon(Icons.route_outlined),
+                label: Text(
+                  mission == null
+                      ? 'Select & import WPL'
+                      : 'Import new version',
+                ),
+              ),
+            ),
+            if (hasFailedSelection) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: busy || !localCredentialAvailable ? null : onRetry,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry same import'),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            const Text(
+              'Import and deployment use the same local mission-control credential. Validated means the API accepted the route; aircraft deployment remains a separate, acknowledged C2 step.',
+              style: TextStyle(color: Color(0xFF6F82AA), fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MissionDeploymentPanel extends StatelessWidget {
+  const _MissionDeploymentPanel({
+    required this.intent,
+    required this.flight,
+    required this.mission,
+    required this.deployment,
+    required this.replayed,
+    required this.confirmed,
+    required this.attempted,
+    required this.localCredentialAvailable,
+    required this.blocker,
+    required this.busy,
+    required this.onConfirm,
+    required this.onDeploy,
+    required this.onRefresh,
+    required this.onPrepareNewAttempt,
+  });
+
+  final OperationalIntent? intent;
+  final FlightRecord? flight;
+  final Mission? mission;
+  final MissionDeployment? deployment;
+  final bool replayed;
+  final bool confirmed;
+  final bool attempted;
+  final bool localCredentialAvailable;
+  final String? blocker;
+  final bool busy;
+  final VoidCallback onConfirm;
+  final VoidCallback onDeploy;
+  final VoidCallback onRefresh;
+  final VoidCallback onPrepareNewAttempt;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = deployment;
+    final retryWindowOpen =
+        current?.expiresAt?.isAfter(DateTime.now().toUtc()) ?? false;
+    final outcomeUnknown = current?.status == 'outcome_unknown';
+    final reconciliationWindowOpen =
+        current?.reconcileUntil?.isAfter(DateTime.now().toUtc()) ??
+        outcomeUnknown;
+    final retryable =
+        current != null &&
+        ((outcomeUnknown && reconciliationWindowOpen) ||
+            (current.status == 'pending' && retryWindowOpen) ||
+            (current.status == 'temporary_error' && retryWindowOpen));
+    final deploymentMatchesDisplayedMission =
+        current != null &&
+        mission != null &&
+        _missionDeploymentMissionMatches(current, mission!);
+    final retainedPriorMission =
+        current != null &&
+        mission != null &&
+        flight != null &&
+        intent != null &&
+        _missionDeploymentRequiresResolution(current) &&
+        _missionDeploymentContextMatches(
+          current,
+          flight: flight!,
+          intent: intent!,
+        ) &&
+        !_missionDeploymentMissionMatches(current, mission!);
+    final expiredAttempt =
+        current != null && _missionDeploymentRetryWindowExpired(current);
+    final terminalFailure =
+        current != null &&
+        (current.status == 'rejected' ||
+            current.status == 'binding_mismatch' ||
+            current.status == 'onboard_mission_mismatch' ||
+            expiredAttempt);
+    final canConfirm =
+        !busy && blocker == null && localCredentialAvailable && current == null;
+    final canDeploy =
+        !busy &&
+        blocker == null &&
+        !retainedPriorMission &&
+        ((current == null && confirmed) || (current != null && retryable));
+    final status =
+        current?.status ??
+        (confirmed
+            ? 'binding_confirmed'
+            : blocker == null
+            ? 'confirmation_required'
+            : 'not_ready');
+    return Panel(
+      title: 'Aircraft deployment',
+      trailing: StatusBadge(label: status),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Deploy the API-validated mission to the aircraft only after confirming its immutable flight and intent binding.',
+              style: TextStyle(color: Color(0xFF93A3C7), height: 1.4),
+            ),
+            const SizedBox(height: 10),
+            DetailLine(
+              label: 'Flight',
+              value: flight == null
+                  ? 'Not selected'
+                  : '${flight!.id} · ${displayEnum(flight!.status)}',
+            ),
+            DetailLine(
+              label: 'Intent',
+              value: intent == null
+                  ? 'Not selected'
+                  : '${intent!.id} v${intent!.version}',
+            ),
+            DetailLine(
+              label: 'Mission',
+              value: mission == null
+                  ? 'Not validated'
+                  : '${mission!.id} v${mission!.version}',
+            ),
+            DetailLine(
+              label: 'Plan',
+              value: mission == null
+                  ? 'No canonical items'
+                  : '${mission!.items.length} canonical item(s)',
+            ),
+            DetailLine(
+              label: 'Digest',
+              value: mission == null
+                  ? 'Unavailable'
+                  : _shortDigest(mission!.missionDigest),
+            ),
+            if (blocker != null) DetailLine(label: 'Blocked', value: blocker!),
+            DetailLine(
+              label: 'Mission control',
+              value: localCredentialAvailable
+                  ? 'Configured for this local build'
+                  : 'Missing · set AERO_ARC_MISSION_DEPLOYMENT_TOKEN',
+            ),
+            if (confirmed && current == null)
+              const DetailLine(
+                label: 'Confirmation',
+                value: 'Exact binding confirmed; deployment not sent yet.',
+              ),
+            if (current != null) ...[
+              const SizedBox(height: 8),
+              const Divider(color: Color(0xFF293654)),
+              const SizedBox(height: 8),
+              DetailLine(
+                label: 'Durable status',
+                value: displayEnum(current.status),
+              ),
+              DetailLine(label: 'Deployment ID', value: current.id),
+              DetailLine(label: 'Command ID', value: current.commandId),
+              DetailLine(
+                label: 'Durable binding',
+                value:
+                    '${current.aircraftId} · ${current.flightId} · ${current.intentId} v${current.intentVersion}',
+              ),
+              DetailLine(
+                label: 'Mission evidence',
+                value:
+                    '${current.missionId} v${current.missionVersion} · ${_shortDigest(current.missionDigest)}',
+              ),
+              DetailLine(
+                label: 'Uploaded items',
+                value:
+                    current.status == 'already_applied' &&
+                        current.uploadedItemCount == 0
+                    ? 'Readback only · no replacement upload'
+                    : deploymentMatchesDisplayedMission
+                    ? '${current.uploadedItemCount}/${mission!.items.length}'
+                    : '${current.uploadedItemCount} reported for ${current.missionId} v${current.missionVersion}',
+              ),
+              DetailLine(
+                label: 'Attempts',
+                value:
+                    '${current.attemptCount}${replayed ? ' · idempotent replay' : ''}',
+              ),
+              if (current.expiresAt != null)
+                DetailLine(
+                  label: expiredAttempt || (outcomeUnknown && !retryWindowOpen)
+                      ? 'Retry window'
+                      : 'Expires',
+                  value: outcomeUnknown && !retryWindowOpen
+                      ? 'Expired · exact retry preserves readback reconciliation; the outcome may remain unresolved'
+                      : expiredAttempt
+                      ? 'Expired · prepare a new deployment attempt'
+                      : formatDate(current.expiresAt),
+                ),
+              if (outcomeUnknown && current.reconcileUntil != null)
+                DetailLine(
+                  label: 'Reconciliation',
+                  value: reconciliationWindowOpen
+                      ? 'Readback recovery open until ${formatDate(current.reconcileUntil)}'
+                      : 'Closed · outcome remains unresolved and blocks replacement effects',
+                ),
+              if (current.onboardMissionDigest != null)
+                DetailLine(
+                  label: 'Onboard digest',
+                  value: _shortDigest(current.onboardMissionDigest!),
+                ),
+              if (current.mavlinkMissionAckType != null)
+                DetailLine(
+                  label: 'MAVLink ACK',
+                  value: '${current.mavlinkMissionAckType}',
+                ),
+              if (current.message != null)
+                DetailLine(label: 'Result detail', value: current.message!),
+              if (retainedPriorMission)
+                const DetailLine(
+                  label: 'Resolution',
+                  value:
+                      'Refresh this durable deployment only. Automatic reconciliation is disabled after mission replacement; escalate for manual resolution if it remains unresolved.',
+                ),
+              DetailLine(
+                label: 'Updated',
+                value: formatDate(current.updatedAt),
+              ),
+            ],
+            if (terminalFailure) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: busy ? null : onPrepareNewAttempt,
+                  icon: const Icon(Icons.restart_alt),
+                  label: const Text('Prepare new deployment attempt'),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            if (!confirmed && current == null)
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: canConfirm ? onConfirm : null,
+                  icon: const Icon(Icons.fact_check_outlined),
+                  label: const Text('Review & confirm deployment'),
+                ),
+              ),
+            if ((current == null && confirmed) ||
+                (current != null && retryable && !retainedPriorMission))
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: canDeploy ? onDeploy : null,
+                  icon: const Icon(Icons.upload_outlined),
+                  label: Text(
+                    outcomeUnknown && !retryWindowOpen
+                        ? 'Retry exact reconciliation'
+                        : attempted || retryable
+                        ? 'Retry same deployment'
+                        : 'Deploy validated mission',
+                  ),
+                ),
+              ),
+            if (current != null) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: busy ? null : onRefresh,
+                  icon: const Icon(Icons.sync),
+                  label: const Text('Refresh durable status'),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            const Text(
+              'Deployment uploads the route only. It does not arm the aircraft, start the flight, or begin mission execution. This token is a local-development bridge, not production operator authentication.',
+              style: TextStyle(
+                color: Color(0xFF6F82AA),
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _shortDigest(String digest) {
+  if (digest.length <= 16) return digest;
+  return '${digest.substring(0, 8)}…${digest.substring(digest.length - 8)}';
+}
+
+final RegExp _lowercaseSha256 = RegExp(r'^[0-9a-f]{64}$');
+
+bool _sameMissionBinding(Mission? previous, Mission next) {
+  return previous != null &&
+      previous.id == next.id &&
+      previous.version == next.version &&
+      previous.missionDigest == next.missionDigest &&
+      previous.flightId == next.flightId &&
+      previous.aircraftId == next.aircraftId &&
+      previous.intentId == next.intentId &&
+      previous.intentVersion == next.intentVersion;
+}
+
+bool _missionBindingMatches(
+  Mission mission, {
+  required FlightRecord flight,
+  required OperationalIntent intent,
+}) {
+  return mission.flightId == flight.id &&
+      mission.aircraftId == flight.aircraftId &&
+      mission.intentId == flight.intentId &&
+      mission.intentVersion == flight.intentVersion &&
+      flight.aircraftId == intent.aircraftId &&
+      flight.intentId == intent.id &&
+      flight.intentVersion == intent.version;
+}
+
+bool _missionDeploymentMatches(
+  MissionDeployment deployment, {
+  required Mission mission,
+  required FlightRecord flight,
+  required OperationalIntent intent,
+}) {
+  if (!_missionBindingMatches(mission, flight: flight, intent: intent)) {
+    return false;
+  }
+  if (deployment.id.isEmpty ||
+      deployment.commandId.isEmpty ||
+      deployment.status.isEmpty ||
+      deployment.flightId != flight.id ||
+      deployment.aircraftId != flight.aircraftId ||
+      deployment.intentId != intent.id ||
+      deployment.intentVersion != intent.version ||
+      deployment.missionId != mission.id ||
+      deployment.missionVersion != mission.version ||
+      deployment.missionDigest != mission.missionDigest) {
+    return false;
+  }
+  final missionOperator = mission.operatorId;
+  if (missionOperator != null &&
+      missionOperator.isNotEmpty &&
+      deployment.operatorId != missionOperator) {
+    return false;
+  }
+  if (deployment.status == 'applied') {
+    return deployment.uploadedItemCount == mission.items.length &&
+        deployment.onboardMissionDigest == mission.missionDigest;
+  }
+  if (deployment.status == 'already_applied') {
+    return deployment.uploadedItemCount == 0 &&
+        deployment.onboardMissionDigest == mission.missionDigest;
+  }
+  return true;
+}
+
+bool _missionDeploymentCanRestore(
+  MissionDeployment deployment, {
+  required Mission mission,
+  required FlightRecord flight,
+  required OperationalIntent intent,
+}) {
+  if (_missionDeploymentMatches(
+    deployment,
+    mission: mission,
+    flight: flight,
+    intent: intent,
+  )) {
+    return true;
+  }
+
+  // A newer immutable mission may coexist with one older command whose effect
+  // remains unresolved. Restore that durable blocker only when the API returns
+  // a complete identity for an earlier mission version in the exact same
+  // operation context. Exact terminal history is ignored separately, while
+  // unrelated or malformed history remains invalid for the current screen.
+  return _missionDeploymentRequiresResolution(deployment) &&
+      _missionDeploymentIsPriorMission(
+        deployment,
+        mission: mission,
+        flight: flight,
+        intent: intent,
+      );
+}
+
+bool _missionDeploymentIsTerminalPriorMission(
+  MissionDeployment deployment, {
+  required Mission mission,
+  required FlightRecord flight,
+  required OperationalIntent intent,
+}) {
+  const terminalStatuses = {
+    'applied',
+    'already_applied',
+    'rejected',
+    'binding_mismatch',
+    'onboard_mission_mismatch',
+  };
+  return (terminalStatuses.contains(deployment.status) ||
+          _missionDeploymentRetryWindowExpired(deployment)) &&
+      _missionDeploymentIsPriorMission(
+        deployment,
+        mission: mission,
+        flight: flight,
+        intent: intent,
+      );
+}
+
+bool _missionDeploymentRetryWindowExpired(MissionDeployment deployment) {
+  final expiresAt = deployment.expiresAt;
+  return (deployment.status == 'pending' ||
+          deployment.status == 'temporary_error') &&
+      expiresAt != null &&
+      !expiresAt.isAfter(DateTime.now().toUtc());
+}
+
+bool _missionDeploymentIsPriorMission(
+  MissionDeployment deployment, {
+  required Mission mission,
+  required FlightRecord flight,
+  required OperationalIntent intent,
+}) {
+  final missionOperator = mission.operatorId;
+  return _missionDeploymentContextMatches(
+        deployment,
+        flight: flight,
+        intent: intent,
+      ) &&
+      deployment.id.isNotEmpty &&
+      deployment.commandId.isNotEmpty &&
+      deployment.operatorId.isNotEmpty &&
+      deployment.missionId.isNotEmpty &&
+      deployment.missionId != mission.id &&
+      deployment.missionVersion > 0 &&
+      deployment.missionVersion < mission.version &&
+      _lowercaseSha256.hasMatch(deployment.missionDigest) &&
+      (missionOperator == null ||
+          missionOperator.isEmpty ||
+          deployment.operatorId == missionOperator);
+}
+
+bool _missionDeploymentRequiresResolution(MissionDeployment deployment) {
+  if (deployment.status == 'outcome_unknown') return true;
+  if (deployment.status != 'pending' &&
+      deployment.status != 'temporary_error') {
+    return false;
+  }
+  final expiresAt = deployment.expiresAt;
+  return expiresAt == null || expiresAt.isAfter(DateTime.now().toUtc());
+}
+
+bool _missionDeploymentContextMatches(
+  MissionDeployment deployment, {
+  required FlightRecord flight,
+  required OperationalIntent intent,
+}) {
+  return deployment.flightId == flight.id &&
+      deployment.aircraftId == flight.aircraftId &&
+      deployment.intentId == intent.id &&
+      deployment.intentVersion == intent.version &&
+      flight.aircraftId == intent.aircraftId &&
+      flight.intentId == intent.id &&
+      flight.intentVersion == intent.version;
+}
+
+bool _missionDeploymentMissionMatches(
+  MissionDeployment deployment,
+  Mission mission,
+) {
+  return deployment.missionId == mission.id &&
+      deployment.missionVersion == mission.version &&
+      deployment.missionDigest == mission.missionDigest;
+}
+
+bool _sameMissionDeploymentIdentity(
+  MissionDeployment previous,
+  MissionDeployment next,
+) {
+  return previous.id == next.id &&
+      previous.commandId == next.commandId &&
+      previous.operatorId == next.operatorId &&
+      previous.flightId == next.flightId &&
+      previous.aircraftId == next.aircraftId &&
+      previous.intentId == next.intentId &&
+      previous.intentVersion == next.intentVersion &&
+      previous.missionId == next.missionId &&
+      previous.missionVersion == next.missionVersion &&
+      previous.missionDigest == next.missionDigest;
+}
+
 class _ReviewPanel extends StatelessWidget {
   const _ReviewPanel({
     required this.aircraftId,
@@ -1375,6 +2772,7 @@ class _ReviewPanel extends StatelessWidget {
     required this.activatedIntent,
     required this.checksClear,
     required this.busy,
+    required this.checksBlocked,
     required this.onRunChecks,
     required this.onAccept,
     required this.onActivate,
@@ -1388,6 +2786,7 @@ class _ReviewPanel extends StatelessWidget {
   final OperationalIntent? activatedIntent;
   final bool checksClear;
   final bool busy;
+  final bool checksBlocked;
   final VoidCallback onRunChecks;
   final VoidCallback onAccept;
   final VoidCallback onActivate;
@@ -1466,7 +2865,7 @@ class _ReviewPanel extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: busy ? null : onRunChecks,
+                onPressed: busy || checksBlocked ? null : onRunChecks,
                 icon: busy
                     ? const SizedBox.square(
                         dimension: 18,
@@ -1495,7 +2894,7 @@ class _ReviewPanel extends StatelessWidget {
                         ? null
                         : onActivate,
                     icon: const Icon(Icons.navigation_outlined),
-                    label: const Text('Activate'),
+                    label: const Text('Activate intent'),
                   ),
                 ),
               ],

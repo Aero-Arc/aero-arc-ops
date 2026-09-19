@@ -1,5 +1,5 @@
-github.com/aero-arc/aero-arc-protos v0.0.0-20260824043625-7fb48058e9d2 h1:yrz5TqNsQTF7CDppSPww9vx+PcCxQ273g7KNC/v/SsU=
-github.com/aero-arc/aero-arc-protos v0.0.0-20260824043625-7fb48058e9d2/go.mod h1:fILW3Dz6auXllS5ABRFTt0FTnNC4Mtw3ukvGrJa7zLo=
+github.com/aero-arc/aero-arc-protos v0.0.0-20260827000821-5dda92b25784 h1:UILCuKSKS7X+df8POX4ayWnicO6fqtUlo4eToSINV0w=
+github.com/aero-arc/aero-arc-protos v0.0.0-20260827000821-5dda92b25784/go.mod h1:fILW3Dz6auXllS5ABRFTt0FTnNC4Mtw3ukvGrJa7zLo=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=

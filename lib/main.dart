@@ -117,12 +117,14 @@ class AppShell extends StatelessWidget {
     this.aircraftMapId,
     this.intentAircraftId,
     this.intentArgs,
+    this.renderMapTiles = true,
   });
 
   final AppSection section;
   final String? aircraftMapId;
   final String? intentAircraftId;
   final IntentWorkflowRouteArguments? intentArgs;
+  final bool renderMapTiles;
 
   @override
   Widget build(BuildContext context) {
@@ -134,6 +136,7 @@ class AppShell extends StatelessWidget {
             aircraftMapId: aircraftMapId,
             intentAircraftId: intentAircraftId,
             intentArgs: intentArgs,
+            renderMapTiles: renderMapTiles,
           );
         }
         return _DesktopShell(
@@ -141,6 +144,7 @@ class AppShell extends StatelessWidget {
           aircraftMapId: aircraftMapId,
           intentAircraftId: intentAircraftId,
           intentArgs: intentArgs,
+          renderMapTiles: renderMapTiles,
         );
       },
     );
@@ -153,12 +157,14 @@ class _DesktopShell extends StatelessWidget {
     this.aircraftMapId,
     this.intentAircraftId,
     this.intentArgs,
+    this.renderMapTiles = true,
   });
 
   final AppSection section;
   final String? aircraftMapId;
   final String? intentAircraftId;
   final IntentWorkflowRouteArguments? intentArgs;
+  final bool renderMapTiles;
 
   @override
   Widget build(BuildContext context) {
@@ -237,6 +243,7 @@ class _DesktopShell extends StatelessWidget {
                     aircraftMapId,
                     intentAircraftId,
                     intentArgs,
+                    renderMapTiles: renderMapTiles,
                   ),
                 ),
               ],
@@ -391,12 +398,14 @@ class _MobileShell extends StatelessWidget {
     this.aircraftMapId,
     this.intentAircraftId,
     this.intentArgs,
+    this.renderMapTiles = true,
   });
 
   final AppSection section;
   final String? aircraftMapId;
   final String? intentAircraftId;
   final IntentWorkflowRouteArguments? intentArgs;
+  final bool renderMapTiles;
 
   @override
   Widget build(BuildContext context) {
@@ -429,7 +438,13 @@ class _MobileShell extends StatelessWidget {
           ),
         ),
       ),
-      body: _sectionPage(section, aircraftMapId, intentAircraftId, intentArgs),
+      body: _sectionPage(
+        section,
+        aircraftMapId,
+        intentAircraftId,
+        intentArgs,
+        renderMapTiles: renderMapTiles,
+      ),
     );
   }
 }
@@ -443,10 +458,14 @@ Widget _sectionPage(
   AppSection section,
   String? aircraftMapId,
   String? intentAircraftId,
-  IntentWorkflowRouteArguments? intentArgs,
-) {
+  IntentWorkflowRouteArguments? intentArgs, {
+  bool renderMapTiles = true,
+}) {
   if (aircraftMapId != null) {
-    return AircraftMapScreen(aircraftId: aircraftMapId);
+    return AircraftMapScreen(
+      aircraftId: aircraftMapId,
+      renderTiles: renderMapTiles,
+    );
   }
   if (intentAircraftId != null) {
     return IntentWorkflowPage(
@@ -454,6 +473,7 @@ Widget _sectionPage(
       initialIntent: intentArgs?.initialIntent,
       initialVolumes: intentArgs?.initialVolumes ?? const [],
       initialVolumeCenter: intentArgs?.initialVolumeCenter,
+      renderTiles: renderMapTiles,
     );
   }
   return switch (section) {

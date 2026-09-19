@@ -109,6 +109,286 @@ void main() {
     expect(view.aircraft.id, 'aircraft-1');
   });
 
+  test('mission import sends exact binding and idempotency key', () async {
+    http.Request? capturedRequest;
+    final client = AeroArcApiClient(
+      baseUri: Uri.parse('http://api.test'),
+      missionControlToken: 'local-dev-token',
+      httpClient: MockClient((request) async {
+        capturedRequest = request;
+        return _missionImportResponse();
+      }),
+    );
+
+    final result = await client.importMission(
+      flightId: 'flight-1',
+      aircraftId: 'aircraft-1',
+      intentId: 'intent-1',
+      intentVersion: 4,
+      source: 'QGC WPL 110\n',
+      idempotencyKey: 'import-1',
+    );
+
+    expect(capturedRequest?.method, 'POST');
+    expect(
+      capturedRequest?.url.path,
+      '/api/v1/flights/flight-1/missions/import',
+    );
+    expect(capturedRequest?.headers['idempotency-key'], 'import-1');
+    expect(capturedRequest?.headers['authorization'], 'Bearer local-dev-token');
+    final body = jsonDecode(capturedRequest!.body) as Map<String, dynamic>;
+    expect(body['source_format'], 'qgc_wpl_110');
+    expect(body['aircraft_id'], 'aircraft-1');
+    expect(body['intent_id'], 'intent-1');
+    expect(body['intent_version'], 4);
+    expect(result.mission.flightId, 'flight-1');
+    expect(result.mission.items.single.latitude, closeTo(35.2, 0.0000001));
+  });
+
+  test(
+    'mission deploy sends bearer and idempotency headers with empty body',
+    () async {
+      http.Request? capturedRequest;
+      final client = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          capturedRequest = request;
+          return http.Response(
+            jsonEncode({
+              'deployment': _missionDeploymentJson(status: 'outcome_unknown'),
+              'replayed': true,
+            }),
+            202,
+            headers: const {'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      final missionPayload =
+          jsonDecode(_missionImportResponse().body) as Map<String, dynamic>;
+      final mission = Mission.fromJson(
+        missionPayload['mission'] as Map<String, dynamic>,
+      );
+      final result = await client.deployMission(
+        mission: mission,
+        idempotencyKey: 'deploy-stable-1',
+      );
+
+      expect(capturedRequest?.method, 'POST');
+      expect(
+        capturedRequest?.url.path,
+        '/api/v1/flights/flight-1/missions/mission-1/deploy',
+      );
+      expect(capturedRequest?.bodyBytes, isEmpty);
+      expect(
+        capturedRequest?.headers['authorization'],
+        'Bearer local-dev-token',
+      );
+      expect(capturedRequest?.headers['idempotency-key'], 'deploy-stable-1');
+      expect(
+        capturedRequest?.headers['if-match'],
+        '"${List.filled(64, 'b').join()}"',
+      );
+      expect(result.replayed, isTrue);
+      expect(result.deployment.status, 'outcome_unknown');
+      expect(result.deployment.intentVersion, 4);
+      expect(result.deployment.attemptCount, 2);
+    },
+  );
+
+  test(
+    'mission deployment status uses bearer and scoped durable path',
+    () async {
+      http.Request? capturedRequest;
+      final client = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          capturedRequest = request;
+          return http.Response(
+            jsonEncode(_missionDeploymentJson(status: 'applied')),
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      final deployment = await client.getMissionDeployment(
+        flightId: 'flight-1',
+        deploymentId: 'deployment-1',
+      );
+
+      expect(capturedRequest?.method, 'GET');
+      expect(
+        capturedRequest?.url.path,
+        '/api/v1/flights/flight-1/mission-deployments/deployment-1',
+      );
+      expect(
+        capturedRequest?.headers['authorization'],
+        'Bearer local-dev-token',
+      );
+      expect(deployment.missionId, 'mission-1');
+      expect(deployment.uploadedItemCount, 1);
+      expect(deployment.onboardMissionDigest, List.filled(64, 'b').join());
+    },
+  );
+
+  test(
+    'current deployment restore and reconcile use durable server identity',
+    () async {
+      final requests = <http.Request>[];
+      final client = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          if (request.url.path.endsWith('/current')) {
+            return http.Response(
+              jsonEncode(_missionDeploymentJson(status: 'outcome_unknown')),
+              200,
+            );
+          }
+          if (request.url.path.endsWith('/reconcile')) {
+            return http.Response(
+              jsonEncode({
+                'deployment': _missionDeploymentJson(status: 'applied'),
+                'replayed': true,
+              }),
+              200,
+            );
+          }
+          return http.Response('missing', 404);
+        }),
+      );
+
+      final restored = await client.getCurrentMissionDeployment('flight-1');
+      final reconciled = await client.reconcileMissionDeployment(
+        flightId: 'flight-1',
+        deploymentId: restored.id,
+      );
+
+      expect(requests.map((request) => request.url.path), [
+        '/api/v1/flights/flight-1/mission-deployments/current',
+        '/api/v1/flights/flight-1/mission-deployments/deployment-1/reconcile',
+      ]);
+      expect(
+        requests,
+        everyElement(
+          predicate<http.Request>((request) {
+            return request.headers['authorization'] == 'Bearer local-dev-token';
+          }),
+        ),
+      );
+      expect(requests.last.method, 'POST');
+      expect(requests.last.bodyBytes, isEmpty);
+      expect(requests.last.headers['idempotency-key'], isNull);
+      expect(reconciled.replayed, isTrue);
+      expect(reconciled.deployment.status, 'applied');
+    },
+  );
+
+  test('API errors retain HTTP status for expected absence handling', () async {
+    final client = AeroArcApiClient(
+      baseUri: Uri.parse('http://api.test'),
+      httpClient: MockClient((_) async => http.Response('missing', 404)),
+    );
+
+    await expectLater(
+      client.getCurrentMission('flight-1'),
+      throwsA(
+        isA<AeroArcApiException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          404,
+        ),
+      ),
+    );
+  });
+
+  test('mission deploy rejects a noncanonical digest before HTTP', () async {
+    var requested = false;
+    final client = AeroArcApiClient(
+      baseUri: Uri.parse('http://api.test'),
+      missionControlToken: 'local-dev-token',
+      httpClient: MockClient((request) async {
+        requested = true;
+        return http.Response('{}', 200);
+      }),
+    );
+    final payload =
+        jsonDecode(_missionImportResponse().body) as Map<String, dynamic>;
+    final missionJson = Map<String, dynamic>.from(
+      payload['mission'] as Map<String, dynamic>,
+    )..['mission_digest'] = List.filled(64, 'B').join();
+
+    await expectLater(
+      client.deployMission(
+        mission: Mission.fromJson(missionJson),
+        idempotencyKey: 'deploy-1',
+      ),
+      throwsA(
+        isA<AeroArcApiException>().having(
+          (error) => error.message,
+          'message',
+          contains('lowercase SHA-256'),
+        ),
+      ),
+    );
+    expect(requested, isFalse);
+  });
+
+  test(
+    'mission control fails locally when development token is missing',
+    () async {
+      var requested = false;
+      final client = AeroArcApiClient(
+        baseUri: Uri.parse('http://api.test'),
+        missionControlToken: '',
+        httpClient: MockClient((request) async {
+          requested = true;
+          return http.Response('{}', 200);
+        }),
+      );
+
+      await expectLater(
+        client.importMission(
+          flightId: 'flight-1',
+          aircraftId: 'aircraft-1',
+          intentId: 'intent-1',
+          intentVersion: 4,
+          source: 'QGC WPL 110\n',
+          idempotencyKey: 'import-1',
+        ),
+        throwsA(
+          isA<AeroArcApiException>().having(
+            (error) => error.message,
+            'message',
+            contains('local development credential'),
+          ),
+        ),
+      );
+      final missionPayload =
+          jsonDecode(_missionImportResponse().body) as Map<String, dynamic>;
+      await expectLater(
+        client.deployMission(
+          mission: Mission.fromJson(
+            missionPayload['mission'] as Map<String, dynamic>,
+          ),
+          idempotencyKey: 'deploy-1',
+        ),
+        throwsA(
+          isA<AeroArcApiException>().having(
+            (error) => error.message,
+            'message',
+            contains('local development credential'),
+          ),
+        ),
+      );
+      expect(requested, isFalse);
+    },
+  );
+
   test('evaluateTelemetry posts a sample and parses conformance', () async {
     http.Request? capturedRequest;
     final client = AeroArcApiClient(
@@ -186,4 +466,70 @@ void main() {
     expect(result.summary.status, 'non_conforming');
     expect(result.events.single.eventCode, 'intent_exit');
   });
+}
+
+http.Response _missionImportResponse() {
+  return http.Response(
+    jsonEncode({
+      'mission': {
+        'id': 'mission-1',
+        'version': 1,
+        'flight_id': 'flight-1',
+        'aircraft_id': 'aircraft-1',
+        'intent_id': 'intent-1',
+        'intent_version': 4,
+        'source_format': 'qgc_wpl_110',
+        'source_sha256': List.filled(64, 'a').join(),
+        'mission_digest': List.filled(64, 'b').join(),
+        'validation_findings': [],
+        'items': [
+          {
+            'sequence': 0,
+            'current': false,
+            'frame': 0,
+            'command': 16,
+            'param1': 0,
+            'param2': 0,
+            'param3': 0,
+            'param4': 0,
+            'latitude_e7': 352000000,
+            'longitude_e7': -972000000,
+            'altitude_m': 120,
+            'autocontinue': true,
+          },
+        ],
+        'created_at': '2026-08-26T12:00:00Z',
+      },
+      'replayed': false,
+    }),
+    201,
+    headers: const {'content-type': 'application/json'},
+  );
+}
+
+Map<String, Object?> _missionDeploymentJson({required String status}) {
+  final digest = List.filled(64, 'b').join();
+  return {
+    'id': 'deployment-1',
+    'operator_id': 'operator-1',
+    'flight_id': 'flight-1',
+    'aircraft_id': 'aircraft-1',
+    'intent_id': 'intent-1',
+    'intent_version': 4,
+    'mission_id': 'mission-1',
+    'mission_version': 1,
+    'mission_digest': digest,
+    'command_id': 'command-1',
+    'status': status,
+    'message': status == 'outcome_unknown' ? 'result wait ended' : null,
+    'uploaded_item_count': status == 'applied' ? 1 : 0,
+    'onboard_mission_digest': status == 'applied' ? digest : null,
+    'mavlink_mission_ack_type': status == 'applied' ? 0 : null,
+    'issued_at': '2026-08-26T12:00:00Z',
+    'expires_at': '2026-08-26T12:05:00Z',
+    'completed_at': status == 'applied' ? '2026-08-26T12:00:05Z' : null,
+    'attempt_count': 2,
+    'created_at': '2026-08-26T12:00:00Z',
+    'updated_at': '2026-08-26T12:00:05Z',
+  };
 }
