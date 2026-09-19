@@ -56,8 +56,8 @@ validate_sitl_stream_rate() {
 
 sitl_vehicle_command() {
   local command
-  printf -v command 'cd %q && exec %q -v ArduCopter --no-rebuild --console --out=udp:127.0.0.1:14550 %q' \
-    "$ARDUPILOT_SOURCE/ArduCopter" "$SIM_VEHICLE" "--mavproxy-args=--streamrate=$SITL_STREAM_RATE_HZ"
+  printf -v command 'cd %q && exec %q -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --console --out=udp:127.0.0.1:14550 %q' \
+    "$ARDUPILOT_SOURCE/ArduCopter" "$SIM_VEHICLE" "$RUN_DIR/sitl" "--mavproxy-args=--streamrate=$SITL_STREAM_RATE_HZ"
   printf '%s\n' "$command"
 }
 

@@ -16,7 +16,7 @@ validate_sitl_stream_rate
 SITL_STREAM_RATE_HZ=7
 ARDUPILOT_SOURCE='/tmp/ardupilot source'
 SIM_VEHICLE='/tmp/sim vehicle.py'
-expected_command='cd /tmp/ardupilot\ source/ArduCopter && exec /tmp/sim\ vehicle.py -v ArduCopter --no-rebuild --console --out=udp:127.0.0.1:14550 --mavproxy-args=--streamrate=7'
+printf -v expected_command 'cd /tmp/ardupilot\\ source/ArduCopter && exec /tmp/sim\\ vehicle.py -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --console --out=udp:127.0.0.1:14550 --mavproxy-args=--streamrate=7' "$RUN_DIR/sitl"
 [[ "$(sitl_vehicle_command)" == "$expected_command" ]]
 for invalid_rate in 0 4.5 51 '4; touch /tmp/unsafe'; do
   SITL_STREAM_RATE_HZ=$invalid_rate

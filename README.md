@@ -188,6 +188,11 @@ make sitl-up
 make sitl-status
 ```
 
+The simulator keeps its parameters and logs under the observer runtime directory,
+so existing files in the ArduPilot checkout do not affect a fresh demo. MAVProxy
+uses one explicit Agent output; automatic simulator outputs are disabled to
+avoid duplicate UDP connections to the same Agent.
+
 Open `http://localhost:7357`. `sitl-up` activates a ten-minute plan and gives
 Conformance a separate 24-hour monitoring authority. Crossing the planned end
 therefore produces an overdue temporal-deviation state; it does not silently
