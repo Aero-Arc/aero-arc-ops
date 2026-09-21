@@ -78,6 +78,12 @@ void main() {
       await tester.tap(find.text('All generations'));
       await tester.pump();
       expect(calls, 1);
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('AA-07 · intent').last);
+      await tester.pumpAndSettle();
+      expect(calls, 1);
+      expect(find.text('Lateral Deviation · Opened'), findsOneWidget);
       final before = tester.getRect(find.text('Lateral Deviation · Opened'));
       await tester.tap(find.text('Current generation'));
       await tester.pump();
@@ -85,7 +91,10 @@ void main() {
       expect(find.text('Lateral Deviation · Opened'), findsOneWidget);
       expect(tester.getRect(find.text('Lateral Deviation · Opened')), before);
       expect(find.text('Loading recorded history…'), findsNothing);
-      expect(find.textContaining('Previous filter results'), findsOneWidget);
+      expect(
+        find.text('Recorded incident transitions · newest first'),
+        findsOneWidget,
+      );
       pending.complete(
         jsonResponse({
           'events': [event('new', transition: 'resolved')],

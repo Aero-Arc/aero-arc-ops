@@ -142,11 +142,9 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              _retainedScope
-                  ? 'Previous filter results · awaiting selected history'
-                  : 'Recorded incident transitions · newest first',
-              style: const TextStyle(color: Color(0xFF8797AB), fontSize: 12),
+            const Text(
+              'Recorded incident transitions · newest first',
+              style: TextStyle(color: Color(0xFF8797AB), fontSize: 12),
             ),
             const SizedBox(height: 12),
             if (scopes.isNotEmpty)
@@ -169,7 +167,7 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
                     ),
                 ],
                 onChanged: (value) {
-                  if (value != null) {
+                  if (value != null && value != _intent) {
                     setState(() {
                       _intent = value;
                       _reset();
@@ -209,10 +207,14 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
                 ),
                 PopupMenuButton<Duration>(
                   tooltip: 'History time range',
-                  onSelected: (value) => setState(() {
-                    _window = value == Duration.zero ? null : value;
-                    _reset(retainEvents: true);
-                  }),
+                  onSelected: (value) {
+                    final window = value == Duration.zero ? null : value;
+                    if (window == _window) return;
+                    setState(() {
+                      _window = window;
+                      _reset(retainEvents: true);
+                    });
+                  },
                   itemBuilder: (_) => const [
                     PopupMenuItem(
                       value: Duration.zero,
@@ -260,7 +262,9 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      _loaded
+                      _retainedScope
+                          ? 'Selected history could not be loaded. Events below use the previous filter.'
+                          : _loaded
                           ? 'Previously loaded events remain below. Live monitoring is separate.'
                           : 'Live monitoring may still be current. No history could be loaded.',
                       style: const TextStyle(fontSize: 12),
