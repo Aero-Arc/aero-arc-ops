@@ -10,6 +10,7 @@ import 'package:latlong2/latlong.dart';
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
+import '../widgets/open_street_map_basemap.dart';
 
 class IntentWorkflowRouteArguments {
   const IntentWorkflowRouteArguments({
@@ -1803,12 +1804,7 @@ class _VolumesPanel extends StatelessWidget {
                     onTap: locked ? null : (_, point) => onAddPoint(point),
                   ),
                   children: [
-                    if (renderTiles)
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'aero_arc_web',
-                      ),
+                    if (renderTiles) const OpenStreetMapBasemap(),
                     if (volumePolygon.length >= 3)
                       PolygonLayer(
                         polygons: [
@@ -1856,6 +1852,7 @@ class _VolumesPanel extends StatelessWidget {
                           ),
                       ],
                     ),
+                    const OpenStreetMapAttribution(),
                   ],
                 ),
               ),

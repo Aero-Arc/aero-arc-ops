@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/aero_arc_models.dart';
 import 'dashboard_ui.dart';
 import 'conformance_evidence_field.dart';
+import 'operational_selection.dart';
 
 /// Operational summary snapshot, with source identity disclosed on demand.
 class ConformanceSummaryDialog extends StatelessWidget {
@@ -64,13 +65,26 @@ class ConformanceSummaryDialog extends StatelessWidget {
               ),
               const SizedBox(height: 14),
               Text(
-                summary.aircraftId,
+                operationName(context, summary.intentId, summary.aircraftId),
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(height: 12),
+              Text(
+                '${summary.aircraftId} · Intent ${shortOperationalId(summary.intentId)} · v${summary.intentVersion}',
+              ),
+              TextButton.icon(
+                onPressed: () => focusOperation(
+                  context,
+                  summary.aircraftId,
+                  intentId: summary.intentId,
+                  closeDialog: true,
+                ),
+                icon: const Icon(Icons.my_location, size: 16),
+                label: const Text('Focus in Overview'),
+              ),
               Wrap(
                 spacing: 10,
                 runSpacing: 8,

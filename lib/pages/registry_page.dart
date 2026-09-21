@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
+import '../widgets/operational_selection.dart';
 import 'intent_workflow_page.dart';
 
 class RegistryPage extends StatelessWidget {
@@ -18,28 +19,33 @@ class RegistryPage extends StatelessWidget {
           'Live aircraft connectivity, telemetry freshness, assigned intents, and conformance attention.',
       load: load ?? AeroArcApiClient().operations,
       autoRefreshInterval: const Duration(seconds: 1),
-      builder: (context, data) => [
-        MetricGrid(metrics: data.metrics),
-        const SizedBox(height: 18),
-        _LiveAircraftPanel(states: data.liveAircraft),
-        const SizedBox(height: 18),
-        _IntentTable(
-          intents: data.operationalIntents,
-          conformance: data.conformance,
-          liveAircraft: data.liveAircraft,
-        ),
-        const SizedBox(height: 18),
-        TwoColumn(
-          left: _OperationsAttentionPanel(
+      builder: (context, data) {
+        OperationalSelectionScope.maybeOf(
+          context,
+        )?.remember(data.operationalIntents);
+        return [
+          MetricGrid(metrics: data.metrics),
+          const SizedBox(height: 18),
+          _LiveAircraftPanel(states: data.liveAircraft),
+          const SizedBox(height: 18),
+          _IntentTable(
             intents: data.operationalIntents,
             conformance: data.conformance,
+            liveAircraft: data.liveAircraft,
           ),
-          right: _ConformanceLinkPanel(
-            intents: data.operationalIntents,
-            summaries: data.conformance,
+          const SizedBox(height: 18),
+          TwoColumn(
+            left: _OperationsAttentionPanel(
+              intents: data.operationalIntents,
+              conformance: data.conformance,
+            ),
+            right: _ConformanceLinkPanel(
+              intents: data.operationalIntents,
+              summaries: data.conformance,
+            ),
           ),
-        ),
-      ],
+        ];
+      },
     );
   }
 }
@@ -1190,12 +1196,25 @@ void _showIntentDetails(
   OperationalIntent intent,
   ConformanceSummary? conformance,
 ) {
+  OperationalSelectionScope.maybeOf(
+    context,
+  )?.select(intent.aircraftId, intent: intent.id);
   final reasons = _intentAttentionReasons(intent, conformance);
   showDetailsSheet(
     context,
     title: intent.name.isEmpty ? intent.id : intent.name,
     status: StatusBadge(label: _intentPosture(intent, conformance)),
     children: [
+      TextButton.icon(
+        onPressed: () => focusOperation(
+          context,
+          intent.aircraftId,
+          intentId: intent.id,
+          closeDialog: true,
+        ),
+        icon: const Icon(Icons.my_location, size: 16),
+        label: const Text('Focus in Overview'),
+      ),
       detailSection('Operational Posture', [
         DetailLine(
           label: 'Posture',
@@ -1303,6 +1322,9 @@ void _showIntentDetails(
 }
 
 void _openIntentWorkflow(BuildContext context, OperationalIntent intent) {
+  OperationalSelectionScope.maybeOf(
+    context,
+  )?.select(intent.aircraftId, intent: intent.id);
   Navigator.of(context).pushNamed(
     '/aircraft/${intent.aircraftId}/intent/new',
     arguments: IntentWorkflowRouteArguments(initialIntent: intent),
@@ -1310,6 +1332,7 @@ void _openIntentWorkflow(BuildContext context, OperationalIntent intent) {
 }
 
 void _openAircraftMap(BuildContext context, String aircraftId) {
+  OperationalSelectionScope.maybeOf(context)?.select(aircraftId);
   Navigator.of(context).pushNamed('/aircraft/$aircraftId/map');
 }
 

@@ -15,16 +15,16 @@ void main() {
   });
 
   test('statusColor maps critical backend enum values', () {
-    expect(statusColor('ready'), const Color(0xFF00CFA0));
+    expect(statusColor('ready'), const Color(0xFF21C997));
     expect(statusColor('non_conforming'), const Color(0xFFE14A5B));
     expect(statusColor('review'), const Color(0xFFE4A100));
-    expect(statusColor('fresh'), const Color(0xFF00CFA0));
+    expect(statusColor('fresh'), const Color(0xFF21C997));
     expect(statusColor('stale'), const Color(0xFFE4A100));
-    expect(statusColor('unavailable'), const Color(0xFF7F90B6));
-    expect(statusColor('validated'), const Color(0xFF00CFA0));
-    expect(statusColor('not_imported'), const Color(0xFF7F90B6));
+    expect(statusColor('unavailable'), const Color(0xFF8797AB));
+    expect(statusColor('validated'), const Color(0xFF21C997));
+    expect(statusColor('not_imported'), const Color(0xFF8797AB));
     expect(statusColor('binding_mismatch'), const Color(0xFFE14A5B));
-    expect(statusColor('applied'), const Color(0xFF00CFA0));
+    expect(statusColor('applied'), const Color(0xFF21C997));
     expect(statusColor('outcome_unknown'), const Color(0xFFE4A100));
     expect(statusColor('temporary_error'), const Color(0xFFE4A100));
     expect(statusColor('onboard_mission_mismatch'), const Color(0xFFE14A5B));
@@ -75,6 +75,51 @@ void main() {
     expect(find.text('load-2'), findsOneWidget);
   });
 
+  testWidgets('background polling does not rebuild while waiting or overlap', (
+    tester,
+  ) async {
+    final loads = <Completer<String>>[];
+    var builds = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardPage<String>(
+          title: 'Operations',
+          subtitle: 'Live',
+          autoRefreshInterval: const Duration(seconds: 1),
+          load: () {
+            final pending = Completer<String>();
+            loads.add(pending);
+            return pending.future;
+          },
+          builder: (context, data) {
+            builds++;
+            return [Text(data)];
+          },
+        ),
+      ),
+    );
+    loads.single.complete('first');
+    await tester.pump();
+    final initialBuilds = builds;
+    await tester.pump(const Duration(seconds: 1));
+    expect(loads, hasLength(2));
+    expect(builds, initialBuilds);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.pump(const Duration(seconds: 2));
+    expect(loads, hasLength(2));
+    expect(builds, initialBuilds);
+    loads[1].complete('second');
+    await tester.pump();
+    await tester.pump(); // Paint the frame scheduled by background completion.
+    expect(builds, initialBuilds + 1);
+    expect(find.text('second'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpWidget(const SizedBox());
+    loads.last.completeError(StateError('Disposed request failed'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('refresh failure preserves data and later success replaces it', (
     tester,
   ) async {
@@ -103,6 +148,7 @@ void main() {
     expect(loads, hasLength(2));
     loads[1].completeError(Exception('temporary registry outage'));
     await tester.pump();
+    await tester.pump(); // Background requests no longer pre-schedule a frame.
 
     expect(find.text('current operations'), findsOneWidget);
     expect(find.text('Refresh failed'), findsOneWidget);

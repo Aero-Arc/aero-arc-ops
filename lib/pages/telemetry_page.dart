@@ -5,6 +5,7 @@ import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
 import '../widgets/conformance_history_panel.dart';
 import '../widgets/conformance_summary_dialog.dart';
+import '../widgets/operational_selection.dart';
 
 class TelemetryPage extends StatefulWidget {
   const TelemetryPage({
@@ -26,6 +27,7 @@ class _TelemetryPageState extends State<TelemetryPage> {
   late final AeroArcApiClient _apiClient;
   ConformanceEvaluation? _latestEvaluation;
   var _refreshTrigger = 0;
+  Future<void>? _identityLoad;
 
   @override
   void initState() {
@@ -49,13 +51,30 @@ class _TelemetryPageState extends State<TelemetryPage> {
     });
   }
 
+  Future<ConformanceDashboard> _loadDashboard() async {
+    _identityLoad ??= _apiClient
+        .operations()
+        .then((data) {
+          if (mounted) {
+            OperationalSelectionScope.maybeOf(
+              context,
+            )?.remember(data.operationalIntents);
+            setState(() {});
+          }
+        })
+        .catchError(
+          (Object _) {},
+        ); // Identity enrichment must not hide evidence.
+    return _apiClient.conformance();
+  }
+
   @override
   Widget build(BuildContext context) {
     return DashboardPage<ConformanceDashboard>(
       title: 'Conformance',
       subtitle:
           'Live assignment condition, monitoring freshness, recording durability, and deviation history.',
-      load: _apiClient.conformance,
+      load: _loadDashboard,
       autoRefreshInterval: const Duration(seconds: 3),
       refreshTrigger: _refreshTrigger,
       headerActions: [
@@ -688,13 +707,24 @@ class _SummaryPanel extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                summary.intentId,
+                                operationName(
+                                  context,
+                                  summary.intentId,
+                                  summary.aircraftId,
+                                ),
                                 style: const TextStyle(
                                   color: Color(0xFFD6E0FF),
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
                               const SizedBox(height: 4),
+                              Text(
+                                'Intent ${shortOperationalId(summary.intentId)} · v${summary.intentVersion}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFF8797AB),
+                                ),
+                              ),
                               Text(
                                 summary.isLiveProjection
                                     ? '${summary.aircraftId} · ${displayEnum(summary.monitoringStatus ?? 'unknown')} monitoring · ${displayEnum(summary.recordingStatus ?? 'unknown')} recording\nObserved ${_conformanceAge(summary.observedAt ?? summary.updatedAt)} · ${summary.activeViolationCount} active findings'
@@ -838,10 +868,21 @@ class _ConformanceTable extends StatelessWidget {
             rows: [
               for (final summary in summaries)
                 DataRow(
+                  selected:
+                      OperationalSelectionScope.maybeOf(context)?.intentId ==
+                      summary.intentId,
                   onSelectChanged: (_) =>
                       _showConformanceSummaryDetails(context, summary),
                   cells: [
-                    DataCell(Text(summary.intentId)),
+                    DataCell(
+                      Text(
+                        operationName(
+                          context,
+                          summary.intentId,
+                          summary.aircraftId,
+                        ),
+                      ),
+                    ),
                     DataCell(Text(summary.aircraftId)),
                     DataCell(StatusBadge(label: _summaryCondition(summary))),
                     DataCell(
@@ -882,6 +923,9 @@ void _showConformanceSummaryDetails(
   BuildContext context,
   ConformanceSummary summary,
 ) {
+  OperationalSelectionScope.maybeOf(
+    context,
+  )?.select(summary.aircraftId, intent: summary.intentId);
   showDialog<void>(
     context: context,
     barrierColor: Colors.black54,
