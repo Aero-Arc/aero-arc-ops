@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
+import '../widgets/conformance_history_panel.dart';
 
 class TelemetryPage extends StatefulWidget {
   const TelemetryPage({
@@ -97,13 +98,18 @@ class _TelemetryPageState extends State<TelemetryPage> {
               _ScoringNotice(metric: scoringNotice),
               const SizedBox(height: 12),
             ],
-            if (primaryMetrics.isNotEmpty) ...[
-              MetricGrid(metrics: primaryMetrics),
+            if (primaryMetrics.isNotEmpty || summaries.isNotEmpty) ...[
+              _ConformanceStatusStrip(summaries: summaries),
               const SizedBox(height: 18),
             ],
             TwoColumn(
               left: _SummaryPanel(summaries: summaries),
-              right: _EventTimeline(events: events),
+              right: summaries.any((s) => s.isLiveProjection)
+                  ? ConformanceHistoryPanel(
+                      api: _apiClient,
+                      summaries: summaries,
+                    )
+                  : _EventTimeline(events: events),
             ),
             if (summaries.isNotEmpty) ...[
               const SizedBox(height: 18),
@@ -114,6 +120,65 @@ class _TelemetryPageState extends State<TelemetryPage> {
       },
     );
   }
+}
+
+class _ConformanceStatusStrip extends StatelessWidget {
+  const _ConformanceStatusStrip({required this.summaries});
+  final List<ConformanceSummary> summaries;
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 24,
+    runSpacing: 14,
+    children: [
+      for (final item in [
+        ('Monitored operations', summaries.length, const Color(0xFF16C8E0)),
+        (
+          'Conforming',
+          summaries.where((s) => _summaryCondition(s) == 'conforming').length,
+          const Color(0xFF21C997),
+        ),
+        (
+          'Needs attention',
+          summaries
+              .where(
+                (s) => [
+                  'non_conforming',
+                  'suspected',
+                  'recovering',
+                ].contains(_summaryCondition(s)),
+              )
+              .length,
+          const Color(0xFFE4A100),
+        ),
+        (
+          'Monitoring unavailable',
+          summaries
+              .where(
+                (s) => s.isLiveProjection && s.monitoringStatus != 'current',
+              )
+              .length,
+          const Color(0xFF8797AB),
+        ),
+      ])
+        SizedBox(
+          width: 170,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                item.$1,
+                style: const TextStyle(fontSize: 11, color: Color(0xFF8797AB)),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                '${item.$2}',
+                style: TextStyle(fontSize: 21, color: item.$3),
+              ),
+            ],
+          ),
+        ),
+    ],
+  );
 }
 
 class _ScoringNotice extends StatelessWidget {
@@ -718,7 +783,7 @@ class _EventTimeline extends StatelessWidget {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'Deviation ${formatMeters(event.deviationMeters)} / ${event.deviationSeconds?.toStringAsFixed(1) ?? '0'} sec',
+                                'Deviation ${formatMeters(event.deviationMeters)} / ${event.deviationSeconds?.toStringAsFixed(1) ?? 'not recorded'} sec',
                                 style: const TextStyle(
                                   color: Color(0xFF93A3C7),
                                   fontSize: 13,
@@ -764,6 +829,9 @@ class _ConformanceTable extends StatelessWidget {
               DataColumn(label: Text('Monitoring')),
               DataColumn(label: Text('Recording')),
               DataColumn(label: Text('Findings')),
+              DataColumn(label: Text('Lateral')),
+              DataColumn(label: Text('Vertical')),
+              DataColumn(label: Text('Temporal')),
               DataColumn(label: Text('Observed')),
             ],
             rows: [
@@ -790,6 +858,12 @@ class _ConformanceTable extends StatelessWidget {
                         '${summary.isLiveProjection ? summary.activeViolationCount : summary.alertCount}',
                       ),
                     ),
+                    for (final axis in [
+                      'lateral_deviation',
+                      'altitude_deviation',
+                      'temporal_deviation',
+                    ])
+                      DataCell(Text(_axisLabel(summary, axis))),
                     DataCell(
                       Text(formatDate(summary.observedAt ?? summary.updatedAt)),
                     ),
@@ -841,7 +915,7 @@ void _showConformanceSummaryDetails(
             DetailLine(
               label: displayEnum(violation.type),
               value:
-                  '${displayEnum(violation.phase)} · worst ${formatMeters(violation.worstDeviationM)} · last ${formatDate(violation.lastObservedAt)}',
+                  '${_axisLabel(summary, violation.type)} · last ${formatDate(violation.lastObservedAt)}',
             ),
         ]),
       if (summary.isLiveProjection)
@@ -907,6 +981,21 @@ void _showConformanceSummaryDetails(
 String _summaryCondition(ConformanceSummary summary) {
   final condition = summary.condition;
   return condition == null || condition.isEmpty ? summary.status : condition;
+}
+
+String _axisLabel(ConformanceSummary summary, String type) {
+  final violation = summary.violationFor(type);
+  if (violation == null || summary.monitoringStatus != 'current') {
+    return 'Not evaluated';
+  }
+  if (type != 'temporal_deviation' && !summary.spatialAxisEvaluated(type)) {
+    return 'Not evaluated';
+  }
+  final distance =
+      type == 'temporal_deviation' || violation.worstDeviationM == null
+      ? ''
+      : ' · worst ${formatMeters(violation.worstDeviationM)}';
+  return '${displayEnum(violation.phase)}$distance';
 }
 
 void _showConformanceEventDetails(

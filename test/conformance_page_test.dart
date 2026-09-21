@@ -162,7 +162,10 @@ void main() {
       expect(find.text('Conforming'), findsWidgets);
       expect(find.text('Current'), findsWidgets);
       expect(find.text('Confirmed'), findsWidgets);
-      expect(find.text('1'), findsOneWidget);
+      expect(
+        find.descendant(of: find.byType(DataTable), matching: find.text('1')),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('intent-live').first);
       await tester.pumpAndSettle();
