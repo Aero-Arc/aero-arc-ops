@@ -4,6 +4,7 @@ import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
 import '../widgets/conformance_history_panel.dart';
+import '../widgets/conformance_summary_dialog.dart';
 
 class TelemetryPage extends StatefulWidget {
   const TelemetryPage({
@@ -881,100 +882,16 @@ void _showConformanceSummaryDetails(
   BuildContext context,
   ConformanceSummary summary,
 ) {
-  showDetailsSheet(
-    context,
-    title: summary.intentId,
-    status: StatusBadge(label: _summaryCondition(summary)),
-    children: [
-      detailSection('Conformance Summary', [
-        DetailLine(label: 'Summary ID', value: summary.id),
-        DetailLine(
-          label: 'Condition',
-          value: displayEnum(_summaryCondition(summary)),
-        ),
-        DetailLine(
-          label: 'Monitoring',
-          value: summary.monitoringStatus == null
-              ? 'Legacy API evaluation'
-              : displayEnum(summary.monitoringStatus!),
-        ),
-        DetailLine(
-          label: 'Recording',
-          value: summary.recordingStatus == null
-              ? 'Not reported'
-              : displayEnum(summary.recordingStatus!),
-        ),
-        DetailLine(
-          label: 'Observed',
-          value: formatDate(summary.observedAt ?? summary.updatedAt),
-        ),
-      ]),
-      if (summary.activeViolations.isNotEmpty)
-        detailSection('Active Findings', [
-          for (final violation in summary.activeViolations)
-            DetailLine(
-              label: displayEnum(violation.type),
-              value:
-                  '${_axisLabel(summary, violation.type)} · last ${formatDate(violation.lastObservedAt)}',
-            ),
-        ]),
-      if (summary.isLiveProjection)
-        detailSection('Evaluation Identity', [
-          DetailLine(
-            label: 'Assignment',
-            value: summary.assignmentId ?? 'Not provided',
-          ),
-          DetailLine(
-            label: 'Generation',
-            value: '${summary.assignmentGeneration ?? 0}',
-          ),
-          DetailLine(
-            label: 'Evaluation revision',
-            value: '${summary.evaluationRevision ?? 0}',
-          ),
-          DetailLine(
-            label: 'Evaluation ID',
-            value: summary.evaluationId ?? 'Not provided',
-          ),
-          DetailLine(
-            label: 'Frame ID',
-            value: summary.frameId ?? 'Not provided',
-          ),
-        ]),
-      if (!summary.isLiveProjection)
-        detailSection('Legacy Evaluation', [
-          DetailLine(label: 'Score', value: formatPercent(summary.score)),
-          DetailLine(label: 'Alert count', value: '${summary.alertCount}'),
-          DetailLine(
-            label: 'Reportability',
-            value: displayEnum(summary.reportabilityStatus),
-          ),
-        ]),
-      if (summary.isLiveProjection && summary.violations.isNotEmpty)
-        detailSection('Evaluated Axes', [
-          for (final violation in summary.violations)
-            DetailLine(
-              label: displayEnum(violation.type),
-              value: displayEnum(violation.phase),
-            ),
-        ]),
-      detailSection('Links', [
-        DetailLine(
-          label: 'Intent',
-          value: '${summary.intentId} v${summary.intentVersion}',
-        ),
-        DetailLine(label: 'Flight', value: summary.flightId ?? 'Not linked'),
-        DetailLine(label: 'Aircraft', value: summary.aircraftId),
-      ]),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: FilledButton.tonalIcon(
-          onPressed: () => _openAircraftMap(context, summary.aircraftId),
-          icon: const Icon(Icons.map_outlined),
-          label: const Text('View aircraft map'),
-        ),
-      ),
-    ],
+  showDialog<void>(
+    context: context,
+    barrierColor: Colors.black54,
+    builder: (_) => ConformanceSummaryDialog(
+      summary: summary,
+      condition: _summaryCondition(summary),
+      axes: {
+        for (final v in summary.violations) v.type: _axisLabel(summary, v.type),
+      },
+    ),
   );
 }
 

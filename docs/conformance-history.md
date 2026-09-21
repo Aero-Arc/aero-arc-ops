@@ -20,7 +20,14 @@ the demo runtime and data. Existing deployments need an intentional service roll
 - A service error is **History unavailable**, never a healthy/empty timeline.
   Previously loaded records remain visible after a transient failure.
 - Spatial zero is a measured zero; absent distances are not fabricated. Temporal
-  deviation seconds are not currently supplied by the durable contract.
+  cards use optional planned start/end bounds from the event's immutable assignment
+  generation, not the current intent. They show time before planned start or past
+  planned end at observation time. These outer bounds can contain gaps: an event
+  between them is not labeled overdue. Missing bounds remain explicitly unknown.
+  Planned completion is not actual landing/completion; resolved events retain their
+  observation-time context rather than starting a live overdue counter.
+- Summary and event cards are centered. Evidence uses aligned, selectable values
+  and full-value copy buttons; identifiers are never shortened in copied data.
 
 Legacy API sample-evaluation events remain visible for legacy-only summaries.
 The workspace does not change flight commands, conformance thresholds, or the

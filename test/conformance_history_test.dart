@@ -58,6 +58,75 @@ Widget app(AeroArcApiClient client) => MaterialApp(
 );
 
 void main() {
+  test(
+    'temporal labels use historical plan bounds, never spatial distance',
+    () {
+      ConformanceHistoryEvent temporal(
+        String observed, {
+        String? start,
+        String? end,
+      }) => ConformanceHistoryEvent.fromJson({
+        ...event('temporal', deviation: 99),
+        'violation_type': 'temporal_deviation',
+        'observed_at': observed,
+        'planned_start_at': start,
+        'planned_end_at': end,
+      });
+      expect(
+        temporal(
+          '2026-09-21T01:03:05Z',
+          end: '2026-09-21T01:00:00Z',
+        ).measurementLabel,
+        '3m 5s past planned end',
+      );
+      expect(
+        temporal(
+          '2026-09-21T00:59:30Z',
+          start: '2026-09-21T01:00:00Z',
+        ).measurementLabel,
+        '30 sec before planned start',
+      );
+      expect(
+        temporal(
+          '2026-09-21T01:00:00Z',
+          end: '2026-09-21T01:00:00Z',
+        ).measurementLabel,
+        '<1 sec past planned end',
+      );
+      expect(
+        temporal('2026-09-21T01:00:00Z').measurementLabel,
+        'Timing details unavailable',
+      );
+      expect(
+        temporal(
+          '2026-09-21T01:00:00Z',
+          start: '2026-09-21T00:00:00Z',
+          end: '2026-09-21T02:00:00Z',
+        ).measurementLabel,
+        'Outside a scheduled time window',
+      );
+    },
+  );
+
+  testWidgets('temporal card shows planned completion and never distance', (
+    tester,
+  ) async {
+    final temporal = ConformanceHistoryEvent.fromJson({
+      ...event('time'),
+      'violation_type': 'temporal_deviation',
+      'planned_end_at': '2026-09-21T01:00:00Z',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: ConformanceEventDialog(event: temporal)),
+      ),
+    );
+    expect(find.text('2m 3s past planned end'), findsOneWidget);
+    expect(find.textContaining('Planned completion by'), findsOneWidget);
+    expect(find.text('Distance not recorded'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('event dialog fits narrow screens and preserves evidence', (
     tester,
   ) async {

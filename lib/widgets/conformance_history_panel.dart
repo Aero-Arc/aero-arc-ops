@@ -328,7 +328,7 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
                           style: const TextStyle(fontSize: 13),
                         ),
                         subtitle: Text(
-                          '${_utc(e.observedAt)} · generation ${e.generation}\n${e.deviationM == null ? 'Distance not recorded' : '${e.deviationM!.toStringAsFixed(1)} m at transition'}',
+                          '${_utc(e.observedAt)} · generation ${e.generation}\n${e.measurementLabel}${e.isTemporal || e.deviationM == null ? '' : ' at transition'}',
                           style: const TextStyle(
                             fontSize: 11,
                             color: Color(0xFF8797AB),

@@ -17,12 +17,36 @@ class ConformanceHistoryEvent {
     required this.frameId,
     required this.revision,
     this.deviationM,
+    this.plannedStartAt,
+    this.plannedEndAt,
   });
   final String id, assignmentId, intentId, aircraftId, flightId, incidentId;
   final String transition, violationType, frameId;
   final int generation, intentVersion, revision;
   final DateTime observedAt;
   final double? deviationM;
+  final DateTime? plannedStartAt, plannedEndAt;
+
+  bool get isTemporal => violationType == 'temporal_deviation';
+  String get measurementLabel {
+    if (!isTemporal) {
+      return deviationM == null
+          ? 'Distance not recorded'
+          : '${deviationM!.toStringAsFixed(1)} m';
+    }
+    final end = plannedEndAt;
+    final start = plannedStartAt;
+    if (end != null && !observedAt.isBefore(end)) {
+      return '${_elapsed(observedAt.difference(end))} past planned end';
+    }
+    if (start != null && observedAt.isBefore(start)) {
+      return '${_elapsed(start.difference(observedAt))} before planned start';
+    }
+    return start == null || end == null
+        ? 'Timing details unavailable'
+        : 'Outside a scheduled time window';
+  }
+
   factory ConformanceHistoryEvent.fromJson(Map<String, dynamic> json) =>
       ConformanceHistoryEvent(
         id: json['id'] as String,
@@ -39,7 +63,17 @@ class ConformanceHistoryEvent {
         frameId: json['frame_id'] as String,
         revision: (json['evaluation_revision'] as num).toInt(),
         deviationM: asNullableDouble(json['deviation_m']),
+        plannedStartAt: asDate(json['planned_start_at']),
+        plannedEndAt: asDate(json['planned_end_at']),
       );
+}
+
+String _elapsed(Duration duration) {
+  final seconds = duration.inSeconds;
+  if (seconds < 1) return '<1 sec';
+  if (seconds < 60) return '$seconds sec';
+  if (seconds < 3600) return '${seconds ~/ 60}m ${seconds % 60}s';
+  return '${seconds ~/ 3600}h ${(seconds % 3600) ~/ 60}m';
 }
 
 class ConformanceHistoryPage {
