@@ -162,18 +162,23 @@ void main() {
       expect(find.text('Conforming'), findsWidgets);
       expect(find.text('Current'), findsWidgets);
       expect(find.text('Confirmed'), findsWidgets);
-      expect(find.text('1'), findsOneWidget);
+      expect(
+        find.descendant(of: find.byType(DataTable), matching: find.text('1')),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('intent-live').first);
       await tester.pumpAndSettle();
-      expect(find.text('Active Findings'), findsOneWidget);
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.text('Evaluation at this observation'), findsOneWidget);
       expect(find.text('Lateral Deviation'), findsOneWidget);
       await tester.scrollUntilVisible(
-        find.text('Evaluation Identity'),
+        find.text('Evaluation evidence'),
         180,
         scrollable: find.byType(Scrollable).last,
       );
-      expect(find.text('Evaluation Identity'), findsOneWidget);
+      await tester.tap(find.text('Evaluation evidence'));
+      await tester.pumpAndSettle();
       expect(find.text('evaluation-7'), findsOneWidget);
     },
   );

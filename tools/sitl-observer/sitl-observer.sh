@@ -537,6 +537,8 @@ up() {
   wait_port Relay 50050
   start_process conformance "$RUN_DIR/bin/conformance" --config-path "$RUN_DIR/config/conformance.yaml"
   wait_port Conformance 50052
+  # shellcheck source=history-environment.sh
+  source "$SCRIPT_DIR/history-environment.sh"
   start_process api env AERO_API_ADDR=127.0.0.1:8080 AERO_API_DURABLE_STORE=postgres AERO_API_DATABASE_URL="postgres://aero_arc:aero_arc@127.0.0.1:$CONFORMANCE_DB_PORT/aero_arc?sslmode=disable" AERO_API_AIRSPACE_PROVIDERS=local AERO_API_TELEMETRY_STORE=influxdb AERO_API_REPLAY_STORE=memory AERO_API_INFLUXDB_HOST="http://127.0.0.1:$INFLUX_PORT" AERO_API_INFLUXDB_TOKEN=local-development-no-auth AERO_API_INFLUXDB_DATABASE=aero_arc AERO_API_REGISTRY_MODE=grpc AERO_API_REGISTRY_ADDR=127.0.0.1:50051 AERO_API_RELAY_CONTROL_CA_FILE="$RUN_DIR/tls/ca.crt" AERO_API_RELAY_CONTROL_CERT_FILE="$RUN_DIR/tls/bootstrap.crt" AERO_API_RELAY_CONTROL_KEY_FILE="$RUN_DIR/tls/bootstrap.key" AERO_API_RELAY_CONTROL_SERVER_NAME=localhost AERO_API_MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" AERO_API_SEED= "$RUN_DIR/bin/api" start
   wait_http API "$API_URL/readyz"
   start_process agent env AERO_ARC_API_KEY="$AGENT_TOKEN" "$RUN_DIR/bin/agent" --server-address 127.0.0.1 --server-port 50050 --skip-tls-verification --debug --wal-path "$RUN_DIR/agent-wal.db" --wal-flush-timeout 250ms --aircraft-command-timeout 10s

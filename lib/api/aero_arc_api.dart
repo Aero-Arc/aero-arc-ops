@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/aero_arc_models.dart';
+import '../models/conformance_history.dart';
 
 class AeroArcApiException implements Exception {
   const AeroArcApiException(this.message, {this.statusCode});
@@ -53,6 +54,24 @@ class AeroArcApiClient {
       _get('/api/v1/preflight', PreflightDashboard.fromJson);
   Future<ConformanceDashboard> conformance() =>
       _get('/api/v1/conformance', ConformanceDashboard.fromJson);
+  Future<ConformanceHistoryPage> conformanceHistory(
+    String intentId, {
+    int generation = 0,
+    DateTime? from,
+    DateTime? until,
+    int pageSize = 50,
+    String? pageToken,
+  }) => _get(
+    '/api/v1/operational-intents/${Uri.encodeComponent(intentId)}/conformance/events',
+    ConformanceHistoryPage.fromJson,
+    queryParameters: {
+      'generation': '$generation',
+      'page_size': '$pageSize',
+      if (from != null) 'from': from.toUtc().toIso8601String(),
+      if (until != null) 'until': until.toUtc().toIso8601String(),
+      if (pageToken != null && pageToken.isNotEmpty) 'page_token': pageToken,
+    },
+  );
   Future<ConformanceEvaluation> evaluateTelemetry(TelemetrySample sample) =>
       _post(
         '/api/v1/telemetry',
