@@ -9,6 +9,7 @@ import 'pages/nodes_page.dart';
 import 'pages/overview_page.dart';
 import 'pages/readiness_page.dart';
 import 'widgets/operations_header.dart';
+import 'widgets/operational_selection.dart';
 import 'pages/registry_page.dart';
 import 'pages/telemetry_page.dart';
 
@@ -23,55 +24,57 @@ class AeroArcApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const bg = Color(0xFF0B1016);
 
-    return MaterialApp(
-      title: 'Aero Arc',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: bg,
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF16C8E0),
-          secondary: Color(0xFF21C997),
-          primaryContainer: Color(0xFF0D303A),
-          onPrimaryContainer: Color(0xFF50D9E9),
-          secondaryContainer: Color(0xFF0D303A),
-          onSecondaryContainer: Color(0xFF50D9E9),
-          surface: Color(0xFF101720),
-          surfaceContainerLowest: Color(0xFF0B1016),
-          surfaceContainerLow: Color(0xFF121B25),
-          outline: Color(0xFF263342),
-          outlineVariant: Color(0xFF202C39),
-        ),
-        textTheme: const TextTheme(
-          headlineMedium: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.w700,
-            height: 1.1,
+    return OperationalSelectionHost(
+      child: MaterialApp(
+        title: 'Aero Arc',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: bg,
+          colorScheme: const ColorScheme.dark(
+            primary: Color(0xFF16C8E0),
+            secondary: Color(0xFF21C997),
+            primaryContainer: Color(0xFF0D303A),
+            onPrimaryContainer: Color(0xFF50D9E9),
+            secondaryContainer: Color(0xFF0D303A),
+            onSecondaryContainer: Color(0xFF50D9E9),
+            surface: Color(0xFF101720),
+            surfaceContainerLowest: Color(0xFF0B1016),
+            surfaceContainerLow: Color(0xFF121B25),
+            outline: Color(0xFF263342),
+            outlineVariant: Color(0xFF202C39),
           ),
-          titleLarge: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-          titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-          bodyLarge: TextStyle(fontSize: 14, color: Color(0xFFA3AFBE)),
-          bodyMedium: TextStyle(fontSize: 13, color: Color(0xFFA3AFBE)),
-          labelLarge: TextStyle(fontSize: 13, color: Color(0xFF8797AB)),
+          textTheme: const TextTheme(
+            headlineMedium: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              height: 1.1,
+            ),
+            titleLarge: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            bodyLarge: TextStyle(fontSize: 14, color: Color(0xFFA3AFBE)),
+            bodyMedium: TextStyle(fontSize: 13, color: Color(0xFFA3AFBE)),
+            labelLarge: TextStyle(fontSize: 13, color: Color(0xFF8797AB)),
+          ),
         ),
+        initialRoute: AppSection.overview.route,
+        onGenerateRoute: (settings) {
+          final route = _resolveRoute(settings.name);
+          final intentArgs = settings.arguments is IntentWorkflowRouteArguments
+              ? settings.arguments as IntentWorkflowRouteArguments
+              : null;
+          return _NoTransitionPageRoute(
+            settings: RouteSettings(name: route.name),
+            child: AppShell(
+              section: route.section,
+              aircraftMapId: route.aircraftMapId,
+              intentAircraftId: route.intentAircraftId,
+              intentArgs: intentArgs,
+            ),
+          );
+        },
       ),
-      initialRoute: AppSection.overview.route,
-      onGenerateRoute: (settings) {
-        final route = _resolveRoute(settings.name);
-        final intentArgs = settings.arguments is IntentWorkflowRouteArguments
-            ? settings.arguments as IntentWorkflowRouteArguments
-            : null;
-        return _NoTransitionPageRoute(
-          settings: RouteSettings(name: route.name),
-          child: AppShell(
-            section: route.section,
-            aircraftMapId: route.aircraftMapId,
-            intentAircraftId: route.intentAircraftId,
-            intentArgs: intentArgs,
-          ),
-        );
-      },
     );
   }
 }

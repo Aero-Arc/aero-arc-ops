@@ -241,7 +241,7 @@ void main() {
       expect(calls, 1);
       await tester.tap(find.byType(DropdownButtonFormField<String>));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('AA-07 · intent').last);
+      await tester.tap(find.text('AA-07 operation · intent').last);
       await tester.pumpAndSettle();
       expect(calls, 1);
       expect(find.text('Lateral Deviation · Opened'), findsOneWidget);

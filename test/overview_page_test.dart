@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:aero_arc_web/models/aero_arc_models.dart';
 import 'package:aero_arc_web/pages/overview_page.dart';
+import 'package:aero_arc_web/widgets/selected_operation_inspector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -18,6 +19,7 @@ OperationsDashboard fixture() => OperationsDashboard.fromJson({
   'operational_intents': [
     {
       'id': 'intent-1',
+      'version': 1,
       'aircraft_id': 'aircraft-1',
       'name': 'Bayou Inspection 042',
       'status': 'active',
@@ -68,7 +70,9 @@ void main() {
       fail = true;
       await tester.tap(find.text('Bayou Inspection 042').first);
       await tester.pumpAndSettle();
-      expect(find.textContaining('Mission layers unavailable'), findsOneWidget);
+      expect(find.textContaining('Mission layers unavailable'), findsWidgets);
+      await revealBattery(tester);
+      await tester.pumpAndSettle();
       expect(find.text('76.0 %'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
@@ -97,6 +101,8 @@ void main() {
       await tester.tap(mission);
       await tester.pumpAndSettle();
       expect(find.byTooltip('Close inspector'), findsOneWidget);
+      await revealBattery(tester);
+      await tester.pumpAndSettle();
       expect(find.text('76.0 %'), findsOneWidget);
       expect(find.textContaining('Stale ·'), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -158,4 +164,18 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
+}
+
+Future<void> revealBattery(WidgetTester tester) async {
+  final inspector = find.byType(SelectedOperationInspector);
+  final list = find.descendant(of: inspector, matching: find.byType(ListView));
+  await tester.ensureVisible(list);
+  await tester.scrollUntilVisible(
+    find.text('76.0 %'),
+    120,
+    scrollable: find.descendant(
+      of: inspector,
+      matching: find.byType(Scrollable),
+    ),
+  );
 }

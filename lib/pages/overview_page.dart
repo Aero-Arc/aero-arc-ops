@@ -9,6 +9,8 @@ import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
 import '../widgets/open_street_map_basemap.dart';
 import '../widgets/animated_aircraft_position.dart';
+import '../widgets/operational_selection.dart';
+import '../widgets/selected_operation_inspector.dart';
 import 'aircraft_map_screen.dart'
     show missionPath, volumePolygons, projectedPositionTrack, replayPath;
 
@@ -33,7 +35,19 @@ class OverviewPage extends StatefulWidget {
 
 class _OverviewPageState extends State<OverviewPage> {
   final _map = MapController();
-  String? _selected;
+  String? _localSelected, _localIntent;
+  String? _requestedAircraft, _requestedIntent;
+  int? _requestedIntentVersion;
+  String? get _selected {
+    final shared = OperationalSelectionScope.maybeOf(context);
+    return shared == null ? _localSelected : shared.aircraftId;
+  }
+
+  String? get _selectedIntent {
+    final shared = OperationalSelectionScope.maybeOf(context);
+    return shared == null ? _localIntent : shared.intentId;
+  }
+
   String _filter = 'All';
   bool _aircraftLayer = true;
   bool _missionLayer = true;
@@ -50,13 +64,53 @@ class _OverviewPageState extends State<OverviewPage> {
 
   void _open(String route) => Navigator.of(context).pushNamed(route);
 
-  void _select(String id, OperationsDashboard data) {
+  OperationalIntent? _intentFor(
+    OperationsDashboard data,
+    String id, [
+    String? intentId,
+  ]) {
+    final candidates = data.operationalIntents
+        .where((i) => i.aircraftId == id)
+        .toList();
+    if (intentId != null) {
+      return candidates.where((i) => i.id == intentId).firstOrNull;
+    }
+    final active = candidates
+        .where(
+          (i) => const {
+            'active',
+            'activated',
+            'contingent',
+            'non_conforming',
+          }.contains(i.status),
+        )
+        .toList();
+    if (active.length == 1) return active.single;
+    return candidates.length == 1 ? candidates.single : null;
+  }
+
+  void _select(String id, OperationsDashboard data, {String? intentId}) {
+    final intent = _intentFor(data, id, intentId);
+    final focusedIntentId = intentId ?? intent?.id;
+    if (_requestedAircraft == id &&
+        _requestedIntent == focusedIntentId &&
+        _requestedIntentVersion == intent?.version &&
+        _mapError == null) {
+      return;
+    }
     final version = ++_selectionVersion;
     setState(() {
-      _selected = id;
+      _localSelected = id;
+      _localIntent = focusedIntentId;
+      _requestedAircraft = id;
+      _requestedIntent = focusedIntentId;
+      _requestedIntentVersion = intent?.version;
       _selectedMap = null;
       _mapError = null;
     });
+    OperationalSelectionScope.maybeOf(
+      context,
+    )?.select(id, intent: focusedIntentId);
     final loader =
         widget.loadMap ??
         (widget.load == null
@@ -66,7 +120,17 @@ class _OverviewPageState extends State<OverviewPage> {
       Future.sync(() => loader(id)).then(
         (view) {
           if (mounted && version == _selectionVersion) {
-            setState(() => _selectedMap = view);
+            setState(() {
+              if (intent != null &&
+                  view.aircraft.id == id &&
+                  view.activeIntent?.id == intent.id &&
+                  view.activeIntent?.version == intent.version) {
+                _selectedMap = view;
+              } else {
+                _mapError =
+                    'Mission layers belong to another operation; hidden for this selection';
+              }
+            });
           }
         },
         onError: (Object error) {
@@ -84,24 +148,6 @@ class _OverviewPageState extends State<OverviewPage> {
         .firstOrNull;
     final p = state?.telemetry.position;
     if (p != null) _map.move(LatLng(p.latitudeDeg, p.longitudeDeg), 14);
-    if (state == null) {
-      final intent = data.operationalIntents
-          .where((i) => i.aircraftId == id)
-          .firstOrNull;
-      showDetailsSheet(
-        context,
-        title: intent?.name ?? id,
-        children: [
-          DetailLine(label: 'Aircraft', value: id),
-          DetailLine(label: 'Intent', value: intent?.status ?? 'Unknown'),
-          const DetailLine(label: 'Telemetry', value: 'Unavailable'),
-          OutlinedButton(
-            onPressed: () => _open('/aircraft/$id/map'),
-            child: const Text('Open aircraft workspace'),
-          ),
-        ],
-      );
-    }
   }
 
   @override
@@ -111,6 +157,21 @@ class _OverviewPageState extends State<OverviewPage> {
     load: widget.load ?? AeroArcApiClient().operations,
     autoRefreshInterval: const Duration(seconds: 1),
     builder: (context, data) {
+      OperationalSelectionScope.maybeOf(
+        context,
+      )?.remember(data.operationalIntents);
+      final selectedId = _selected;
+      if (selectedId != null &&
+          (_requestedAircraft != selectedId ||
+              _requestedIntent != _selectedIntent ||
+              _requestedIntentVersion !=
+                  _intentFor(data, selectedId, _selectedIntent)?.version)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _selected == selectedId) {
+            _select(selectedId, data, intentId: _selectedIntent);
+          }
+        });
+      }
       final active = data.operationalIntents
           .where(
             (i) => const {
@@ -252,9 +313,9 @@ class _OverviewPageState extends State<OverviewPage> {
                   map,
                   const SizedBox(height: 16),
                   missions,
-                  if (selected != null) ...[
+                  if (selectedId != null) ...[
                     const SizedBox(height: 16),
-                    _inspector(selected, data),
+                    _focusedInspector(selectedId, selected, data),
                   ],
                 ],
               );
@@ -266,9 +327,52 @@ class _OverviewPageState extends State<OverviewPage> {
                 const SizedBox(width: 16),
                 Expanded(
                   flex: 3,
-                  child: selected == null
+                  child: selectedId == null
                       ? missions
-                      : _inspector(selected, data),
+                      : Column(
+                          children: [
+                            if (active.isNotEmpty) ...[
+                              DropdownButtonFormField<String>(
+                                key: ValueKey(_selectedIntent),
+                                initialValue:
+                                    active.any((i) => i.id == _selectedIntent)
+                                    ? _selectedIntent
+                                    : null,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Selected operation',
+                                  isDense: true,
+                                ),
+                                items: [
+                                  for (final intent in active)
+                                    DropdownMenuItem(
+                                      value: intent.id,
+                                      child: Text(
+                                        intent.name.isEmpty
+                                            ? '${intent.aircraftId} operation'
+                                            : intent.name,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                ],
+                                onChanged: (id) {
+                                  final intent = active
+                                      .where((i) => i.id == id)
+                                      .firstOrNull;
+                                  if (intent != null) {
+                                    _select(
+                                      intent.aircraftId,
+                                      data,
+                                      intentId: intent.id,
+                                    );
+                                  }
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                            ],
+                            _focusedInspector(selectedId, selected, data),
+                          ],
+                        ),
                 ),
               ],
             );
@@ -278,7 +382,7 @@ class _OverviewPageState extends State<OverviewPage> {
         TwoColumn(
           breakpoint: 850,
           left: _timeline(data),
-          right: _alerts(attention),
+          right: _alerts(attention, data),
         ),
         const SizedBox(height: 16),
         _fleet(data),
@@ -681,7 +785,7 @@ class _OverviewPageState extends State<OverviewPage> {
           ),
         ),
         child: SizedBox(
-          height: 460,
+          height: (active.length * 144.0).clamp(110, 460),
           child: active.isEmpty
               ? const Center(
                   child: Text(
@@ -699,7 +803,9 @@ class _OverviewPageState extends State<OverviewPage> {
                         horizontal: 16,
                         vertical: 10,
                       ),
-                      onTap: () => _select(i.aircraftId, data),
+                      selected: _selectedIntent == i.id,
+                      selectedTileColor: const Color(0xFF0D303A),
+                      onTap: () => _select(i.aircraftId, data, intentId: i.id),
                       title: Text(
                         i.name.isEmpty ? i.id : i.name,
                         style: const TextStyle(fontSize: 13),
@@ -731,148 +837,90 @@ class _OverviewPageState extends State<OverviewPage> {
         ),
       );
 
-  Widget _inspector(AircraftLiveState s, OperationsDashboard data) {
-    final t = s.telemetry;
-    final intent = data.operationalIntents
-        .where((i) => i.aircraftId == s.aircraftId)
+  Widget _focusedInspector(
+    String id,
+    AircraftLiveState? state,
+    OperationsDashboard data,
+  ) {
+    final intent = _intentFor(data, id, _selectedIntent);
+    final summary = data.conformance
+        .where(
+          (c) =>
+              c.aircraftId == id &&
+              intent != null &&
+              c.intentId == intent.id &&
+              c.intentVersion == intent.version,
+        )
         .firstOrNull;
-    final c = data.conformance
-        .where((i) => i.aircraftId == s.aircraftId)
-        .firstOrNull;
-    String value(num? n, String unit) =>
-        n == null ? 'Unknown' : '${n.toStringAsFixed(1)} $unit';
-    Widget group(
-      String title,
-      TelemetryGroup? group,
-      List<Widget> values,
-    ) => Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Divider(height: 24),
-        Text(
-          title,
-          style: const TextStyle(color: _cyan, fontSize: 11, letterSpacing: 1),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          '${displayEnum(group?.status ?? 'missing')} · ${formatDate(group?.recordedAt)}',
-          style: const TextStyle(color: _muted, fontSize: 10),
-        ),
-        ...values,
-      ],
-    );
-    return Panel(
-      title: s.aircraftId,
-      trailing: IconButton(
-        tooltip: 'Close inspector',
-        onPressed: () => setState(() {
-          _selected = null;
+    return SelectedOperationInspector(
+      aircraftId: id,
+      intent: intent,
+      state: state,
+      conformance: summary,
+      mapView: _selectedMap,
+      error: _mapError,
+      onClose: () {
+        OperationalSelectionScope.maybeOf(context)?.clear();
+        setState(() {
+          _localSelected = null;
+          _localIntent = null;
+          _requestedAircraft = null;
+          _requestedIntent = null;
           _selectedMap = null;
           _mapError = null;
           _selectionVersion++;
-        }),
-        icon: const Icon(Icons.close, size: 18),
-      ),
-      child: SizedBox(
-        height: 460,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            StatusBadge(label: s.connection.status),
-            const SizedBox(height: 12),
-            Text(
-              intent?.name ?? 'No assigned intent',
-              style: const TextStyle(fontSize: 13),
-            ),
-            group('POSITION', t.position, [
-              DetailLine(
-                label: 'Altitude MSL',
-                value: value(t.position?.altitudeMslM, 'm'),
-              ),
-              DetailLine(
-                label: 'Ground speed',
-                value: value(t.position?.groundspeedMps, 'm/s'),
-              ),
-              DetailLine(
-                label: 'Heading',
-                value: value(t.position?.headingDeg, '°'),
-              ),
-            ]),
-            group('BATTERY', t.battery, [
-              DetailLine(
-                label: 'Remaining',
-                value: value(t.battery?.remainingPct, '%'),
-              ),
-            ]),
-            group('GPS', t.gps, [
-              DetailLine(label: 'Fix', value: t.gps?.fixType ?? 'Unknown'),
-              DetailLine(
-                label: 'Satellites',
-                value: '${t.gps?.satellitesVisible ?? 'Unknown'}',
-              ),
-            ]),
-            group('FLIGHT', t.hud, [
-              DetailLine(
-                label: 'Vertical speed',
-                value: value(t.hud?.climbRateMps, 'm/s'),
-              ),
-            ]),
-            const Divider(),
-            DetailLine(
-              label: 'Agent',
-              value: s.connection.agentId ?? 'Unmapped',
-            ),
-            DetailLine(
-              label: 'Relay placement',
-              value: s.connection.relayId ?? 'Unknown',
-            ),
-            DetailLine(
-              label: 'Conformance',
-              value: c?.condition ?? c?.status ?? 'Unknown',
-            ),
-            DetailLine(
-              label: 'Monitoring',
-              value: c?.monitoringStatus ?? 'Unknown',
-            ),
-            OutlinedButton(
-              onPressed: () => _open('/aircraft/${s.aircraftId}/map'),
-              child: const Text('Open mission & flight controls'),
-            ),
-          ],
-        ),
-      ),
+        });
+      },
     );
   }
 
   Widget _timeline(OperationsDashboard data) {
     final updates =
-        <({DateTime time, String category, String title, String aircraftId})>[
-          for (final i in data.operationalIntents)
-            if (i.updatedAt != null)
-              (
-                time: i.updatedAt!,
-                category: 'Airspace',
-                title:
-                    '${i.name.isEmpty ? i.id : i.name} · ${displayEnum(i.status)}',
-                aircraftId: i.aircraftId,
-              ),
-          for (final c in data.conformance)
-            if (c.observedAt != null || c.updatedAt != null)
-              (
-                time: c.observedAt ?? c.updatedAt!,
-                category: 'Conformance',
-                title:
-                    '${c.aircraftId} · ${displayEnum(c.condition ?? c.status)}',
-                aircraftId: c.aircraftId,
-              ),
-        ]..sort((a, b) => b.time.compareTo(a.time));
-    final visible = updates.where(
-      (u) => _filter == 'All' || u.category == _filter,
-    );
+        <
+            ({
+              DateTime time,
+              String category,
+              String title,
+              String aircraftId,
+              String intentId,
+            })
+          >[
+            for (final i in data.operationalIntents)
+              if (i.updatedAt != null)
+                (
+                  time: i.updatedAt!,
+                  category: 'Airspace',
+                  title:
+                      '${i.name.isEmpty ? i.id : i.name} · ${displayEnum(i.status)}',
+                  aircraftId: i.aircraftId,
+                  intentId: i.id,
+                ),
+            for (final c in data.conformance)
+              if (c.observedAt != null || c.updatedAt != null)
+                (
+                  time: c.observedAt ?? c.updatedAt!,
+                  category: 'Conformance',
+                  title:
+                      '${c.aircraftId} · ${displayEnum(c.condition ?? c.status)}',
+                  aircraftId: c.aircraftId,
+                  intentId: c.intentId,
+                ),
+          ]
+          ..sort((a, b) => b.time.compareTo(a.time));
+    final visible = updates
+        .where(
+          (u) =>
+              (_filter == 'All' || u.category == _filter) &&
+              (_selected == null || u.aircraftId == _selected) &&
+              (_selectedIntent == null || u.intentId == _selectedIntent),
+        )
+        .toList();
     return Panel(
-      title: 'Latest operational updates',
+      title: _selected == null
+          ? 'Latest operational updates'
+          : 'Selected operation updates',
       child: SizedBox(
-        height: 240,
+        height: (70 + visible.length * 66.0).clamp(140, 300),
         child: Column(
           children: [
             SingleChildScrollView(
@@ -925,7 +973,11 @@ class _OverviewPageState extends State<OverviewPage> {
                                 color: _muted,
                               ),
                             ),
-                            onTap: () => _select(u.aircraftId, data),
+                            onTap: () => _select(
+                              u.aircraftId,
+                              data,
+                              intentId: u.intentId,
+                            ),
                           ),
                       ],
                     ),
@@ -936,14 +988,17 @@ class _OverviewPageState extends State<OverviewPage> {
     );
   }
 
-  Widget _alerts(List<ConformanceSummary> attention) => Panel(
-    title: 'Alerts',
+  Widget _alerts(
+    List<ConformanceSummary> attention,
+    OperationsDashboard data,
+  ) => Panel(
+    title: 'Fleet-wide alerts',
     trailing: TextButton(
       onPressed: () => _open('/conformance'),
       child: const Text('Review →'),
     ),
     child: SizedBox(
-      height: 240,
+      height: (attention.length * 78.0).clamp(140, 300),
       child: attention.isEmpty
           ? const Center(
               child: Padding(
@@ -972,7 +1027,9 @@ class _OverviewPageState extends State<OverviewPage> {
                       '${c.alertCount} alerts · Monitoring ${c.monitoringStatus ?? 'unknown'}',
                       style: const TextStyle(color: _muted, fontSize: 11),
                     ),
-                    onTap: () => _open('/conformance'),
+                    selected: _selectedIntent == c.intentId,
+                    onTap: () =>
+                        _select(c.aircraftId, data, intentId: c.intentId),
                   ),
               ],
             ),
@@ -1041,12 +1098,13 @@ class _OverviewPageState extends State<OverviewPage> {
                           DataCell(StatusBadge(label: s.connection.status)),
                           DataCell(
                             Text(
-                              data.operationalIntents
-                                      .where(
-                                        (i) => i.aircraftId == s.aircraftId,
-                                      )
-                                      .firstOrNull
-                                      ?.name ??
+                              _intentFor(
+                                    data,
+                                    s.aircraftId,
+                                    _selected == s.aircraftId
+                                        ? _selectedIntent
+                                        : null,
+                                  )?.name ??
                                   '—',
                               style: const TextStyle(fontSize: 12),
                             ),
