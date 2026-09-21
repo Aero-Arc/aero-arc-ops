@@ -9,6 +9,8 @@ import 'package:latlong2/latlong.dart';
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
+import '../widgets/open_street_map_basemap.dart';
+import '../widgets/animated_aircraft_position.dart';
 import 'intent_workflow_page.dart';
 
 typedef _ConformanceContext = ({
@@ -647,25 +649,6 @@ class _MapPanel extends StatelessWidget {
             icon: Icons.home_rounded,
           ),
         ),
-      if (livePosition != null || view.latestTelemetry != null)
-        Marker(
-          point: livePosition == null
-              ? telemetryPoint(view.latestTelemetry!)
-              : LatLng(livePosition.latitudeDeg, livePosition.longitudeDeg),
-          width: 42,
-          height: 42,
-          child: _MapMarker(
-            color: livePositionAvailable
-                ? const Color(0xFF00CFA0)
-                : const Color(0xFFE4A100),
-            icon: livePositionAvailable
-                ? Icons.navigation
-                : Icons.question_mark_rounded,
-            rotationRadians: livePositionAvailable && heading != null
-                ? heading * math.pi / 180
-                : 0,
-          ),
-        ),
       for (final index in missionMarkerIndexes(commandedRoute.length))
         Marker(
           point: commandedRoute[index],
@@ -701,13 +684,10 @@ class _MapPanel extends StatelessWidget {
           children: [
             _FollowingMap(
               center: center,
+              fresh: livePositionAvailable && liveStateError == null,
+              recordedAt: livePosition?.recordedAt,
               children: [
-                if (renderTiles)
-                  TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'aero_arc_web',
-                  ),
+                if (renderTiles) const OpenStreetMapBasemap(),
                 if (polygons.isNotEmpty)
                   PolygonLayer(
                     polygons: [
@@ -763,6 +743,38 @@ class _MapPanel extends StatelessWidget {
                     ],
                   ),
                 if (markers.isNotEmpty) MarkerLayer(markers: markers),
+                const OpenStreetMapAttribution(),
+                if (livePosition != null || view.latestTelemetry != null)
+                  AnimatedAircraftPosition(
+                    key: ValueKey(view.aircraft.id),
+                    point: livePosition == null
+                        ? telemetryPoint(view.latestTelemetry!)
+                        : LatLng(
+                            livePosition.latitudeDeg,
+                            livePosition.longitudeDeg,
+                          ),
+                    heading: livePositionAvailable ? heading ?? 0 : 0,
+                    recordedAt: livePosition?.recordedAt,
+                    fresh: livePositionAvailable && liveStateError == null,
+                    builder: (context, point, animatedHeading) => MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: point,
+                          width: 42,
+                          height: 42,
+                          child: _MapMarker(
+                            color: livePositionAvailable
+                                ? const Color(0xFF00CFA0)
+                                : const Color(0xFFE4A100),
+                            icon: livePositionAvailable
+                                ? Icons.navigation
+                                : Icons.question_mark_rounded,
+                            rotationRadians: animatedHeading * math.pi / 180,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
             Positioned(
@@ -846,34 +858,78 @@ class _MapMarker extends StatelessWidget {
 }
 
 class _FollowingMap extends StatefulWidget {
-  const _FollowingMap({required this.center, required this.children});
+  const _FollowingMap({
+    required this.center,
+    required this.children,
+    required this.fresh,
+    required this.recordedAt,
+  });
 
   final LatLng center;
   final List<Widget> children;
+  final bool fresh;
+  final DateTime? recordedAt;
 
   @override
   State<_FollowingMap> createState() => _FollowingMapState();
 }
 
-class _FollowingMapState extends State<_FollowingMap> {
+class _FollowingMapState extends State<_FollowingMap>
+    with SingleTickerProviderStateMixin {
   final MapController _controller = MapController();
   bool _following = true;
+  late final AnimationController _motion;
+  LatLng? _from;
+
+  @override
+  void initState() {
+    super.initState();
+    _motion =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 900),
+        )..addListener(() {
+          if (_following && _from != null) {
+            _controller.move(
+              interpolateMapPosition(_from!, widget.center, _motion.value),
+              _controller.camera.zoom,
+            );
+          }
+        });
+  }
 
   @override
   void didUpdateWidget(covariant _FollowingMap oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!widget.fresh) _motion.stop();
     if (!_following || oldWidget.center == widget.center) return;
+    final gap = widget.recordedAt?.difference(
+      oldWidget.recordedAt ?? widget.recordedAt!,
+    );
+    final animate =
+        widget.fresh &&
+        oldWidget.fresh &&
+        gap != null &&
+        gap > Duration.zero &&
+        gap <= const Duration(seconds: 10);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _moveToLivePosition();
+      if (mounted && _following) _moveToLivePosition(animate: animate);
     });
   }
 
-  void _moveToLivePosition() {
-    _controller.move(widget.center, _controller.camera.zoom);
+  void _moveToLivePosition({bool animate = true}) {
+    _motion.stop();
+    if (animate && widget.fresh && !MediaQuery.disableAnimationsOf(context)) {
+      _from = _controller.camera.center;
+      _motion.forward(from: 0);
+    } else {
+      _controller.move(widget.center, _controller.camera.zoom);
+    }
   }
 
   void _setFollowing(bool selected) {
     setState(() => _following = selected);
+    if (!selected) _motion.stop();
     if (selected) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _moveToLivePosition();
@@ -883,6 +939,7 @@ class _FollowingMapState extends State<_FollowingMap> {
 
   @override
   void dispose() {
+    _motion.dispose();
     _controller.dispose();
     super.dispose();
   }
