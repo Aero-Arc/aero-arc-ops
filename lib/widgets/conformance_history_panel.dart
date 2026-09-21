@@ -174,6 +174,7 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
             Wrap(
               spacing: 8,
               runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 ChoiceChip(
                   label: const Text('All generations'),
@@ -236,7 +237,7 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
               ),
             if (_error != null)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                padding: const EdgeInsets.fromLTRB(0, 20, 0, 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -244,17 +245,20 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
                       'History unavailable',
                       style: TextStyle(color: Color(0xFFE4A100)),
                     ),
+                    const SizedBox(height: 6),
                     Text(
                       _loaded
                           ? 'Previously loaded events remain below. Live monitoring is separate.'
                           : 'Live monitoring may still be current. No history could be loaded.',
                       style: const TextStyle(fontSize: 12),
                     ),
-                    TextButton(
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
                       onPressed: _busy
                           ? null
                           : () => _load(more: _paged && _next != null),
-                      child: const Text('Retry history'),
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: const Text('Retry history'),
                     ),
                   ],
                 ),
@@ -271,7 +275,7 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
               ),
             if (_loaded && _events.isEmpty && _error == null)
               const Padding(
-                padding: EdgeInsets.symmetric(vertical: 18),
+                padding: EdgeInsets.symmetric(vertical: 24),
                 child: Text(
                   'No recorded transitions in this scope. This does not imply current conformance.',
                 ),

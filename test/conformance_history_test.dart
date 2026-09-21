@@ -151,6 +151,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('History unavailable'), findsOneWidget);
       expect(find.textContaining('No recorded transitions'), findsNothing);
+      final message = tester.getRect(
+        find.text(
+          'Live monitoring may still be current. No history could be loaded.',
+        ),
+      );
+      final retry = tester.getRect(
+        find.widgetWithText(OutlinedButton, 'Retry history'),
+      );
+      expect(retry.top - message.bottom, greaterThanOrEqualTo(12));
       fail = false;
       await tester.tap(find.text('Retry history'));
       await tester.pumpAndSettle();
