@@ -89,7 +89,7 @@ class _OperationsHeaderState extends State<OperationsHeader> {
           const Tooltip(
             message: 'Platform health feed is not configured',
             child: Text(
-              '● Status unknown',
+              '○ Health unavailable',
               style: TextStyle(fontSize: 11, color: Color(0xFF8797AB)),
             ),
           ),

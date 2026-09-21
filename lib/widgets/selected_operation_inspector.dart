@@ -49,7 +49,10 @@ class SelectedOperationInspector extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           '$label · ${displayEnum(group?.status ?? 'missing')} · ${formatDate(group?.recordedAt)}',
-          style: const TextStyle(fontSize: 10, color: Color(0xFF8797AB)),
+          style: TextStyle(
+            fontSize: 10,
+            color: statusColor(group?.status ?? 'missing'),
+          ),
         ),
         ...fields,
       ],
@@ -102,6 +105,10 @@ class SelectedOperationInspector extends StatelessWidget {
               'A stored plan is not proof of aircraft execution.',
               style: TextStyle(fontSize: 11, color: Color(0xFF8797AB)),
             ),
+            const DetailLine(
+              label: 'Commanded / observed Δ',
+              value: 'Unavailable · live commanded setpoints are not reported',
+            ),
             _section('OBSERVED'),
             sample('Position', telemetry?.position, [
               DetailLine(
@@ -143,7 +150,13 @@ class SelectedOperationInspector extends StatelessWidget {
             _section('CONFORMANCE'),
             DetailLine(
               label: 'Condition',
-              value: conformance?.condition ?? conformance?.status ?? 'Unknown',
+              value: conformance?.monitoringStatus == 'current'
+                  ? displayEnum(
+                      conformance?.condition ??
+                          conformance?.status ??
+                          'unknown',
+                    )
+                  : 'Unknown · monitoring not current',
             ),
             DetailLine(
               label: 'Monitoring',
@@ -153,18 +166,30 @@ class SelectedOperationInspector extends StatelessWidget {
               label: 'Recording',
               value: conformance?.recordingStatus ?? 'Unknown',
             ),
-            for (final v
-                in conformance?.activeViolations ?? <ConformanceViolation>[])
+            DetailLine(
+              label: 'Active findings',
+              value: conformance == null
+                  ? 'Unknown'
+                  : '${conformance!.activeViolationCount} reported',
+            ),
+            DetailLine(
+              label: 'Last evaluation',
+              value: formatDate(conformance?.observedAt),
+            ),
+            for (final axis in const {
+              'lateral_deviation': 'Lateral',
+              'altitude_deviation': 'Vertical',
+              'temporal_deviation': 'Temporal',
+            }.entries)
               DetailLine(
-                label: displayEnum(v.type),
-                value:
-                    '${displayEnum(v.phase)}${v.type == 'temporal_deviation' || v.worstDeviationM == null ? '' : ' · worst ${v.worstDeviationM!.toStringAsFixed(1)} m'}',
+                label: axis.value,
+                value: inspectorDeviation(conformance, intent, axis.key),
               ),
             TextButton(
               onPressed: () => Navigator.of(context).pushNamed('/conformance'),
               child: const Text('Review conformance evidence'),
             ),
-            _section('AUTHORITY'),
+            _section('FLIGHT AUTHORITY'),
             const Text(
               'Intent metadata—not a clearance or authorization to act.',
               style: TextStyle(fontSize: 11, color: Color(0xFF8797AB)),
@@ -193,10 +218,27 @@ class SelectedOperationInspector extends StatelessWidget {
               label: 'Planned end',
               value: formatDate(intent?.plannedEndAt),
             ),
+            const Text(
+              'Planned intent window; not confirmation of authority validity.',
+              style: TextStyle(fontSize: 11, color: Color(0xFF8797AB)),
+            ),
+            const DetailLine(
+              label: 'DSS state',
+              value: 'Unavailable · no feed',
+            ),
+            const DetailLine(
+              label: 'Peer operations',
+              value: 'Unknown · no feed',
+            ),
             _section('CONNECTIVITY'),
             DetailLine(
               label: 'Agent connection',
               value: state?.connection.status ?? 'Unknown',
+            ),
+            StatusBadge(label: state?.connection.status ?? 'unavailable'),
+            const Text(
+              'Freshness uses API-configured telemetry and heartbeat thresholds.',
+              style: TextStyle(fontSize: 11, color: Color(0xFF8797AB)),
             ),
             DetailLine(
               label: 'Last heartbeat',
@@ -245,3 +287,41 @@ Widget _section(String title) => Padding(
     ),
   ),
 );
+
+/// Summaries expose incident maxima, not instantaneous spatial error.
+/// Temporal offsets use the evaluation clock and exactly bound intent window.
+String inspectorDeviation(
+  ConformanceSummary? summary,
+  OperationalIntent? intent,
+  String axis,
+) {
+  final finding = summary?.violationFor(axis);
+  if (summary?.monitoringStatus != 'current' ||
+      finding == null ||
+      finding.phase.isEmpty) {
+    return 'Not evaluated';
+  }
+  if (axis != 'temporal_deviation') {
+    if (!summary!.spatialAxisEvaluated(axis)) return 'Not evaluated';
+    return '${displayEnum(finding.phase)}${finding.worstDeviationM == null ? '' : ' · worst ${finding.worstDeviationM!.toStringAsFixed(1)} m (recorded)'}';
+  }
+  final observed = summary!.observedAt;
+  final bound =
+      intent != null &&
+      intent.id == summary.intentId &&
+      intent.version == summary.intentVersion &&
+      intent.aircraftId == summary.aircraftId;
+  if (finding.phase == 'clear') return 'Clear at evaluation';
+  if (!bound || observed == null) {
+    return '${displayEnum(finding.phase)} · timing details unavailable';
+  }
+  final end = intent.plannedEndAt;
+  final start = intent.plannedStartAt;
+  if (end != null && observed.isAfter(end)) {
+    return '${displayEnum(finding.phase)} · ${observed.difference(end).inSeconds} sec past planned end at evaluation';
+  }
+  if (start != null && observed.isBefore(start)) {
+    return '${displayEnum(finding.phase)} · ${start.difference(observed).inSeconds} sec before planned start at evaluation';
+  }
+  return '${displayEnum(finding.phase)} · timing offset not reported';
+}
