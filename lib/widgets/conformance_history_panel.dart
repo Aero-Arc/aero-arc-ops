@@ -6,6 +6,7 @@ import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../models/conformance_history.dart';
 import 'dashboard_ui.dart';
+import 'conformance_event_dialog.dart';
 
 /// Reads persisted transitions independently of live-summary availability.
 class ConformanceHistoryPanel extends StatefulWidget {
@@ -359,40 +360,9 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
 String _utc(DateTime value) =>
     '${value.toUtc().toIso8601String().replaceFirst('T', ' ').replaceFirst('Z', '')} UTC';
 
-void _details(
-  BuildContext context,
-  ConformanceHistoryEvent e,
-) => showDetailsSheet(
-  context,
-  title: '${displayEnum(e.violationType)} · ${displayEnum(e.transition)}',
-  children: [
-    DetailLine(label: 'Recorded transition', value: _utc(e.observedAt)),
-    DetailLine(
-      label: 'Distance at transition',
-      value: e.deviationM == null ? 'Not recorded' : '${e.deviationM} m',
-    ),
-    DetailLine(label: 'Aircraft', value: e.aircraftId),
-    DetailLine(label: 'Intent', value: '${e.intentId} v${e.intentVersion}'),
-    DetailLine(label: 'Assignment generation', value: '${e.generation}'),
-    DetailLine(label: 'Flight', value: e.flightId),
-    DetailLine(
-      label: 'Incident ID',
-      value: e.incidentId.isEmpty ? 'Not recorded' : e.incidentId,
-    ),
-    DetailLine(label: 'Event ID', value: e.id),
-    DetailLine(label: 'Evaluation revision', value: '${e.revision}'),
-    DetailLine(label: 'Evidence frame', value: e.frameId),
-    const Text(
-      'Historical evidence does not describe the aircraft’s current condition.',
-    ),
-    TextButton.icon(
-      onPressed: () {
-        Navigator.of(context)
-          ..pop()
-          ..pushNamed('/aircraft/${Uri.encodeComponent(e.aircraftId)}/map');
-      },
-      icon: const Icon(Icons.map_outlined),
-      label: const Text('View aircraft map'),
-    ),
-  ],
-);
+void _details(BuildContext context, ConformanceHistoryEvent e) =>
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (_) => ConformanceEventDialog(event: e),
+    );

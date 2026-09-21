@@ -5,6 +5,7 @@ import 'package:aero_arc_web/api/aero_arc_api.dart';
 import 'package:aero_arc_web/models/aero_arc_models.dart';
 import 'package:aero_arc_web/models/conformance_history.dart';
 import 'package:aero_arc_web/widgets/conformance_history_panel.dart';
+import 'package:aero_arc_web/widgets/conformance_event_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -57,6 +58,88 @@ Widget app(AeroArcApiClient client) => MaterialApp(
 );
 
 void main() {
+  testWidgets('event dialog fits narrow screens and preserves evidence', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final record = ConformanceHistoryEvent.fromJson({
+      ...event('e' * 64, transition: 'resolved', deviation: 0),
+      'frame_id': 'frame' * 40,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => ConformanceEventDialog(event: record),
+              ),
+              child: const Text('Inspect'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Inspect'));
+    await tester.pumpAndSettle();
+    expect(find.text('0.0 m'), findsOneWidget);
+    expect(find.text('Lateral Deviation · Resolved'), findsOneWidget);
+    await tester.ensureVisible(find.text('Recorded evidence'));
+    await tester.tap(find.text('Recorded evidence'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Evidence frame'),
+      150,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.text('frame' * 40), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.scrollUntilVisible(
+      find.byTooltip('Close event'),
+      -200,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.byTooltip('Close event'));
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing);
+  });
+
+  testWidgets('event dialog preserves missing distance and map navigation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        routes: {
+          '/aircraft/AA-07/map': (_) =>
+              const Scaffold(body: Text('Aircraft map destination')),
+        },
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => ConformanceEventDialog(
+                  event: ConformanceHistoryEvent.fromJson(event('missing')),
+                ),
+              ),
+              child: const Text('Inspect'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Inspect'));
+    await tester.pumpAndSettle();
+    expect(find.text('Distance not recorded'), findsOneWidget);
+    expect(find.text('0.0 m'), findsNothing);
+    await tester.ensureVisible(find.text('View aircraft map'));
+    await tester.tap(find.text('View aircraft map'));
+    await tester.pumpAndSettle();
+    expect(find.text('Aircraft map destination'), findsOneWidget);
+  });
+
   testWidgets(
     'generation refresh retains rows until replacement and ignores reselect',
     (tester) async {
@@ -174,6 +257,12 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
       expect(calls, afterPage);
       await tester.tap(find.text('Lateral Deviation · Opened'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.text('Lateral Deviation · Detected'), findsOneWidget);
+      expect(find.text('42.0 m'), findsOneWidget);
+      await tester.ensureVisible(find.text('Recorded evidence'));
+      await tester.tap(find.text('Recorded evidence'));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.text('Event ID'),
