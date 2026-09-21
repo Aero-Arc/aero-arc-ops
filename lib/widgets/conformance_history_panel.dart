@@ -285,31 +285,34 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
                   itemBuilder: (context, index) {
                     final e = _events[index];
                     final resolved = e.transition == 'resolved';
-                    return ListTile(
-                      dense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 5),
-                      leading: Icon(
-                        resolved
-                            ? Icons.check_circle_outline
-                            : Icons.warning_amber,
-                        color: resolved
-                            ? const Color(0xFF21C997)
-                            : const Color(0xFFE4A100),
-                        size: 18,
-                      ),
-                      title: Text(
-                        '${displayEnum(e.violationType)} · ${displayEnum(e.transition)}',
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      subtitle: Text(
-                        '${_utc(e.observedAt)} · generation ${e.generation}\n${e.deviationM == null ? 'Distance not recorded' : '${e.deviationM!.toStringAsFixed(1)} m at transition'}',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF8797AB),
+                    return Material(
+                      type: MaterialType.transparency,
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 5),
+                        leading: Icon(
+                          resolved
+                              ? Icons.check_circle_outline
+                              : Icons.warning_amber,
+                          color: resolved
+                              ? const Color(0xFF21C997)
+                              : const Color(0xFFE4A100),
+                          size: 18,
                         ),
+                        title: Text(
+                          '${displayEnum(e.violationType)} · ${displayEnum(e.transition)}',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        subtitle: Text(
+                          '${_utc(e.observedAt)} · generation ${e.generation}\n${e.deviationM == null ? 'Distance not recorded' : '${e.deviationM!.toStringAsFixed(1)} m at transition'}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF8797AB),
+                          ),
+                        ),
+                        trailing: const Icon(Icons.chevron_right, size: 16),
+                        onTap: () => _details(context, e),
                       ),
-                      trailing: const Icon(Icons.chevron_right, size: 16),
-                      onTap: () => _details(context, e),
                     );
                   },
                 ),
