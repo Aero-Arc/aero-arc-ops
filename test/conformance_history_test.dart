@@ -105,6 +105,15 @@ void main() {
         ).measurementLabel,
         'Outside a scheduled time window',
       );
+      expect(
+        ConformanceHistoryEvent.fromJson({
+          ...event('resolved', transition: 'resolved'),
+          'violation_type': 'temporal_deviation',
+          'planned_start_at': '2026-09-21T00:00:00Z',
+          'planned_end_at': '2026-09-21T02:00:00Z',
+        }).measurementLabel,
+        'Timing deviation resolved',
+      );
     },
   );
 

@@ -42,6 +42,7 @@ class ConformanceHistoryEvent {
     if (start != null && observedAt.isBefore(start)) {
       return '${_elapsed(start.difference(observedAt))} before planned start';
     }
+    if (transition == 'resolved') return 'Timing deviation resolved';
     return start == null || end == null
         ? 'Timing details unavailable'
         : 'Outside a scheduled time window';
