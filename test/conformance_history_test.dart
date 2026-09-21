@@ -41,7 +41,7 @@ Map<String, dynamic> event(
   'observed_at': '2026-09-21T01:02:03Z',
   'frame_id': 'frame',
   'evaluation_revision': 4,
-  if (deviation != null) 'deviation_m': deviation,
+  'deviation_m': ?deviation,
 };
 http.Response jsonResponse(Object data) => http.Response(
   jsonEncode(data),
