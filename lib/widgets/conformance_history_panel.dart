@@ -29,6 +29,7 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
   DateTime? _from;
   int _request = 0;
   bool _busy = false, _paged = false, _loaded = false;
+  bool _retainedScope = false;
   String? _error, _next;
   List<ConformanceHistoryEvent> _events = [];
 
@@ -60,15 +61,18 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
           .firstOrNull;
       if (previous?.assignmentGeneration !=
           _scopes[_intent]?.assignmentGeneration) {
-        _reset();
+        _reset(retainEvents: true);
       }
     }
   }
 
-  void _reset() {
+  void _reset({bool retainEvents = false}) {
     _request++;
-    _events = [];
-    _loaded = false;
+    _retainedScope = retainEvents && _loaded;
+    if (!_retainedScope) {
+      _events = [];
+      _loaded = false;
+    }
     _next = null;
     _paged = false;
     _busy = false;
@@ -103,6 +107,7 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
         }.values.toList();
         _next = page.nextPageToken;
         _loaded = true;
+        _retainedScope = false;
         _paged = more;
         _error = null;
       });
@@ -137,9 +142,11 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Recorded incident transitions · newest first',
-              style: TextStyle(color: Color(0xFF8797AB), fontSize: 12),
+            Text(
+              _retainedScope
+                  ? 'Previous filter results · awaiting selected history'
+                  : 'Recorded incident transitions · newest first',
+              style: const TextStyle(color: Color(0xFF8797AB), fontSize: 12),
             ),
             const SizedBox(height: 12),
             if (scopes.isNotEmpty)
@@ -179,26 +186,32 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
                 ChoiceChip(
                   label: const Text('All generations'),
                   selected: !_currentGeneration,
-                  onSelected: (_) => setState(() {
-                    _currentGeneration = false;
-                    _reset();
-                  }),
+                  onSelected: (_) {
+                    if (!_currentGeneration) return;
+                    setState(() {
+                      _currentGeneration = false;
+                      _reset(retainEvents: true);
+                    });
+                  },
                 ),
                 ChoiceChip(
                   label: const Text('Current generation'),
                   selected: _currentGeneration,
                   onSelected: _scopes[_intent]?.assignmentGeneration == null
                       ? null
-                      : (_) => setState(() {
-                          _currentGeneration = true;
-                          _reset();
-                        }),
+                      : (_) {
+                          if (_currentGeneration) return;
+                          setState(() {
+                            _currentGeneration = true;
+                            _reset(retainEvents: true);
+                          });
+                        },
                 ),
                 PopupMenuButton<Duration>(
                   tooltip: 'History time range',
                   onSelected: (value) => setState(() {
                     _window = value == Duration.zero ? null : value;
-                    _reset();
+                    _reset(retainEvents: true);
                   }),
                   itemBuilder: (_) => const [
                     PopupMenuItem(
@@ -274,10 +287,12 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
                 child: Text('No operation is available to inspect.'),
               ),
             if (_loaded && _events.isEmpty && _error == null)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
                 child: Text(
-                  'No recorded transitions in this scope. This does not imply current conformance.',
+                  _retainedScope
+                      ? 'No recorded transitions in the previous filter. Awaiting selected history.'
+                      : 'No recorded transitions in this scope. This does not imply current conformance.',
                 ),
               ),
             if (_events.isNotEmpty)

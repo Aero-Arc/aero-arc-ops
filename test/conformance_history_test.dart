@@ -57,6 +57,47 @@ Widget app(AeroArcApiClient client) => MaterialApp(
 );
 
 void main() {
+  testWidgets(
+    'generation refresh retains rows until replacement and ignores reselect',
+    (tester) async {
+      var calls = 0;
+      final pending = Completer<http.Response>();
+      final client = AeroArcApiClient(
+        httpClient: MockClient((_) async {
+          calls++;
+          if (calls == 1) {
+            return jsonResponse({
+              'events': [event('old')],
+            });
+          }
+          return pending.future;
+        }),
+      );
+      await tester.pumpWidget(app(client));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('All generations'));
+      await tester.pump();
+      expect(calls, 1);
+      final before = tester.getRect(find.text('Lateral Deviation · Opened'));
+      await tester.tap(find.text('Current generation'));
+      await tester.pump();
+      expect(calls, 2);
+      expect(find.text('Lateral Deviation · Opened'), findsOneWidget);
+      expect(tester.getRect(find.text('Lateral Deviation · Opened')), before);
+      expect(find.text('Loading recorded history…'), findsNothing);
+      expect(find.textContaining('Previous filter results'), findsOneWidget);
+      pending.complete(
+        jsonResponse({
+          'events': [event('new', transition: 'resolved')],
+        }),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Lateral Deviation · Opened'), findsNothing);
+      expect(find.text('Lateral Deviation · Resolved'), findsOneWidget);
+      expect(find.textContaining('Previous filter results'), findsNothing);
+    },
+  );
+
   test(
     'history preserves absent versus measured zero and encodes filters',
     () async {
