@@ -10,6 +10,7 @@ import 'package:latlong2/latlong.dart';
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
+import '../widgets/flight_command_panel.dart';
 
 class IntentWorkflowRouteArguments {
   const IntentWorkflowRouteArguments({
@@ -1270,6 +1271,14 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           onRetryRestoration: _retryMissionStateRestore,
                         ),
                         const SizedBox(height: 18),
+                        if (_flight != null) ...[
+                          FlightCommandPanel(
+                            key: ValueKey(_flight!.id),
+                            api: _apiClient,
+                            flight: _flight!,
+                          ),
+                          const SizedBox(height: 18),
+                        ],
                         _MissionDeploymentPanel(
                           intent: _acceptedIntent ?? _intent ?? _sourceIntent,
                           flight: _flight,

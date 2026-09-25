@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/aero_arc_models.dart';
+import '../models/command.dart';
 import '../models/conformance_history.dart';
 
 class AeroArcApiException implements Exception {
@@ -208,6 +209,44 @@ class AeroArcApiClient {
       },
     );
   }
+
+  /// Restores durable commands after navigation, reload, or a lost submission response.
+  Future<List<FlightCommand>> flightCommands(String flightId) => _get(
+    '/api/v1/flights/${Uri.encodeComponent(flightId)}/commands',
+    (json) => (json['commands'] as List)
+        .map((c) => FlightCommand.fromJson(c as Map<String, dynamic>))
+        .toList(growable: false),
+    headers: _missionControlHeaders(),
+  );
+
+  /// Submits one approved operation with a stable key retained across retries.
+  Future<FlightCommand> submitFlightCommand({
+    required String flightId,
+    required String type,
+    required String idempotencyKey,
+    Mission? mission,
+  }) => _post(
+    '/api/v1/flights/${Uri.encodeComponent(flightId)}/commands',
+    FlightCommand.fromJson,
+    headers: _missionControlHeaders(idempotencyKey: idempotencyKey),
+    body: {
+      'type': type,
+      if (mission != null) ...{
+        'mission_id': mission.id,
+        'mission_digest': mission.missionDigest,
+      },
+    },
+  );
+
+  /// Reconciles existing authority; this never creates a replacement command.
+  Future<FlightCommand> reconcileFlightCommand(
+    String flightId,
+    String commandId,
+  ) => _postEmpty(
+    '/api/v1/flights/${Uri.encodeComponent(flightId)}/commands/${Uri.encodeComponent(commandId)}/reconcile',
+    FlightCommand.fromJson,
+    headers: _missionControlHeaders(),
+  );
 
   Future<Mission> getCurrentMission(String flightId) =>
       _get('/api/v1/flights/$flightId/missions/current', Mission.fromJson);

@@ -76,6 +76,9 @@ void main() {
       missionControlToken: 'local-dev-token',
       httpClient: MockClient((request) async {
         requestedPaths.add(request.url.path);
+        if (request.url.path.endsWith('/commands')) {
+          return _jsonResponse({'commands': []});
+        }
         if (request.url.path == '/api/v1/aircraft/aircraft-1/flights') {
           return _jsonResponse({'flights': []});
         }
@@ -164,7 +167,10 @@ void main() {
       requestedPaths,
       contains('/api/v1/operational-intents/intent-1/flights'),
     );
-    expect(requestedPaths.last, endsWith('/missions/import'));
+    expect(
+      requestedPaths.where((path) => path.endsWith('/missions/import')),
+      hasLength(1),
+    );
     expect(idempotencyKey, startsWith('ops-mission-import-'));
     expect(importAuthorization, 'Bearer local-dev-token');
     expect(importBody?['aircraft_id'], 'aircraft-1');
