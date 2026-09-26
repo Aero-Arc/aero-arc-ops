@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'package:aero_arc_web/models/aero_arc_models.dart';
@@ -9,6 +10,40 @@ import 'package:aero_arc_web/pages/aircraft_map_screen.dart';
 import 'package:aero_arc_web/pages/intent_workflow_page.dart';
 
 void main() {
+  for (final width in [390.0, 1280.0]) {
+    testWidgets('aircraft workspace uses available space at $width px', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(Size(width, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: AircraftMapScreen(
+            aircraftId: 'aircraft-1',
+            load: () async => sampleMapView(),
+            loadState: () async => sampleLiveState(),
+            renderTiles: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final map = tester.getRect(find.byType(FlutterMap));
+      final operation = tester.getTopLeft(find.text('Operation'));
+      if (width > 1000) {
+        expect(operation.dx, greaterThan(map.right));
+        expect(
+          tester.getTopLeft(find.text('Live Aircraft State')).dy,
+          lessThan(map.bottom + 100),
+        );
+      } else {
+        expect(operation.dy, greaterThan(map.bottom));
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('AircraftMapScreen renders aircraft header data', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
