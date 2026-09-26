@@ -238,7 +238,7 @@ class _AircraftMapScreenState extends State<AircraftMapScreen> {
           }
           if (snapshot.hasError) {
             return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
               child: ErrorPanel(
                 error: snapshot.error.toString(),
                 onRetry: _refresh,
@@ -457,7 +457,7 @@ class _AircraftMapContent extends StatelessWidget {
     final center = mapCenterFor(view, liveState: liveState);
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -468,64 +468,30 @@ class _AircraftMapContent extends StatelessWidget {
             onRefresh: onRefresh,
           ),
           const SizedBox(height: 18),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              if (constraints.maxWidth >= 1180) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: _MapPanel(
-                        view: view,
-                        liveState: liveState,
-                        liveStateError: liveStateError,
-                        liveTrail: liveTrail,
-                        center: center,
-                        renderTiles: renderTiles,
-                      ),
-                    ),
-                    const SizedBox(width: 18),
-                    SizedBox(
-                      width: 390,
-                      child: _DetailPanel(
-                        view: view,
-                        liveState: liveState,
-                        liveStateError: liveStateError,
-                        liveStateLoading: liveStateLoading,
-                        conformanceSummary: conformanceSummary,
-                        conformanceError: conformanceError,
-                        conformanceLoading: conformanceLoading,
-                        onWorkflowReturn: onWorkflowReturn,
-                      ),
-                    ),
-                  ],
-                );
-              }
-              return Column(
-                children: [
-                  _MapPanel(
-                    view: view,
-                    liveState: liveState,
-                    liveStateError: liveStateError,
-                    liveTrail: liveTrail,
-                    center: center,
-                    renderTiles: renderTiles,
-                  ),
-                  const SizedBox(height: 18),
-                  _DetailPanel(
-                    view: view,
-                    liveState: liveState,
-                    liveStateError: liveStateError,
-                    liveStateLoading: liveStateLoading,
-                    conformanceSummary: conformanceSummary,
-                    conformanceError: conformanceError,
-                    conformanceLoading: conformanceLoading,
-                    onWorkflowReturn: onWorkflowReturn,
-                  ),
-                ],
-              );
-            },
+          _DetailPanel(
+            view: view,
+            liveState: liveState,
+            liveStateError: liveStateError,
+            liveStateLoading: liveStateLoading,
+            conformanceSummary: conformanceSummary,
+            conformanceError: conformanceError,
+            conformanceLoading: conformanceLoading,
+            onWorkflowReturn: onWorkflowReturn,
+            map: _MapPanel(
+              view: view,
+              liveState: liveState,
+              liveStateError: liveStateError,
+              liveTrail: liveTrail,
+              center: center,
+              renderTiles: renderTiles,
+              height: (MediaQuery.sizeOf(context).height - 330).clamp(
+                360.0,
+                620.0,
+              ),
+            ),
+            mapHeight:
+                (MediaQuery.sizeOf(context).height - 330).clamp(360.0, 620.0) +
+                49,
           ),
         ],
       ),
@@ -560,7 +526,7 @@ class _MapHeader extends StatelessWidget {
                 aircraft.displayName,
                 style: Theme.of(
                   context,
-                ).textTheme.headlineMedium?.copyWith(fontSize: 42),
+                ).textTheme.headlineMedium?.copyWith(fontSize: 26),
               ),
               const SizedBox(height: 8),
               Text(
@@ -605,6 +571,7 @@ class _MapPanel extends StatelessWidget {
     required this.liveTrail,
     required this.center,
     required this.renderTiles,
+    required this.height,
   });
 
   final AircraftMapView view;
@@ -613,6 +580,7 @@ class _MapPanel extends StatelessWidget {
   final List<LatLng> liveTrail;
   final LatLng center;
   final bool renderTiles;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
@@ -679,7 +647,7 @@ class _MapPanel extends StatelessWidget {
             : 'tracking_unavailable',
       ),
       child: SizedBox(
-        height: 560,
+        height: height,
         child: Stack(
           children: [
             _FollowingMap(
@@ -780,16 +748,25 @@ class _MapPanel extends StatelessWidget {
             Positioned(
               top: 12,
               left: 12,
-              child: _TrackerReadout(
-                position: livePosition,
-                speedMps: speed,
-                headingDeg: heading,
-                sampleCount: liveTrail.length,
-                projecting: projectedTrack.length == 2,
-                updateDelayed: liveStateError != null,
+              right: 64,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: _TrackerReadout(
+                  position: livePosition,
+                  speedMps: speed,
+                  headingDeg: heading,
+                  sampleCount: liveTrail.length,
+                  projecting: projectedTrack.length == 2,
+                  updateDelayed: liveStateError != null,
+                ),
               ),
             ),
-            const Positioned(bottom: 12, left: 12, child: _MapLegend()),
+            const Positioned(
+              bottom: 30,
+              left: 12,
+              right: 12,
+              child: _MapLegend(),
+            ),
           ],
         ),
       ),
@@ -1105,6 +1082,8 @@ class _DetailPanel extends StatelessWidget {
     required this.conformanceError,
     required this.conformanceLoading,
     required this.onWorkflowReturn,
+    required this.map,
+    required this.mapHeight,
   });
 
   final AircraftMapView view;
@@ -1115,6 +1094,8 @@ class _DetailPanel extends StatelessWidget {
   final Object? conformanceError;
   final bool conformanceLoading;
   final VoidCallback onWorkflowReturn;
+  final Widget map;
+  final double mapHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -1126,243 +1107,356 @@ class _DetailPanel extends StatelessWidget {
         .where((volume) => (volume.geoJson ?? '').isEmpty)
         .length;
 
-    return Column(
-      children: [
-        _AircraftLiveStatePanel(
-          state: liveState,
-          error: liveStateError,
-          loading: liveStateLoading,
-        ),
-        const SizedBox(height: 18),
-        Panel(
-          title: 'Validated Mission Plan',
-          trailing: StatusBadge(
-            label: view.missionBindingMismatch
-                ? 'binding_mismatch'
-                : mission == null
-                ? 'not_available'
-                : 'validated',
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-            child: Column(
-              children: [
-                DetailLine(
-                  label: 'Route',
-                  value: view.missionBindingMismatch
-                      ? 'Mission hidden because its aircraft or exact intent-version binding is inconsistent.'
-                      : mission == null
-                      ? 'No mission is bound to this active intent.'
-                      : '${mission.items.length} waypoint item(s)',
-                ),
-                if (mission != null) ...[
-                  DetailLine(label: 'Flight', value: mission.flightId),
-                  DetailLine(
-                    label: 'Intent binding',
-                    value: '${mission.intentId} v${mission.intentVersion}',
-                  ),
-                  DetailLine(
-                    label: 'Mission version',
-                    value: '${mission.version}',
-                  ),
-                  DetailLine(
-                    label: 'Digest',
-                    value: _mapShortDigest(mission.missionDigest),
-                  ),
-                ],
-                const DetailLine(
-                  label: 'Meaning',
-                  value:
-                      'Cyan is the API-validated plan. Violet is authorization. Green is observed flight.',
-                ),
-                const DetailLine(
-                  label: 'Aircraft deployment',
-                  value:
-                      'Not reported by this API view. Validation alone does not prove the route is onboard.',
-                ),
-              ],
+    final livePanel = _AircraftLiveStatePanel(
+      state: liveState,
+      error: liveStateError,
+      loading: liveStateLoading,
+    );
+    final missionPanel = Panel(
+      title: 'Validated Mission Plan',
+      trailing: StatusBadge(
+        label: view.missionBindingMismatch
+            ? 'binding_mismatch'
+            : mission == null
+            ? 'not_available'
+            : 'validated',
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+        child: Column(
+          children: [
+            DetailLine(
+              label: 'Route',
+              value: view.missionBindingMismatch
+                  ? 'Mission hidden because its aircraft or exact intent-version binding is inconsistent.'
+                  : mission == null
+                  ? 'No mission is bound to this active intent.'
+                  : '${mission.items.length} waypoint item(s)',
             ),
-          ),
-        ),
-        const SizedBox(height: 18),
-        Panel(
-          title: 'Operation',
-          trailing: intent == null
-              ? IconButton.filledTonal(
-                  tooltip: 'Create intent',
-                  onPressed: () => unawaited(
-                    _openCreateIntent(context, view, onWorkflowReturn),
-                  ),
-                  icon: const Icon(Icons.add_task),
-                )
-              : TextButton.icon(
-                  onPressed: () => unawaited(
-                    _openAssignedIntent(context, view, onWorkflowReturn),
-                  ),
-                  icon: const Icon(Icons.open_in_new, size: 18),
-                  label: const Text('Open intent'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF91A0FF),
-                  ),
-                ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-            child: Column(
-              children: [
-                if (intent == null)
-                  const DetailLine(
-                    label: 'Intent',
-                    value: 'No active operational intent.',
-                  )
-                else ...[
-                  DetailLine(
-                    label: 'Intent',
-                    value: intent.name.isEmpty ? intent.id : intent.name,
-                  ),
-                  DetailLine(
-                    label: 'Status',
-                    value: displayEnum(intent.status),
-                  ),
-                  DetailLine(
-                    label: 'Window',
-                    value:
-                        '${formatDate(intent.plannedStartAt)} -> ${formatDate(intent.plannedEndAt)}',
-                  ),
-                ],
-                DetailLine(
-                  label: 'Volumes',
-                  value: view.operationalVolumes.isEmpty
-                      ? 'No operational volumes available.'
-                      : '${view.operationalVolumes.length} operational volume(s)',
-                ),
-                if (skippedVolumes > 0)
-                  DetailLine(
-                    label: 'Map warning',
-                    value:
-                        '$skippedVolumes volume(s) skipped because inline GeoJSON is unavailable.',
-                  ),
-              ],
+            if (mission != null) ...[
+              DetailLine(label: 'Flight', value: mission.flightId),
+              DetailLine(
+                label: 'Intent binding',
+                value: '${mission.intentId} v${mission.intentVersion}',
+              ),
+              DetailLine(label: 'Mission version', value: '${mission.version}'),
+              DetailLine(
+                label: 'Digest',
+                value: _mapShortDigest(mission.missionDigest),
+              ),
+            ],
+            const DetailLine(
+              label: 'Meaning',
+              value:
+                  'Cyan is the API-validated plan. Violet is authorization. Green is observed flight.',
             ),
-          ),
-        ),
-        const SizedBox(height: 18),
-        Panel(
-          title: 'Conformance',
-          trailing: StatusBadge(
-            label: conformanceError != null
-                ? 'update_delayed'
-                : conformanceLoading
-                ? 'loading'
-                : summary == null
-                ? 'unavailable'
-                : _mapConformanceStatus(summary),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-            child: Column(
-              children: [
-                DetailLine(
-                  label: 'Status',
-                  value: summary == null
-                      ? 'No conformance summary.'
-                      : displayEnum(_mapConformanceStatus(summary)),
-                ),
-                DetailLine(
-                  label: summary?.isLiveProjection == true
-                      ? 'Active findings'
-                      : 'Alerts',
-                  value:
-                      '${summary?.isLiveProjection == true ? summary?.activeViolationCount : summary?.alertCount ?? view.conformanceEvents.length}',
-                ),
-                if (summary?.isLiveProjection == true) ...[
-                  DetailLine(
-                    label: 'Monitoring',
-                    value: displayEnum(
-                      summary?.monitoringStatus ?? 'unavailable',
-                    ),
-                  ),
-                  DetailLine(
-                    label: 'Recording',
-                    value: displayEnum(
-                      summary?.recordingStatus ?? 'unavailable',
-                    ),
-                  ),
-                  DetailLine(
-                    label: 'Observed',
-                    value: formatDate(summary?.observedAt),
-                  ),
-                  for (final axis in const [
-                    ('lateral_deviation', 'Lateral evaluation'),
-                    ('altitude_deviation', 'Altitude evaluation'),
-                  ])
-                    DetailLine(
-                      label: axis.$2,
-                      value: summary!.spatialAxisEvaluated(axis.$1)
-                          ? displayEnum(summary.violationFor(axis.$1)!.phase)
-                          : 'Not evaluated at this watermark',
-                    ),
-                  for (final violation in summary?.activeViolations ?? const [])
-                    DetailLine(
-                      label: displayEnum(violation.type),
-                      value: [
-                        displayEnum(violation.phase),
-                        if (violation.worstDeviationM != null)
-                          '${violation.worstDeviationM!.toStringAsFixed(1)} m worst deviation',
-                      ].join(' · '),
-                    ),
-                ],
-                DetailLine(
-                  label: 'Reportability',
-                  value: summary == null
-                      ? 'Not provided'
-                      : displayEnum(summary.reportabilityStatus),
-                ),
-                DetailLine(
-                  label: 'Telemetry',
-                  value: telemetry == null
-                      ? 'No latest telemetry.'
-                      : '${formatDate(telemetry.recordedAt)}\n${telemetry.latitude.toStringAsFixed(5)}, ${telemetry.longitude.toStringAsFixed(5)}\nAltitude ${formatMeters(telemetry.altitudeM)}',
-                ),
-                DetailLine(
-                  label: 'Battery',
-                  value: formatPercentagePoints(telemetry?.batteryPct),
-                ),
-              ],
+            const DetailLine(
+              label: 'Aircraft deployment',
+              value:
+                  'Not reported by this API view. Validation alone does not prove the route is onboard.',
             ),
-          ),
+          ],
         ),
-        const SizedBox(height: 18),
-        Panel(
-          title: 'Conformance Events',
-          child: RowList(
-            children: [
-              for (final event in view.conformanceEvents.take(8))
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(
-                      Icons.warning_amber_rounded,
-                      color: Color(0xFFE14A5B),
-                      size: 18,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        '${displayEnum(event.eventCode)} - ${event.message}\n${formatDate(event.occurredAt)}',
-                        style: const TextStyle(
-                          color: Color(0xFFC4D0EE),
-                          height: 1.35,
-                        ),
-                      ),
-                    ),
-                  ],
+      ),
+    );
+    final operationPanel = Panel(
+      title: 'Operation',
+      trailing: intent == null
+          ? IconButton.filledTonal(
+              tooltip: 'Create intent',
+              onPressed: () =>
+                  unawaited(_openCreateIntent(context, view, onWorkflowReturn)),
+              icon: const Icon(Icons.add_task),
+            )
+          : TextButton.icon(
+              onPressed: () => unawaited(
+                _openAssignedIntent(context, view, onWorkflowReturn),
+              ),
+              icon: const Icon(Icons.open_in_new, size: 18),
+              label: const Text('Open intent'),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF91A0FF),
+              ),
+            ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+        child: Column(
+          children: [
+            if (intent == null)
+              const DetailLine(
+                label: 'Intent',
+                value: 'No active operational intent.',
+              )
+            else ...[
+              DetailLine(
+                label: 'Intent',
+                value: intent.name.isEmpty ? intent.id : intent.name,
+              ),
+              DetailLine(label: 'Status', value: displayEnum(intent.status)),
+              DetailLine(
+                label: 'Window',
+                value:
+                    '${formatDate(intent.plannedStartAt)} -> ${formatDate(intent.plannedEndAt)}',
+              ),
+            ],
+            DetailLine(
+              label: 'Volumes',
+              value: view.operationalVolumes.isEmpty
+                  ? 'No operational volumes available.'
+                  : '${view.operationalVolumes.length} operational volume(s)',
+            ),
+            if (skippedVolumes > 0)
+              DetailLine(
+                label: 'Map warning',
+                value:
+                    '$skippedVolumes volume(s) skipped because inline GeoJSON is unavailable.',
+              ),
+          ],
+        ),
+      ),
+    );
+    final conformancePanel = Panel(
+      title: 'Conformance',
+      trailing: StatusBadge(
+        label: conformanceError != null
+            ? 'update_delayed'
+            : conformanceLoading
+            ? 'loading'
+            : summary == null
+            ? 'unavailable'
+            : _mapConformanceStatus(summary),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+        child: Column(
+          children: [
+            DetailLine(
+              label: 'Status',
+              value: summary == null
+                  ? 'No conformance summary.'
+                  : displayEnum(_mapConformanceStatus(summary)),
+            ),
+            DetailLine(
+              label: summary?.isLiveProjection == true
+                  ? 'Active findings'
+                  : 'Alerts',
+              value:
+                  '${summary?.isLiveProjection == true ? summary?.activeViolationCount : summary?.alertCount ?? view.conformanceEvents.length}',
+            ),
+            if (summary?.isLiveProjection == true) ...[
+              DetailLine(
+                label: 'Monitoring',
+                value: displayEnum(summary?.monitoringStatus ?? 'unavailable'),
+              ),
+              DetailLine(
+                label: 'Recording',
+                value: displayEnum(summary?.recordingStatus ?? 'unavailable'),
+              ),
+              DetailLine(
+                label: 'Observed',
+                value: formatDate(summary?.observedAt),
+              ),
+              for (final axis in const [
+                ('lateral_deviation', 'Lateral evaluation'),
+                ('altitude_deviation', 'Altitude evaluation'),
+              ])
+                DetailLine(
+                  label: axis.$2,
+                  value: summary!.spatialAxisEvaluated(axis.$1)
+                      ? displayEnum(summary.violationFor(axis.$1)!.phase)
+                      : 'Not evaluated at this watermark',
+                ),
+              for (final violation in summary?.activeViolations ?? const [])
+                DetailLine(
+                  label: displayEnum(violation.type),
+                  value: [
+                    displayEnum(violation.phase),
+                    if (violation.worstDeviationM != null)
+                      '${violation.worstDeviationM!.toStringAsFixed(1)} m worst deviation',
+                  ].join(' · '),
                 ),
             ],
+            DetailLine(
+              label: 'Reportability',
+              value: summary == null
+                  ? 'Not provided'
+                  : displayEnum(summary.reportabilityStatus),
+            ),
+            DetailLine(
+              label: 'Telemetry',
+              value: telemetry == null
+                  ? 'No latest telemetry.'
+                  : '${formatDate(telemetry.recordedAt)}\n${telemetry.latitude.toStringAsFixed(5)}, ${telemetry.longitude.toStringAsFixed(5)}\nAltitude ${formatMeters(telemetry.altitudeM)}',
+            ),
+            DetailLine(
+              label: 'Battery',
+              value: formatPercentagePoints(telemetry?.batteryPct),
+            ),
+          ],
+        ),
+      ),
+    );
+    final eventsPanel = Panel(
+      title: 'Conformance Events',
+      child: RowList(
+        children: [
+          for (final event in view.conformanceEvents.take(8))
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  color: Color(0xFFE14A5B),
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '${displayEnum(event.eventCode)} - ${event.message}\n${formatDate(event.occurredAt)}',
+                    style: const TextStyle(
+                      color: Color(0xFFC4D0EE),
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 900;
+        final inspector = Column(
+          children: [
+            operationPanel,
+            const SizedBox(height: 14),
+            conformancePanel,
+          ],
+        );
+        return Column(
+          children: [
+            if (wide)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: map),
+                  const SizedBox(width: 14),
+                  SizedBox(
+                    width: 350,
+                    height: mapHeight,
+                    child: _MapInspector(child: inspector),
+                  ),
+                ],
+              )
+            else ...[
+              map,
+              const SizedBox(height: 14),
+              inspector,
+            ],
+            const SizedBox(height: 14),
+            livePanel,
+            const SizedBox(height: 14),
+            _MapDetailGrid(
+              minColumnWidth: 420,
+              maxColumns: 2,
+              children: [missionPanel, eventsPanel],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _MapDetailGrid extends StatelessWidget {
+  const _MapDetailGrid({
+    required this.children,
+    this.minColumnWidth = 280,
+    this.maxColumns = 3,
+  });
+  final List<Widget> children;
+  final double minColumnWidth;
+  final int maxColumns;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final columns = ((constraints.maxWidth + 14) / (minColumnWidth + 14))
+          .floor()
+          .clamp(1, maxColumns);
+      final width = (constraints.maxWidth - 14 * (columns - 1)) / columns;
+      return Wrap(
+        spacing: 14,
+        runSpacing: 10,
+        children: [
+          for (final child in children) SizedBox(width: width, child: child),
+        ],
+      );
+    },
+  );
+}
+
+class _LiveSample extends StatelessWidget {
+  const _LiveSample({required this.label, required this.value});
+  final String label, value;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF0B1118),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 11,
+            color: Color(0xFF8797AB),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 12,
+            color: Color(0xFFD6E0EE),
+            height: 1.4,
           ),
         ),
       ],
-    );
+    ),
+  );
+}
+
+class _MapInspector extends StatefulWidget {
+  const _MapInspector({required this.child});
+  final Widget child;
+  @override
+  State<_MapInspector> createState() => _MapInspectorState();
+}
+
+class _MapInspectorState extends State<_MapInspector> {
+  final _scroll = ScrollController();
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
   }
+
+  @override
+  Widget build(BuildContext context) => Scrollbar(
+    controller: _scroll,
+    thumbVisibility: true,
+    child: SingleChildScrollView(
+      controller: _scroll,
+      primary: false,
+      child: widget.child,
+    ),
+  );
 }
 
 class _AircraftLiveStatePanel extends StatelessWidget {
@@ -1409,38 +1503,44 @@ class _AircraftLiveStatePanel extends StatelessWidget {
       trailing: StatusBadge(label: connection.status),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-        child: Column(
+        child: _MapDetailGrid(
           children: [
-            DetailLine(label: 'Agent', value: connection.agentId ?? 'Unmapped'),
-            DetailLine(label: 'Relay', value: connection.relayId ?? 'Unplaced'),
-            DetailLine(
+            _LiveSample(
+              label: 'Agent',
+              value: connection.agentId ?? 'Unmapped',
+            ),
+            _LiveSample(
+              label: 'Relay',
+              value: connection.relayId ?? 'Unplaced',
+            ),
+            _LiveSample(
               label: 'Registry heartbeat',
               value: _mapTimestamp(connection.lastHeartbeatAt),
             ),
-            DetailLine(
+            _LiveSample(
               label: 'Telemetry',
               value:
                   '${displayEnum(telemetry.status)} · ${_mapTimestamp(telemetry.lastObservedAt)}',
             ),
             if (error != null)
-              const DetailLine(
+              const _LiveSample(
                 label: 'Tracker refresh',
                 value:
                     'Update delayed. Last known live state remains on the map.',
               ),
-            DetailLine(
+            _LiveSample(
               label: 'Position sample',
               value: telemetry.position == null
                   ? 'Missing'
                   : '${displayEnum(telemetry.position!.status)} · ${_mapTimestamp(telemetry.position!.recordedAt)}\n${telemetry.position!.latitudeDeg.toStringAsFixed(5)}, ${telemetry.position!.longitudeDeg.toStringAsFixed(5)}\nAltitude ${formatMeters(telemetry.position!.relativeAltitudeM ?? telemetry.position!.altitudeMslM)}',
             ),
-            DetailLine(
+            _LiveSample(
               label: 'Battery sample',
               value: telemetry.battery == null
                   ? 'Missing'
                   : '${displayEnum(telemetry.battery!.status)} · ${_mapTimestamp(telemetry.battery!.recordedAt)}\n${formatPercentagePoints(telemetry.battery!.remainingPct)} · ${_mapUnit(telemetry.battery!.voltageV, 'V')} · ${_mapUnit(telemetry.battery!.currentA, 'A')}',
             ),
-            DetailLine(
+            _LiveSample(
               label: 'Vehicle heartbeat',
               value: telemetry.vehicle == null
                   ? 'Missing'
@@ -1450,25 +1550,25 @@ class _AircraftLiveStatePanel extends StatelessWidget {
                       null => 'Arm state unknown',
                     }} · System ${telemetry.vehicle!.systemStatus ?? 'unknown'}',
             ),
-            DetailLine(
+            _LiveSample(
               label: 'System sample',
               value: telemetry.system == null
                   ? 'Missing'
                   : '${displayEnum(telemetry.system!.status)} · ${_mapTimestamp(telemetry.system!.recordedAt)}\nLoad ${formatPercentagePoints(telemetry.system!.mainloopLoadPct)} · Drop ${formatPercentagePoints(telemetry.system!.communicationDropRatePct)}',
             ),
-            DetailLine(
+            _LiveSample(
               label: 'HUD sample',
               value: telemetry.hud == null
                   ? 'Missing'
                   : '${displayEnum(telemetry.hud!.status)} · ${_mapTimestamp(telemetry.hud!.recordedAt)}\nGround ${_mapUnit(telemetry.hud!.groundspeedMps, 'm/s')} · Air ${_mapUnit(telemetry.hud!.airspeedMps, 'm/s')}',
             ),
-            DetailLine(
+            _LiveSample(
               label: 'Extended-state sample',
               value: telemetry.extendedState == null
                   ? 'Missing'
                   : '${displayEnum(telemetry.extendedState!.status)} · ${_mapTimestamp(telemetry.extendedState!.recordedAt)}\nVTOL ${telemetry.extendedState!.vtolState ?? 'unknown'} · Landed ${telemetry.extendedState!.landedState ?? 'unknown'}',
             ),
-            DetailLine(
+            _LiveSample(
               label: 'GPS sample',
               value: telemetry.gps == null
                   ? 'Missing'
