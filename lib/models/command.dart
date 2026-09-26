@@ -13,6 +13,21 @@ class FlightCommand {
   final List<FlightCommandEvent> events;
   bool get unresolved =>
       !['applied', 'rejected', 'failed', 'timed_out'].contains(state);
+  String? get progressLabel {
+    if (!['accepted', 'dispatched', 'acknowledged'].contains(state)) {
+      return null;
+    }
+    if (events.any((e) => e.stage == 'awaiting_ack')) {
+      return 'Awaiting autopilot ACK';
+    }
+    if (events.any((e) => e.stage == 'verifying_mission')) {
+      return 'Verifying onboard mission';
+    }
+    return null;
+  }
+
+  int get recoveryDeliveries => attempts > 1 ? attempts - 1 : 0;
+
   factory FlightCommand.fromJson(Map<String, dynamic> json) => FlightCommand(
     id: json['id'] as String,
     type: json['type'] as String,

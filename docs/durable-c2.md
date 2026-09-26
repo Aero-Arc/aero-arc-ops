@@ -26,3 +26,12 @@ position unavailable; another intent version cannot replace the selected plan.
 Controls are grouped into aircraft, mission, and recovery actions, with bounded
 scrolling command history. Boundary editing is expandable, and planning, checks,
 and deployment use responsive columns below the operational context.
+
+Command rows show `Verifying onboard mission` and `Awaiting autopilot ACK` from
+persisted Agent events while the command remains in progress. The delivery
+summary separates initial delivery from recovery deliveries. These count
+transport attempts, not MAVLink executions; applied and observed remain separate.
+
+After updating the command services, restart the local demo with `make sitl-up`
+once the simulator is landed/disarmed. The runner builds the current feature
+branch binaries. Updating source does not replace a running aircraft Agent.

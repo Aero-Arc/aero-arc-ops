@@ -273,10 +273,10 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                           childrenPadding: const EdgeInsets.only(bottom: 10),
                           dense: true,
                           title: Text(
-                            '${command.type.replaceAll('_', ' ')} · ${command.state.replaceAll('_', ' ')}',
+                            '${command.type.replaceAll('_', ' ')} · ${command.progressLabel ?? command.state.replaceAll('_', ' ')}',
                           ),
                           subtitle: Text(
-                            'Observation: ${command.observationState} · ${command.attempts} delivery attempts',
+                            'Observation: ${command.observationState} · ${command.attempts == 0 ? 'Awaiting delivery' : 'Initial delivery'}${command.recoveryDeliveries > 0 ? ' + ${command.recoveryDeliveries} recovery deliveries' : ''}',
                             style: const TextStyle(fontSize: 11),
                           ),
                           children: [

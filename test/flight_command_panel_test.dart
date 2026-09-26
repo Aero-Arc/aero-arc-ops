@@ -23,6 +23,53 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets(
+    'shows verification progress separately from recovery deliveries',
+    (tester) async {
+      final api = AeroArcApiClient(
+        missionControlToken: 'trusted-session',
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'commands': [
+                {
+                  ...command('acknowledged'),
+                  'attempts': 3,
+                  'events': [
+                    {
+                      'stage': 'verifying_mission',
+                      'occurred_at': '2026-09-26T05:00:00Z',
+                      'received_at': '2026-09-26T05:00:01Z',
+                      'source': 'agent',
+                      'message': 'Verifying onboard mission',
+                    },
+                  ],
+                },
+              ],
+            }),
+            200,
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('ARM · Verifying onboard mission'), findsOneWidget);
+      expect(
+        find.textContaining('Initial delivery + 2 recovery deliveries'),
+        findsOneWidget,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('restores applied state without claiming observation', (
     tester,
   ) async {
