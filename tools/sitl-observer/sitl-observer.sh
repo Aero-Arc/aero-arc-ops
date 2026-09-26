@@ -69,8 +69,8 @@ validate_sitl_stream_rate() {
 
 sitl_vehicle_command() {
   local command
-  printf -v command 'cd %q && exec env -u DISPLAY -u WAYLAND_DISPLAY PYTHONUNBUFFERED=1 %q -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --out=udp:127.0.0.1:14550 %q' \
-    "$ARDUPILOT_SOURCE/ArduCopter" "$SIM_VEHICLE" "$RUN_DIR/sitl" "--mavproxy-args=--streamrate=$SITL_STREAM_RATE_HZ"
+  printf -v command 'cd %q && exec env -u DISPLAY -u WAYLAND_DISPLAY PYTHONUNBUFFERED=1 %q -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --add-param-file %q --out=udp:127.0.0.1:14550 %q' \
+    "$ARDUPILOT_SOURCE/ArduCopter" "$SIM_VEHICLE" "$RUN_DIR/sitl" "$SCRIPT_DIR/ui-command-defaults.parm" "--mavproxy-args=--streamrate=$SITL_STREAM_RATE_HZ"
   printf '%s\n' "$command"
 }
 
@@ -630,13 +630,7 @@ demo_flight() {
 mission_run() {
   tmux has-session -t "$TMUX_SESSION"
   api_post "/api/v1/flights/$FLIGHT_ID/start" >/dev/null
-  # These two parameters are local SITL scaffolding, not production aircraft
-  # commands. They let AUTO start without RC throttle input or a physical GPS
-  # safety environment while leaving ARM on the authenticated Relay/Agent path.
-  tmux send-keys -t "$TMUX_SESSION" "param set ARMING_CHECK 0" Enter
-  sleep 2
-  tmux send-keys -t "$TMUX_SESSION" "param set AUTO_OPTIONS 3" Enter
-  sleep 2
+  # AUTO options are installed at SITL startup for both UI and helper use.
   tmux send-keys -t "$TMUX_SESSION" "mode auto" Enter
   wait_vehicle_mode 3 AUTO
   aircraft_command arm

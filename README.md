@@ -311,8 +311,11 @@ embedded conformance evidence. Live-state polling remains independently aged.
 
 Mission import is deliberately constrained to a single MSL Polygon volume and
 the supported WPL 110 navigation commands. A mission cannot replace or reshape
-the operational intent. `sitl-mission-run` configures SITL-only AUTO behavior,
-selects AUTO in MAVProxy, waits until fresh API telemetry confirms that mode,
+the operational intent. `sitl-up` loads SITL-only `AUTO_OPTIONS=3` so the UI can
+arm in AUTO and start the uploaded mission without RC throttle input. Normal arming checks
+remain enabled; startup does not arm or start the aircraft. In the intent workflow,
+issue ARM and wait for observed armed state, then issue MISSION START.
+`sitl-mission-run` selects AUTO in MAVProxy, waits until fresh API telemetry confirms that mode,
 and sends ARM through the authenticated Relay/Agent command lifecycle. The
 checked-in observer mission deliberately ends at an airborne waypoint rather
 than LAND so the post-mission boundary checks remain possible; landing stays an

@@ -38,8 +38,10 @@ validate_sitl_stream_rate
 SITL_STREAM_RATE_HZ=7
 ARDUPILOT_SOURCE='/tmp/ardupilot source'
 SIM_VEHICLE='/tmp/sim vehicle.py'
-printf -v expected_command 'cd /tmp/ardupilot\\ source/ArduCopter && exec env -u DISPLAY -u WAYLAND_DISPLAY PYTHONUNBUFFERED=1 /tmp/sim\\ vehicle.py -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --out=udp:127.0.0.1:14550 --mavproxy-args=--streamrate=7' "$RUN_DIR/sitl"
+printf -v expected_command 'cd /tmp/ardupilot\\ source/ArduCopter && exec env -u DISPLAY -u WAYLAND_DISPLAY PYTHONUNBUFFERED=1 /tmp/sim\\ vehicle.py -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --add-param-file %q --out=udp:127.0.0.1:14550 --mavproxy-args=--streamrate=7' "$RUN_DIR/sitl" "$SCRIPT_DIR/ui-command-defaults.parm"
 [[ "$(sitl_vehicle_command)" == "$expected_command" ]]
+# Startup supplies only the required AUTO options, retaining arming checks.
+[[ $(sed '/^#/d; /^$/d' "$SCRIPT_DIR/ui-command-defaults.parm") == 'AUTO_OPTIONS 3' ]]
 for invalid_rate in 0 4.5 51 '4; touch /tmp/unsafe'; do
   SITL_STREAM_RATE_HZ=$invalid_rate
   if validate_sitl_stream_rate 2>/dev/null; then
