@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/conformance_history.dart';
 import 'dashboard_ui.dart';
 import 'conformance_evidence_field.dart';
+import 'operational_selection.dart';
 
 /// Focused operational context with optional durable evidence details.
 class ConformanceEventDialog extends StatelessWidget {
@@ -72,6 +73,17 @@ class ConformanceEventDialog extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 14),
+                Text(operationName(context, event.intentId, event.aircraftId)),
+                TextButton.icon(
+                  onPressed: () => focusOperation(
+                    context,
+                    event.aircraftId,
+                    intentId: event.intentId,
+                    closeDialog: true,
+                  ),
+                  icon: const Icon(Icons.my_location, size: 16),
+                  label: const Text('Focus in Overview'),
+                ),
                 Text(
                   title,
                   style: const TextStyle(

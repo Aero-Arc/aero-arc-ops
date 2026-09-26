@@ -8,8 +8,30 @@ trap 'rm -rf -- "$TEST_RUN_DIR"' EXIT
 export AERO_ARC_SITL_OBSERVER_SOURCE_ONLY=1
 export AERO_ARC_SITL_RUN_DIR=$TEST_RUN_DIR
 unset AERO_ARC_SITL_STREAM_RATE_HZ
+unset AERO_ARC_SITL_WEB_MODE
 # shellcheck source=sitl-observer.sh
 source "$SCRIPT_DIR/sitl-observer.sh"
+
+[[ "$OPS_WEB_MODE" == release ]]
+validate_ops_web_mode
+for mode in debug profile release; do
+  OPS_WEB_MODE=$mode
+  validate_ops_web_mode
+done
+OPS_WEB_MODE='invalid'
+if validate_ops_web_mode 2>/dev/null; then
+  echo 'invalid web mode was accepted' >&2
+  exit 1
+fi
+OPS_WEB_MODE=release
+# Stub in a subshell so subsequent process tests retain the real launcher.
+(
+  start_process() {
+    [[ "$1" == ops && "$2" == make ]]
+    [[ "${!#}" == WEB_MODE=release ]]
+  }
+  start_ops
+)
 
 [[ "$SITL_STREAM_RATE_HZ" == 4 ]]
 validate_sitl_stream_rate

@@ -11,7 +11,9 @@ Provide operators with a fast, readable surface for understanding whether the Ae
 ## Current Functionality
 
 - **Responsive shell** with desktop sidebar navigation and a mobile drawer.
-- **System overview** with status cards, latency and throughput charts, node heartbeats, and recent events.
+- **Operational overview** with a compact status strip, live fleet map, selected-aircraft inspector, active intents, fleet health table, conformance alerts, and filterable operational updates. The batch operations read model refreshes every second; selecting an aircraft loads its existing map read model for mission routes, replay, and operational volumes.
+- **Smooth map motion** interpolates markers and the following camera over 900 ms between fresh received samples, including shortest-path heading turns. Stale samples, recovery, and gaps over ten seconds snap to the received position. Reduced-motion preferences are respected. Readouts, breadcrumbs, and conformance retain the original telemetry; markers never extrapolate beyond the latest observation.
+- **Readiness** retains the original aircraft readiness, evidence records, operational intents, and reportability details at `/readiness`. Existing aircraft, intent, operations, preflight, conformance, maintenance, and records workflows remain available.
 - **Relay monitoring** with relay counts, health states, node counts, regions, message rates, and heartbeat freshness.
 - **Aircraft fleet view** with durable identity, readiness, active intent, registry placement, and telemetry recency.
 - **Live operations view** with connected/stale/offline/unmapped state and independently timestamped position, battery, vehicle, system, HUD, extended-state, and GPS samples.
@@ -27,6 +29,13 @@ Provide operators with a fast, readable surface for understanding whether the Ae
 - **Events and settings placeholders** for timeline review and environment configuration workflows.
 
 ## Tech Stack
+
+The overview displays unavailable feeds as unknown rather than healthy or zero.
+Weather, NOTAMs, peer airspace, aggregate infrastructure health, and mission
+progress require data not supplied by the operations read model. Flight controls
+remain in the existing aircraft workspace with their existing authorization and
+confirmation behavior. `AERO_ARC_ENVIRONMENT` sets the header's display label
+(default `Local`); it does not switch API endpoints or credentials.
 
 - Flutter 3.41+
 - Dart 3.11+
@@ -47,6 +56,11 @@ start the web server and open `http://localhost:7357` in your browser:
 ```sh
 make web
 ```
+
+For an optimized demo UI (no hot reload), use `make web-release` instead.
+It accepts the same `API_BASE_URL`, `WEB_PORT`, and `MISSION_DEPLOY_TOKEN`
+settings as `make web`. Stop an existing UI on that port first; there is no need
+to stop the API or simulator. `make web` remains the debug development workflow.
 
 Override the defaults when needed, for example:
 
@@ -91,7 +105,8 @@ lib/
     live_aircraft_state.dart # Registry plus independent telemetry groups
   main.dart                  # App shell, theme, routing, responsive navigation
   pages/
-    overview_page.dart       # System status, charts, heartbeats, event summary
+    overview_page.dart       # Map-first operational overview and fleet inspector
+    readiness_page.dart      # Preserved readiness, evidence, and reportability
     relays_page.dart         # Relay health and operational status
     agents_page.dart         # Agent fleet table and mission state
     registry_page.dart       # Live Operations and intent posture
@@ -192,6 +207,10 @@ The simulator keeps its parameters and logs under the observer runtime directory
 so existing files in the ArduPilot checkout do not affect a fresh demo. MAVProxy
 uses one explicit Agent output; automatic simulator outputs are disabled to
 avoid duplicate UDP connections to the same Agent.
+
+The SITL runner launches the UI in **release mode** by default. For development,
+use `AERO_ARC_SITL_WEB_MODE=debug make sitl-up` (or `profile` for profiling).
+Do not rerun `sitl-up` just to change the UI mode: it resets the demo stack.
 
 Open `http://localhost:7357`. `sitl-up` activates a ten-minute plan and gives
 Conformance a separate 24-hour monitoring authority. Crossing the planned end
@@ -349,5 +368,12 @@ and the isolated Compose stack before returning the startup error.
 - Add golden tests for responsive dashboard layouts.
 
 ## Repository Notes
+
+All maps use hosted [OpenFreeMap](https://openfreemap.org/) OpenStreetMap vector
+data with a dark style. No API key or self-hosted tiles are required. Attribution
+links remain visible on each map. Aircraft telemetry, mission overlays, and map
+interactions are independent of basemap loading; a failed style load offers a
+retry without hiding operational data. The public basemap service requires an
+internet connection and does not provide an availability SLA.
 
 Generated build output, local editor files, Flutter tool caches, and machine-specific platform files are ignored. Source, platform scaffolding, assets, tests, and `pubspec.lock` are tracked so the app can be reproduced consistently.

@@ -7,6 +7,7 @@ import '../models/aero_arc_models.dart';
 import '../models/conformance_history.dart';
 import 'dashboard_ui.dart';
 import 'conformance_event_dialog.dart';
+import 'operational_selection.dart';
 
 /// Reads persisted transitions independently of live-summary availability.
 class ConformanceHistoryPanel extends StatefulWidget {
@@ -48,6 +49,18 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
     _timer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (!_busy && !_paged) _load(background: true);
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final selected = OperationalSelectionScope.maybeOf(context)?.intentId;
+    if (selected != null &&
+        selected != _intent &&
+        _scopes.containsKey(selected)) {
+      _intent = selected;
+      _reset();
+    }
   }
 
   @override
@@ -162,7 +175,7 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
                     DropdownMenuItem(
                       value: s.intentId,
                       child: Text(
-                        '${s.aircraftId} · ${s.intentId}',
+                        '${operationName(context, s.intentId, s.aircraftId)} · ${shortOperationalId(s.intentId)}',
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
@@ -171,6 +184,12 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
                   if (value != null && value != _intent) {
                     setState(() {
                       _intent = value;
+                      final summary = _scopes[value];
+                      if (summary != null) {
+                        OperationalSelectionScope.maybeOf(
+                          context,
+                        )?.select(summary.aircraftId, intent: value);
+                      }
                       _reset();
                     });
                   }
@@ -360,9 +379,13 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
 String _utc(DateTime value) =>
     '${value.toUtc().toIso8601String().replaceFirst('T', ' ').replaceFirst('Z', '')} UTC';
 
-void _details(BuildContext context, ConformanceHistoryEvent e) =>
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black54,
-      builder: (_) => ConformanceEventDialog(event: e),
-    );
+void _details(BuildContext context, ConformanceHistoryEvent e) {
+  OperationalSelectionScope.maybeOf(
+    context,
+  )?.select(e.aircraftId, intent: e.intentId);
+  showDialog<void>(
+    context: context,
+    barrierColor: Colors.black54,
+    builder: (_) => ConformanceEventDialog(event: e),
+  );
+}
