@@ -188,6 +188,10 @@ make sitl-up
 make sitl-status
 ```
 
+The simulator uses the interactive MAVProxy text console in tmux; XLaunch and
+a desktop D-Bus session are not required. Startup output is retained in
+`/tmp/aero-arc-sitl-observer/logs/sitl.log`, including after startup failure.
+
 The simulator keeps its parameters and logs under the observer runtime directory,
 so existing files in the ArduPilot checkout do not affect a fresh demo. MAVProxy
 uses one explicit Agent output; automatic simulator outputs are disabled to
@@ -218,6 +222,11 @@ the API mission digest. Reconcile or retry the same durable command with:
 ```sh
 make sitl-mission-deploy
 ```
+
+Acceptance now commits a durable command for background dispatch; it does not
+mean Agent context is already installed. Startup polls the same deployment for
+up to three minutes to allow worker backoff and result delivery. This wait does
+not extend the command authorization deadline.
 
 The observer retains the API deployment ID. If the first request is pending,
 temporarily unavailable, or outcome-unknown, startup and the manual command
