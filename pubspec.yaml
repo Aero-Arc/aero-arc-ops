@@ -10,7 +10,9 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  flutter_map: ^7.0.2
+  flutter_map: ^8.3.0
+  flutter_map_vector_tiles: ^2.9.0
+  url_launcher: ^6.3.1
   http: ^1.2.2
   latlong2: ^0.9.1
   file_selector: 1.0.3
@@ -19,6 +21,8 @@ dependencies:
 # implementations require Flutter 3.44 even though file_selector 1.0.3 does not.
 dependency_overrides:
   file_selector_android: 0.5.2+6
+  # Newer Android launchers require Flutter 3.44; retain the 3.41 floor.
+  url_launcher_android: 6.3.30
 
 dev_dependencies:
   flutter_test:

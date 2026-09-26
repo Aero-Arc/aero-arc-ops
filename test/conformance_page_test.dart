@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +10,32 @@ import 'package:aero_arc_web/api/aero_arc_api.dart';
 import 'package:aero_arc_web/pages/telemetry_page.dart';
 
 void main() {
+  testWidgets('slow identity enrichment does not delay conformance evidence', (
+    tester,
+  ) async {
+    final names = Completer<http.Response>();
+    final client = AeroArcApiClient(
+      baseUri: Uri.parse('http://api.test'),
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/api/v1/operations') return names.future;
+        if (request.url.path == '/api/v1/conformance') {
+          return _jsonResponse(
+            _dashboardPayload(summaries: [_liveProjectionPayload()]),
+          );
+        }
+        return http.Response('not found', 404);
+      }),
+    );
+    await tester.pumpWidget(_testApp(client));
+    await tester.pumpAndSettle();
+    expect(find.text('aircraft-1 operation'), findsWidgets);
+    names.complete(http.Response('unavailable', 503));
+    await tester.pumpAndSettle();
+    expect(find.text('aircraft-1 operation'), findsWidgets);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('sample evaluation is hidden in normal builds', (tester) async {
     final client = AeroArcApiClient(
       baseUri: Uri.parse('http://api.test'),
@@ -106,7 +133,7 @@ void main() {
 
     await tester.pumpWidget(_testApp(client));
     await tester.pumpAndSettle();
-    expect(find.text('intent-1'), findsWidgets);
+    expect(find.text('aircraft-1 operation'), findsWidgets);
 
     await tester.tap(find.text('Evaluate API sample'));
     await tester.pumpAndSettle();
@@ -116,7 +143,7 @@ void main() {
 
     expect(find.text('Check failed'), findsOneWidget);
     expect(find.textContaining('API 404'), findsOneWidget);
-    expect(find.text('intent-1'), findsWidgets);
+    expect(find.text('aircraft-1 operation'), findsWidgets);
   });
 
   testWidgets('empty conformance view and check action fit narrow layouts', (
@@ -167,7 +194,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.tap(find.text('intent-live').first);
+      await tester.tap(find.text('aircraft-1 operation').first);
       await tester.pumpAndSettle();
       expect(find.byType(Dialog), findsOneWidget);
       expect(find.text('Evaluation at this observation'), findsOneWidget);

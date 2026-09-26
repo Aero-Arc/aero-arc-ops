@@ -7,11 +7,14 @@ import 'package:aero_arc_web/pages/agents_page.dart';
 import 'package:aero_arc_web/pages/aircraft_map_screen.dart';
 
 void main() {
-  testWidgets('shows readiness dashboard shell', (WidgetTester tester) async {
+  testWidgets('shows operations overview shell', (WidgetTester tester) async {
     await tester.pumpWidget(const AeroArcApp());
 
-    expect(find.text('Readiness'), findsOneWidget);
-    expect(find.text('Readiness Overview'), findsOneWidget);
+    expect(find.text('Overview'), findsWidgets);
+    expect(
+      find.text('Current operations · Fleet, missions, and airspace'),
+      findsOneWidget,
+    );
     expect(find.text('Loading'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });

@@ -15,6 +15,7 @@ ARDUPILOT_SOURCE=${ARDUPILOT_SOURCE:-$PARENT_DIR/ardupilot}
 SIM_VEHICLE=${SIM_VEHICLE:-$ARDUPILOT_SOURCE/Tools/autotest/sim_vehicle.py}
 API_URL=${AERO_ARC_SITL_API_URL:-http://127.0.0.1:8080}
 OPS_URL=${AERO_ARC_SITL_OPS_URL:-http://127.0.0.1:7357}
+OPS_WEB_MODE=${AERO_ARC_SITL_WEB_MODE:-release}
 AGENT_ID=${AERO_ARC_SITL_AGENT_ID:-7bddaca99083eb313cf715a7d02db998869892d466d2000407311a6cbf5f4725}
 AGENT_TOKEN=${AERO_ARC_SITL_AGENT_TOKEN:-sitl-agent-local-secret}
 MISSION_DEPLOY_TOKEN=${AERO_ARC_SITL_MISSION_DEPLOY_TOKEN:-sitl-mission-deployment-secret}
@@ -42,6 +43,18 @@ require_safe_run_dir() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || { echo "required command not found: $1" >&2; exit 1; }
+}
+
+validate_ops_web_mode() {
+  case "$OPS_WEB_MODE" in
+    debug|profile|release) ;;
+    *) echo "AERO_ARC_SITL_WEB_MODE must be debug, profile, or release" >&2; return 2 ;;
+  esac
+}
+
+start_ops() {
+  validate_ops_web_mode
+  start_process ops make -C "$OPS_DIR" web API_BASE_URL="$API_URL" MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" WEB_HOST=127.0.0.1 WEB_PORT=7357 WEB_MODE="$OPS_WEB_MODE"
 }
 
 validate_sitl_stream_rate() {
@@ -107,8 +120,8 @@ report_early_process_exit() {
 }
 
 wait_http() {
-  local name=$1 url=$2
-  for _ in $(seq 1 90); do
+  local name=$1 url=$2 attempts=${3:-90}
+  for _ in $(seq 1 "$attempts"); do
     if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then
       return 0
     fi
@@ -526,6 +539,7 @@ activate() {
 }
 
 up() {
+  validate_ops_web_mode
   require_safe_run_dir
   validate_sitl_stream_rate
   for command in docker curl go flutter grep jq openssl setsid tmux; do require_command "$command"; done
@@ -556,8 +570,9 @@ up() {
   start_process api env AERO_API_ADDR=127.0.0.1:8080 AERO_API_DURABLE_STORE=postgres AERO_API_DATABASE_URL="postgres://aero_arc:aero_arc@127.0.0.1:$CONFORMANCE_DB_PORT/aero_arc?sslmode=disable" AERO_API_AIRSPACE_PROVIDERS=local AERO_API_TELEMETRY_STORE=influxdb AERO_API_REPLAY_STORE=memory AERO_API_INFLUXDB_HOST="http://127.0.0.1:$INFLUX_PORT" AERO_API_INFLUXDB_TOKEN=local-development-no-auth AERO_API_INFLUXDB_DATABASE=aero_arc AERO_API_REGISTRY_MODE=grpc AERO_API_REGISTRY_ADDR=127.0.0.1:50051 AERO_API_RELAY_CONTROL_CA_FILE="$RUN_DIR/tls/ca.crt" AERO_API_RELAY_CONTROL_CERT_FILE="$RUN_DIR/tls/bootstrap.crt" AERO_API_RELAY_CONTROL_KEY_FILE="$RUN_DIR/tls/bootstrap.key" AERO_API_RELAY_CONTROL_SERVER_NAME=localhost AERO_API_MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" AERO_API_SEED= "$RUN_DIR/bin/api" start
   wait_http API "$API_URL/readyz"
   start_process agent env AERO_ARC_API_KEY="$AGENT_TOKEN" "$RUN_DIR/bin/agent" --server-address 127.0.0.1 --server-port 50050 --skip-tls-verification --debug --wal-path "$RUN_DIR/agent-wal.db" --wal-flush-timeout 250ms --aircraft-command-timeout 10s
-  start_process ops make -C "$OPS_DIR" web API_BASE_URL="$API_URL" MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" WEB_HOST=127.0.0.1 WEB_PORT=7357
-  wait_http Ops "$OPS_URL"
+  start_ops
+  # Cold release compilation can take longer than service startup.
+  wait_http Ops "$OPS_URL" 300
   # Create the durable operation and mission before SITL emits telemetry.
   activate --defer-deploy
   # Acceptance commits the command and outbox. The worker establishes Agent

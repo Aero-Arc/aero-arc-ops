@@ -7,6 +7,9 @@ import 'pages/intent_workflow_page.dart';
 import 'pages/maintenance_page.dart';
 import 'pages/nodes_page.dart';
 import 'pages/overview_page.dart';
+import 'pages/readiness_page.dart';
+import 'widgets/operations_header.dart';
+import 'widgets/operational_selection.dart';
 import 'pages/registry_page.dart';
 import 'pages/telemetry_page.dart';
 
@@ -19,53 +22,59 @@ class AeroArcApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const bg = Color(0xFF030B1F);
+    const bg = Color(0xFF0B1016);
 
-    return MaterialApp(
-      title: 'Aero Arc',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: bg,
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF626CFF),
-          secondary: Color(0xFF00CFA0),
-          surface: Color(0xFF07132E),
-          surfaceContainerLowest: Color(0xFF050F27),
-          surfaceContainerLow: Color(0xFF081734),
-          outline: Color(0xFF1A2D59),
-          outlineVariant: Color(0xFF12254F),
-        ),
-        textTheme: const TextTheme(
-          headlineMedium: TextStyle(
-            fontSize: 42,
-            fontWeight: FontWeight.w700,
-            height: 1.1,
+    return OperationalSelectionHost(
+      child: MaterialApp(
+        title: 'Aero Arc',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: bg,
+          colorScheme: const ColorScheme.dark(
+            primary: Color(0xFF16C8E0),
+            secondary: Color(0xFF21C997),
+            primaryContainer: Color(0xFF0D303A),
+            onPrimaryContainer: Color(0xFF50D9E9),
+            secondaryContainer: Color(0xFF0D303A),
+            onSecondaryContainer: Color(0xFF50D9E9),
+            surface: Color(0xFF101720),
+            surfaceContainerLowest: Color(0xFF0B1016),
+            surfaceContainerLow: Color(0xFF121B25),
+            outline: Color(0xFF263342),
+            outlineVariant: Color(0xFF202C39),
           ),
-          titleLarge: TextStyle(fontSize: 30, fontWeight: FontWeight.w700),
-          titleMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
-          bodyLarge: TextStyle(fontSize: 18, color: Color(0xFF9BA8C8)),
-          bodyMedium: TextStyle(fontSize: 16, color: Color(0xFF94A2C3)),
-          labelLarge: TextStyle(fontSize: 16, color: Color(0xFF7F8FB2)),
+          textTheme: const TextTheme(
+            headlineMedium: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              height: 1.1,
+            ),
+            titleLarge: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            bodyLarge: TextStyle(fontSize: 14, color: Color(0xFFA3AFBE)),
+            bodyMedium: TextStyle(fontSize: 13, color: Color(0xFFA3AFBE)),
+            labelLarge: TextStyle(fontSize: 13, color: Color(0xFF8797AB)),
+          ),
         ),
+        initialRoute: AppSection.overview.route,
+        onGenerateRoute: (settings) {
+          final route = _resolveRoute(settings.name);
+          final intentArgs = settings.arguments is IntentWorkflowRouteArguments
+              ? settings.arguments as IntentWorkflowRouteArguments
+              : null;
+          return _NoTransitionPageRoute(
+            settings: RouteSettings(name: route.name),
+            child: AppShell(
+              section: route.section,
+              aircraftMapId: route.aircraftMapId,
+              intentAircraftId: route.intentAircraftId,
+              intentArgs: intentArgs,
+            ),
+          );
+        },
       ),
-      initialRoute: AppSection.overview.route,
-      onGenerateRoute: (settings) {
-        final route = _resolveRoute(settings.name);
-        final intentArgs = settings.arguments is IntentWorkflowRouteArguments
-            ? settings.arguments as IntentWorkflowRouteArguments
-            : null;
-        return _NoTransitionPageRoute(
-          settings: RouteSettings(name: route.name),
-          child: AppShell(
-            section: route.section,
-            aircraftMapId: route.aircraftMapId,
-            intentAircraftId: route.intentAircraftId,
-            intentArgs: intentArgs,
-          ),
-        );
-      },
     );
   }
 }
@@ -168,8 +177,6 @@ class _DesktopShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Scaffold(
       body: Row(
         children: [
@@ -177,66 +184,7 @@ class _DesktopShell extends StatelessWidget {
           Expanded(
             child: Column(
               children: [
-                Container(
-                  height: 64,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF040D25),
-                    border: Border(
-                      bottom: BorderSide(color: colorScheme.outlineVariant),
-                    ),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 22),
-                    child: Row(
-                      children: [
-                        Text(
-                          _formattedNow(),
-                          style: Theme.of(context).textTheme.labelLarge,
-                        ),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF13244D),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: colorScheme.outlineVariant,
-                            ),
-                          ),
-                          child: const Row(
-                            children: [
-                              Icon(
-                                Icons.circle,
-                                size: 10,
-                                color: Color(0xFF00CFA0),
-                              ),
-                              SizedBox(width: 8),
-                              Text(
-                                'API dashboards',
-                                style: TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const CircleAvatar(
-                          radius: 16,
-                          backgroundColor: Color(0xFF5A6BFF),
-                          child: Text(
-                            'OP',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                const OperationsHeader(),
                 Expanded(
                   child: _sectionPage(
                     section,
@@ -265,9 +213,9 @@ class _Sidebar extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Container(
-      width: 220,
+      width: 200,
       decoration: BoxDecoration(
-        color: const Color(0xFF020A1D),
+        color: const Color(0xFF090E14),
         border: Border(right: BorderSide(color: colorScheme.outlineVariant)),
       ),
       child: SafeArea(
@@ -277,15 +225,19 @@ class _Sidebar extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
               child: Row(
                 children: [
-                  const Icon(Icons.bolt, size: 20, color: Color(0xFF5A6BFF)),
+                  const Icon(
+                    Icons.hexagon_outlined,
+                    size: 24,
+                    color: Color(0xFF16C8E0),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Aero Arc',
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontSize: 32,
-                        color: const Color(0xFF5E6FFF),
+                        fontSize: 18,
+                        color: const Color(0xFFE5EBF2),
                       ),
                     ),
                   ),
@@ -316,13 +268,13 @@ class _Sidebar extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'AERO_ARC_API_BASE_URL',
-                    style: TextStyle(color: Color(0xFF6B7DA8), fontSize: 12),
+                    'AERO ARC OPERATIONS',
+                    style: TextStyle(color: Color(0xFF8797AB), fontSize: 12),
                   ),
                   SizedBox(height: 6),
                   Text(
-                    'Defaults to localhost:8080',
-                    style: TextStyle(color: Color(0xFF5A6BFF), fontSize: 12),
+                    'Fleet & mission workspace',
+                    style: TextStyle(color: Color(0xFF16C8E0), fontSize: 12),
                   ),
                 ],
               ),
@@ -348,27 +300,27 @@ class _SidebarItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: selected ? const Color(0xFF2A3E7C) : Colors.transparent,
+              color: selected ? const Color(0xFF16404A) : Colors.transparent,
             ),
-            color: selected ? const Color(0xFF101C3B) : null,
+            color: selected ? const Color(0xFF0D242D) : null,
           ),
           child: Row(
             children: [
               Icon(
                 selected ? item.selectedIcon : item.icon,
-                size: 20,
+                size: 17,
                 color: selected
-                    ? const Color(0xFF6B7BFF)
-                    : const Color(0xFF8C9BBC),
+                    ? const Color(0xFF16C8E0)
+                    : const Color(0xFF8797AB),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -377,9 +329,9 @@ class _SidebarItem extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: selected
-                        ? const Color(0xFF7A89FF)
-                        : const Color(0xFF94A2C3),
-                    fontSize: 16,
+                        ? const Color(0xFF50D9E9)
+                        : const Color(0xFFA3AFBE),
+                    fontSize: 13,
                     fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                   ),
                 ),
@@ -477,7 +429,8 @@ Widget _sectionPage(
     );
   }
   return switch (section) {
-    AppSection.overview => const OverviewPage(),
+    AppSection.overview => OverviewPage(renderTiles: renderMapTiles),
+    AppSection.readiness => const ReadinessPage(),
     AppSection.aircraft => const AgentsPage(),
     AppSection.operations => const RegistryPage(),
     AppSection.preflight => const NodesPage(),
@@ -527,37 +480,18 @@ class _ResolvedRoute {
   final String? intentAircraftId;
 }
 
-String _formattedNow() {
-  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-  final now = DateTime.now();
-  var hour = now.hour;
-  final minute = now.minute.toString().padLeft(2, '0');
-  final suffix = hour >= 12 ? 'PM' : 'AM';
-  hour = hour % 12;
-  if (hour == 0) hour = 12;
-  return '${weekdays[now.weekday - 1]}, ${months[now.month - 1]} ${now.day}, ${now.year}, $hour:$minute $suffix';
-}
-
 enum AppSection {
   overview(
-    title: 'Readiness',
+    title: 'Overview',
     route: '/overview',
     icon: Icons.grid_view_outlined,
     selectedIcon: Icons.grid_view_rounded,
+  ),
+  readiness(
+    title: 'Readiness',
+    route: '/readiness',
+    icon: Icons.checklist_outlined,
+    selectedIcon: Icons.checklist,
   ),
   aircraft(
     title: 'Aircraft',

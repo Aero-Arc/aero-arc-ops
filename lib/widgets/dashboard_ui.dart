@@ -7,7 +7,7 @@ import '../models/aero_arc_models.dart';
 const aeroPageGradient = LinearGradient(
   begin: Alignment.topCenter,
   end: Alignment.bottomCenter,
-  colors: [Color(0xFF030B1F), Color(0xFF020815)],
+  colors: [Color(0xFF0B1016), Color(0xFF0B1016)],
 );
 
 class DashboardPage<T> extends StatefulWidget {
@@ -35,35 +35,40 @@ class DashboardPage<T> extends StatefulWidget {
 }
 
 class _DashboardPageState<T> extends State<DashboardPage<T>> {
-  late Future<T> _future;
   Timer? _refreshTimer;
   var _isRefreshing = false;
+  var _showLoading = true;
+  Object? _error;
   T? _lastData;
   var _hasLastData = false;
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _load();
     _scheduleRefresh();
   }
 
-  void _refresh() {
+  void _refresh({bool background = false}) {
     if (_isRefreshing) return;
-    setState(() {
-      _future = _load();
-    });
+    if (!background) setState(() => _showLoading = true);
+    _load();
   }
 
-  Future<T> _load() async {
+  Future<void> _load() async {
     _isRefreshing = true;
     try {
       final data = await widget.load();
+      if (!mounted) return;
       _lastData = data;
       _hasLastData = true;
-      return data;
+      _error = null;
+    } catch (error) {
+      if (!mounted) return;
+      _error = error;
     } finally {
       _isRefreshing = false;
+      if (mounted) setState(() => _showLoading = false);
     }
   }
 
@@ -72,7 +77,7 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
     final interval = widget.autoRefreshInterval;
     if (interval != null) {
       _refreshTimer = Timer.periodic(interval, (_) {
-        if (mounted) _refresh();
+        if (mounted) _refresh(background: true);
       });
     }
   }
@@ -84,7 +89,8 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
       _scheduleRefresh();
     }
     if (oldWidget.refreshTrigger != widget.refreshTrigger && !_isRefreshing) {
-      _future = _load();
+      _showLoading = true;
+      _load();
     }
   }
 
@@ -98,10 +104,9 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(gradient: aeroPageGradient),
-      child: FutureBuilder<T>(
-        future: _future,
-        builder: (context, snapshot) {
-          final isLoading = snapshot.connectionState == ConnectionState.waiting;
+      child: Builder(
+        builder: (context) {
+          final isLoading = _showLoading;
           final children = <Widget>[
             LayoutBuilder(
               builder: (context, constraints) {
@@ -112,13 +117,13 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
                       widget.title,
                       style: Theme.of(
                         context,
-                      ).textTheme.headlineMedium?.copyWith(fontSize: 46),
+                      ).textTheme.headlineMedium?.copyWith(fontSize: 22),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       widget.subtitle,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: const Color(0xFF7F90B6),
+                        color: const Color(0xFF8797AB),
                       ),
                     ),
                   ],
@@ -157,17 +162,17 @@ class _DashboardPageState<T> extends State<DashboardPage<T>> {
 
           if (isLoading && !_hasLastData) {
             children.add(const LoadingPanel());
-          } else if (snapshot.hasError && !_hasLastData) {
+          } else if (_error != null && !_hasLastData) {
             children.add(
-              ErrorPanel(error: snapshot.error.toString(), onRetry: _refresh),
+              ErrorPanel(error: _error.toString(), onRetry: _refresh),
             );
           } else if (_hasLastData) {
-            if (snapshot.hasError) {
+            if (_error != null) {
               children
                 ..add(
                   ErrorPanel(
                     title: 'Refresh failed',
-                    error: snapshot.error.toString(),
+                    error: _error.toString(),
                     onRetry: _refresh,
                   ),
                 )
@@ -204,9 +209,9 @@ class _PageLoadingIndicator extends StatelessWidget {
       bottom: 18,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: const Color(0xFF07132E),
+          color: const Color(0xFF101720),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFF12254F)),
+          border: Border.all(color: const Color(0xFF202C39)),
           boxShadow: const [
             BoxShadow(
               color: Color(0x66000000),
@@ -275,7 +280,7 @@ class EmptyPanel extends StatelessWidget {
       title: 'No data',
       child: Padding(
         padding: const EdgeInsets.all(18),
-        child: Text(message, style: const TextStyle(color: Color(0xFF93A3C7))),
+        child: Text(message, style: const TextStyle(color: Color(0xFFA3AFBE))),
       ),
     );
   }
@@ -330,9 +335,9 @@ class MetricCard extends StatelessWidget {
       constraints: const BoxConstraints(minHeight: 108),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF0A1531),
+        color: const Color(0xFF101720),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF12305F)),
+        border: Border.all(color: const Color(0xFF202C39)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -355,13 +360,13 @@ class MetricCard extends StatelessWidget {
             metric.value,
             style: Theme.of(
               context,
-            ).textTheme.titleMedium?.copyWith(fontSize: 34, color: color),
+            ).textTheme.titleMedium?.copyWith(fontSize: 24, color: color),
           ),
           if (metric.detail != null) ...[
             const SizedBox(height: 4),
             Text(
               metric.detail!,
-              style: const TextStyle(color: Color(0xFF8FA0C5), fontSize: 15),
+              style: const TextStyle(color: Color(0xFFA3AFBE), fontSize: 15),
             ),
           ],
         ],
@@ -384,34 +389,38 @@ class Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF08142F),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF112855)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.titleMedium?.copyWith(fontSize: 26),
+    return RepaintBoundary(
+      child: Material(
+        color: const Color(0xFF101720),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: Color(0xFF202C39)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 48,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.titleMedium?.copyWith(fontSize: 13),
+                    ),
                   ),
-                ),
-                ?trailing,
-              ],
+                  ?trailing,
+                ],
+              ),
             ),
-          ),
-          Container(height: 1, color: const Color(0xFF10254D)),
-          child,
-        ],
+            Container(height: 1, color: const Color(0xFF202C39)),
+            child,
+          ],
+        ),
       ),
     );
   }
@@ -445,7 +454,7 @@ class ActionRow extends StatelessWidget {
               const SizedBox(width: 10),
               const Icon(
                 Icons.chevron_right,
-                color: Color(0xFF6B75FF),
+                color: Color(0xFF16C8E0),
                 size: 20,
               ),
             ],
@@ -466,7 +475,7 @@ Future<void> showDetailsSheet(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    backgroundColor: const Color(0xFF07132E),
+    backgroundColor: const Color(0xFF101720),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
     ),
@@ -489,7 +498,7 @@ Future<void> showDetailsSheet(
                       child: Text(
                         title,
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: const Color(0xFFD6E0FF),
+                          color: const Color(0xFFE5EBF2),
                         ),
                       ),
                     ),
@@ -507,7 +516,7 @@ Future<void> showDetailsSheet(
                   ],
                 ),
                 const SizedBox(height: 12),
-                Container(height: 1, color: const Color(0xFF142B55)),
+                Container(height: 1, color: const Color(0xFF202C39)),
                 const SizedBox(height: 12),
                 ...children,
               ],
@@ -619,7 +628,7 @@ class DetailLine extends StatelessWidget {
             child: Text(
               label,
               style: const TextStyle(
-                color: Color(0xFF7D8DB4),
+                color: Color(0xFF8797AB),
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -627,7 +636,7 @@ class DetailLine extends StatelessWidget {
           Expanded(
             child: Text(
               value.isEmpty ? 'Not provided' : value,
-              style: const TextStyle(color: Color(0xFFC4D0EE), height: 1.35),
+              style: const TextStyle(color: Color(0xFFD4DCE6), height: 1.35),
             ),
           ),
         ],
@@ -648,7 +657,7 @@ class RowList extends StatelessWidget {
         padding: EdgeInsets.all(16),
         child: Text(
           'No records available.',
-          style: TextStyle(color: Color(0xFF93A3C7)),
+          style: TextStyle(color: Color(0xFFA3AFBE)),
         ),
       );
     }
@@ -659,7 +668,7 @@ class RowList extends StatelessWidget {
           for (var i = 0; i < children.length; i++) ...[
             children[i],
             if (i != children.length - 1)
-              const Divider(height: 24, color: Color(0xFF142B55)),
+              const Divider(height: 24, color: Color(0xFF202C39)),
           ],
         ],
       ),
@@ -740,7 +749,7 @@ Color statusColor(String status) {
     'applied' ||
     'already_applied' ||
     'confirmed' ||
-    'no' => const Color(0xFF00CFA0),
+    'no' => const Color(0xFF21C997),
     'review' ||
     'submitted' ||
     'due_soon' ||
@@ -764,12 +773,12 @@ Color statusColor(String status) {
     'non_conforming' ||
     'overdue' ||
     'emergency' ||
-    'offline' ||
     'rejected' ||
     'binding_mismatch' ||
     'onboard_mission_mismatch' ||
     'expired' => const Color(0xFFE14A5B),
-    'degraded' => const Color(0xFFE14A5B),
+    'degraded' => const Color(0xFFE4A100),
+    'offline' ||
     'missing' ||
     'unmapped' ||
     'unavailable' ||
@@ -779,7 +788,7 @@ Color statusColor(String status) {
     'credential_required' ||
     'tracking_unavailable' ||
     'not_ready' ||
-    'unknown' => const Color(0xFF7F90B6),
-    _ => const Color(0xFF6B75FF),
+    'unknown' => const Color(0xFF8797AB),
+    _ => const Color(0xFF16C8E0),
   };
 }
