@@ -239,6 +239,7 @@ void main() {
     expect(idempotencyKey, startsWith('ops-mission-import-'));
     expect(importAuthorization, 'Bearer local-dev-token');
     expect(importBody?['aircraft_id'], 'aircraft-1');
+    expect(importBody?['ending_behavior'], 'rtl');
     expect(importBody?['intent_id'], 'intent-1');
     expect(importBody?['intent_version'], 1);
     expect(find.text('1 item(s) · v1'), findsOneWidget);

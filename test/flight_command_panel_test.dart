@@ -24,6 +24,69 @@ Map<String, dynamic> command(String state) => {
 };
 void main() {
   testWidgets(
+    'completion evidence blocks controls until durable finalization',
+    (tester) async {
+      var finalized = false;
+      var notifications = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: 'trusted',
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response(
+              jsonEncode({
+                'state': finalized ? 'complete' : 'retrying',
+                'attempts': 2,
+                'error': finalized ? '' : 'monitoring temporarily unavailable',
+                'evidence': {
+                  'outcome': 'ended_early',
+                  'landed_at_unix_ns': 1700000000000000000,
+                  'disarmed_at_unix_ns': 1700000001000000000,
+                },
+              }),
+              200,
+            );
+          }
+          return http.Response(jsonEncode({'commands': []}), 200);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(
+                api: api,
+                flight: flight,
+                onFinalized: () async {
+                  notifications++;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Flight outcome'), findsOneWidget);
+      expect(find.textContaining('Cleanup will retry:'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'ARM'))
+            .onPressed,
+        isNull,
+      );
+      finalized = true;
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(find.text('Complete'), findsWidgets);
+      expect(notifications, 1);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(notifications, 1);
+      expect(find.textContaining('Cleanup will retry:'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
     'shows verification progress separately from recovery deliveries',
     (tester) async {
       final api = AeroArcApiClient(

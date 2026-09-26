@@ -94,6 +94,11 @@ class AeroArcApiClient {
     );
   }
 
+  Future<OperationalIntent> getOperationalIntent(String id) => _get(
+    '/api/v1/operational-intents/${Uri.encodeComponent(id)}',
+    OperationalIntent.fromJson,
+  );
+
   Future<OperationalIntent> createOperationalIntent(
     CreateOperationalIntentRequest request,
   ) {
@@ -189,6 +194,7 @@ class AeroArcApiClient {
       _get('/api/v1/aircraft/$aircraftId/flights', FlightListResponse.fromJson);
 
   Future<MissionImportResult> importMission({
+    String? endingBehavior,
     required String flightId,
     required String aircraftId,
     required String intentId,
@@ -202,12 +208,26 @@ class AeroArcApiClient {
       headers: _missionControlHeaders(idempotencyKey: idempotencyKey),
       body: {
         'source_format': 'qgc_wpl_110',
+        'ending_behavior': ?endingBehavior,
         'source': source,
         'aircraft_id': aircraftId,
         'intent_id': intentId,
         'intent_version': intentVersion,
       },
     );
+  }
+
+  Future<FlightCompletion?> flightCompletion(String flightId) async {
+    try {
+      return await _get(
+        '/api/v1/flights/${Uri.encodeComponent(flightId)}/completion',
+        FlightCompletion.fromJson,
+        headers: _missionControlHeaders(),
+      );
+    } on AeroArcApiException catch (error) {
+      if (error.statusCode == 404) return null;
+      rethrow;
+    }
   }
 
   /// Restores durable commands after navigation, reload, or a lost submission response.

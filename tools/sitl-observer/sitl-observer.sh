@@ -240,6 +240,7 @@ generate_tls() {
 generate_configs() {
   mkdir -p "$RUN_DIR/config"
   cat >"$RUN_DIR/config/relay.yaml" <<EOF
+completion_outbox_path: "$RUN_DIR/data/relay-completions.db"
 registry:
   enabled: true
   address: "127.0.0.1:50051"
@@ -391,7 +392,7 @@ import_mission() {
   local request_file=$RUN_DIR/mission-import-request.json
   jq --null-input --rawfile source "$source_file" \
     --arg aircraft_id "$AIRCRAFT_ID" --arg intent_id "$INTENT_ID" \
-    '{source_format:"qgc_wpl_110",source:$source,aircraft_id:$aircraft_id,intent_id:$intent_id,intent_version:1}' \
+    '{source_format:"qgc_wpl_110",ending_behavior:"rtl",source:$source,aircraft_id:$aircraft_id,intent_id:$intent_id,intent_version:1}' \
     >"$request_file"
   api_post_file "/api/v1/flights/$FLIGHT_ID/missions/import" "$request_file" "sitl-$FLIGHT_ID-mission-import" >/dev/null
   api_get_file "/api/v1/flights/$FLIGHT_ID/missions/current" "$RUN_DIR/current-mission.json"

@@ -12,15 +12,20 @@ class FlightCommandPanel extends StatefulWidget {
     super.key,
     required this.api,
     required this.flight,
+    this.onFinalized,
   });
   final AeroArcApiClient api;
   final FlightRecord flight;
+  final Future<void> Function()? onFinalized;
   @override
   State<FlightCommandPanel> createState() => _FlightCommandPanelState();
 }
 
 class _FlightCommandPanelState extends State<FlightCommandPanel> {
   List<FlightCommand> _commands = [];
+  FlightCompletion? _completion;
+  bool _reportedFinalization = false;
+  String? _completionError;
   Timer? _timer;
   String? _error, _pendingType, _pendingKey;
   bool _loading = true,
@@ -51,6 +56,36 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     _refreshing = true;
     try {
       final commands = await widget.api.flightCommands(widget.flight.id);
+      try {
+        final completion = await widget.api.flightCompletion(widget.flight.id);
+        if (mounted) {
+          setState(() {
+            _completion = completion;
+            _completionError = null;
+          });
+        }
+      } catch (error) {
+        if (mounted) {
+          setState(
+            () => _completionError = 'Completion status unavailable: $error',
+          );
+        }
+      }
+      if (mounted &&
+          _completion?.state == 'complete' &&
+          !_reportedFinalization) {
+        try {
+          await widget.onFinalized?.call();
+          _reportedFinalization = true;
+        } catch (error) {
+          if (mounted) {
+            setState(
+              () => _completionError =
+                  'Flight complete; summary refresh will retry: $error',
+            );
+          }
+        }
+      }
       if (mounted) {
         setState(() {
           _commands = commands;
@@ -136,6 +171,8 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   @override
   Widget build(BuildContext context) {
     final blocked =
+        _completion != null ||
+        widget.flight.status == "complete" ||
         _loading ||
         !_historyAvailable ||
         _sending ||
@@ -144,7 +181,9 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     return Panel(
       title: 'Aircraft commands',
       trailing: StatusBadge(
-        label: _loading
+        label: _completion != null
+            ? (_completion!.state == 'complete' ? 'complete' : 'finalizing')
+            : _loading
             ? 'loading'
             : !_historyAvailable
             ? 'unavailable'
@@ -163,6 +202,42 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
               'Issue an action, then follow its execution and vehicle evidence.',
               style: TextStyle(fontSize: 12, color: Color(0xFF8797AB)),
             ),
+            if (_completion != null) ...[
+              const SizedBox(height: 10),
+              DetailLine(
+                label: 'Flight outcome',
+                value: displayEnum(_completion!.outcome),
+              ),
+              DetailLine(
+                label: 'Finalization',
+                value: displayEnum(_completion!.state),
+              ),
+              DetailLine(
+                label: 'Landed',
+                value: formatDate(_completion!.landedAt),
+              ),
+              DetailLine(
+                label: 'Disarmed',
+                value: formatDate(_completion!.disarmedAt),
+              ),
+              if (_completion!.error.isNotEmpty)
+                Text(
+                  'Cleanup will retry: ${_completion!.error}',
+                  style: const TextStyle(color: Color(0xFFF1BD64)),
+                ),
+            ] else
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Automatic completion waits for mission/recovery, landed, and disarmed evidence.',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF8797AB)),
+                ),
+              ),
+            if (_completionError != null)
+              Text(
+                _completionError!,
+                style: const TextStyle(color: Color(0xFFF1BD64)),
+              ),
             if (!widget.api.hasLocalMissionControlToken)
               const Text(
                 'Configure the trusted local control session to issue commands.',

@@ -94,6 +94,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   Mission? _mission;
   MissionSourceSelection? _missionSource;
   String? _missionIdempotencyKey;
+  bool _returnHomeAfterMission = true;
+  String _selectedEndingBehavior = "rtl";
   bool _missionImportFailed = false;
   MissionDeployment? _missionDeployment;
   String? _missionDeploymentIdempotencyKey;
@@ -211,7 +213,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   void _startMissionStateRestore() {
     final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
     if (intent == null ||
-        (intent.status != 'accepted' && intent.status != 'active') ||
+        (!['accepted', 'active', 'complete'].contains(intent.status)) ||
         intent.aircraftId != widget.aircraftId) {
       _restoringMissionState = false;
       _missionRestoreError = null;
@@ -338,6 +340,26 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         _error = message;
       });
     }
+  }
+
+  Future<void> _refreshFinalizedFlight() async {
+    final flight = _flight;
+    if (flight == null) return;
+    final intent = await _apiClient.getOperationalIntent(flight.intentId);
+    final flights = await _apiClient.listAircraftFlights(widget.aircraftId);
+    if (!mounted || _flight?.id != flight.id) return;
+    final completed = flights.flights
+        .where((f) => f.id == flight.id)
+        .firstOrNull;
+    if (intent.status != 'complete' || completed?.status != 'complete') {
+      throw const AeroArcApiException('Finalized records not yet visible');
+    }
+    setState(() {
+      _intent = intent;
+      _acceptedIntent = null;
+      _activatedIntent = null;
+      _flight = completed;
+    });
   }
 
   void _retryMissionStateRestore() {
@@ -558,6 +580,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     setState(() {
       _missionSource = selected;
       _missionIdempotencyKey = 'ops-mission-import-$now';
+      _selectedEndingBehavior = _returnHomeAfterMission ? 'rtl' : 'land';
       _missionImportFailed = false;
     });
     await _importSelectedMission();
@@ -634,6 +657,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         intentId: intent.id,
         intentVersion: intent.version,
         source: selected.source,
+        endingBehavior: _selectedEndingBehavior,
         idempotencyKey: idempotencyKey,
       );
       final imported = result.mission;
@@ -703,6 +727,11 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           'Intent ${mission.intentId} v${mission.intentVersion}\n'
           'Mission ${mission.id} v${mission.version}\n'
           'Items ${mission.items.length}\n'
+          'Ending ${mission.items.last.command == 20
+              ? 'Return to launch'
+              : mission.items.last.command == 21
+              ? 'Land'
+              : 'Not configured'}\n'
           'Digest ${_shortDigest(mission.missionDigest)}\n\n'
           'This confirmation applies only to this exact immutable binding. The next action uploads the mission; it does not arm the aircraft, start the flight, or begin mission execution.',
         ),
@@ -1160,7 +1189,11 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
 
   bool get _editingLocked =>
       _activatedIntent != null ||
-      (_intent ?? _sourceIntent)?.status == 'active';
+      [
+        'active',
+        'complete',
+        'canceled',
+      ].contains((_intent ?? _sourceIntent)?.status);
 
   @override
   Widget build(BuildContext context) {
@@ -1295,6 +1328,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       onActivate: _activateIntent,
     );
     final missionImport = _MissionImportPanel(
+      returnHome: _returnHomeAfterMission,
+      onReturnHomeChanged: (value) =>
+          setState(() => _returnHomeAfterMission = value),
       intent: _acceptedIntent ?? _intent ?? _sourceIntent,
       flight: _flight,
       mission: _mission,
@@ -1339,6 +1375,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
             key: ValueKey(_flight!.id),
             api: _apiClient,
             flight: _flight!,
+            onFinalized: _refreshFinalizedFlight,
           );
     return Container(
       decoration: const BoxDecoration(gradient: aeroPageGradient),
@@ -2300,7 +2337,11 @@ class _ChecksPanel extends StatelessWidget {
 }
 
 class _MissionImportPanel extends StatelessWidget {
+  final bool returnHome;
+  final ValueChanged<bool> onReturnHomeChanged;
   const _MissionImportPanel({
+    required this.returnHome,
+    required this.onReturnHomeChanged,
     required this.intent,
     required this.flight,
     required this.mission,
@@ -2355,6 +2396,23 @@ class _MissionImportPanel extends StatelessWidget {
               'Import a QGC WPL 110 route after accepting the intent. The route is checked against this exact authorization version; it never changes the authorized volume.',
               style: TextStyle(color: Color(0xFF93A3C7), height: 1.4),
             ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: returnHome,
+              onChanged: busy
+                  ? null
+                  : (value) => onReturnHomeChanged(value ?? true),
+              title: const Text('Return to launch after mission'),
+              subtitle: Text(
+                returnHome
+                    ? 'Default · add RTL to the onboard plan. HOME and RTL settings determine the return and landing.'
+                    : 'Land at the final mission location.',
+              ),
+            ),
+            const Text(
+              'The selected ending is saved with the new mission version. Flight completion requires landed and disarmed evidence.',
+              style: TextStyle(color: Color(0xFF93A3C7), fontSize: 12),
+            ),
             const SizedBox(height: 10),
             DetailLine(
               label: 'Binding',
@@ -2388,6 +2446,15 @@ class _MissionImportPanel extends StatelessWidget {
                   ? 'Not validated'
                   : '${mission!.items.length} item(s) · v${mission!.version}',
             ),
+            if (mission != null && mission!.items.isNotEmpty)
+              DetailLine(
+                label: 'Onboard ending',
+                value: mission!.items.last.command == 20
+                    ? 'Return to launch'
+                    : mission!.items.last.command == 21
+                    ? 'Land'
+                    : 'Not configured',
+              ),
             if (mission != null)
               DetailLine(
                 label: 'Digest',

@@ -1719,7 +1719,8 @@ List<LatLng> projectedPositionTrack(
 List<LatLng> missionPath(Mission? mission) {
   if (mission == null) return const [];
   return [
-    for (final item in mission.items) LatLng(item.latitude, item.longitude),
+    for (final item in mission.items)
+      if (item.command != 20) LatLng(item.latitude, item.longitude),
   ];
 }
 

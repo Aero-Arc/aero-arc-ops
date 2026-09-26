@@ -1054,6 +1054,16 @@ void main() {
     expect(track.last.longitude, greaterThan(track.first.longitude));
   });
 
+  test('terminal RTL is not rendered as a zero-coordinate waypoint', () {
+    final mission = Mission.fromJson({
+      'items': [
+        {'command': 16, 'latitude_e7': 350000000, 'longitude_e7': -970000000},
+        {'command': 20, 'latitude_e7': 0, 'longitude_e7': 0},
+      ],
+    });
+    expect(missionPath(mission), [const LatLng(35, -97)]);
+  });
+
   test('commanded mission path preserves waypoint sequence', () {
     final path = missionPath(sampleMapView().commandedMission);
 

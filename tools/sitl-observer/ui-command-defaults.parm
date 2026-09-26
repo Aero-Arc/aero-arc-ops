@@ -2,3 +2,7 @@
 # This configures eligibility; it does not arm or start the aircraft.
 # Keep normal arming checks enabled.
 AUTO_OPTIONS 3
+
+# Local SITL recovery: RTL lands and then disarms without RC intervention.
+RTL_ALT_FINAL 0
+DISARM_DELAY 5
