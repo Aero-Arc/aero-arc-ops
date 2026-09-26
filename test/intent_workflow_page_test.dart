@@ -12,6 +12,71 @@ import 'package:aero_arc_web/models/aero_arc_models.dart';
 import 'package:aero_arc_web/pages/intent_workflow_page.dart';
 
 void main() {
+  for (final width in [390.0, 1600.0]) {
+    testWidgets(
+      'restores active operation without geometry arguments at $width px',
+      (tester) async {
+        tester.view.physicalSize = Size(width, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final source = _intentJson(status: 'active', name: 'Inspection');
+        final requests = <String>[];
+        final api = AeroArcApiClient(
+          httpClient: MockClient((request) async {
+            requests.add(request.method);
+            if (request.url.path.endsWith('/map')) {
+              return _jsonResponse({
+                'aircraft': {'id': 'aircraft-1'},
+                'active_intent': source,
+                'operational_volumes': [
+                  {..._volumeJson(), 'altitude_ref': 'msl'},
+                ],
+              });
+            }
+            if (request.url.path.endsWith('/state')) {
+              return _jsonResponse({
+                'aircraft_id': 'aircraft-1',
+                'telemetry': {'status': 'missing'},
+              });
+            }
+            return _jsonResponse({'flights': []});
+          }),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: IntentWorkflowPage(
+                aircraftId: 'aircraft-1',
+                apiClient: api,
+                renderTiles: false,
+                initialIntent: OperationalIntent.fromJson(source),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Operation map'), findsOneWidget);
+        expect(find.text('Position unavailable'), findsOneWidget);
+        final polygons = tester.widgetList<PolygonLayer>(
+          find.byType(PolygonLayer),
+        );
+        expect(
+          polygons.any(
+            (layer) => layer.polygons.any(
+              (polygon) => polygon.points.first.longitude == -97.52,
+            ),
+          ),
+          isTrue,
+        );
+        expect(find.text('Draft form'), findsNothing);
+        expect(requests.every((method) => method == 'GET'), isTrue);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   testWidgets(
     'new intent starts with one route point at the aircraft position',
     (WidgetTester tester) async {

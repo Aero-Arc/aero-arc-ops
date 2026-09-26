@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../models/command.dart';
+import 'dashboard_ui.dart';
 
 /// Flight controls backed by durable command acceptance and restored history.
 class FlightCommandPanel extends StatefulWidget {
@@ -140,47 +141,91 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
         _sending ||
         _pendingKey != null ||
         _commands.any((c) => c.unresolved);
-    return Card(
+    return Panel(
+      title: 'Aircraft commands',
+      trailing: StatusBadge(
+        label: _loading
+            ? 'loading'
+            : !_historyAvailable
+            ? 'unavailable'
+            : _sending
+            ? 'sending'
+            : _pendingKey != null || _commands.any((c) => c.unresolved)
+            ? 'pending'
+            : 'ready',
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Aircraft commands',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
             const Text(
-              'Accepted → acknowledged → applied. Vehicle observation is recorded separately.',
+              'Issue an action, then follow its execution and vehicle evidence.',
+              style: TextStyle(fontSize: 12, color: Color(0xFF8797AB)),
             ),
             if (!widget.api.hasLocalMissionControlToken)
               const Text(
                 'Configure the trusted local control session to issue commands.',
               ),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final type in [
-                  'ARM',
-                  'DISARM',
-                  'MISSION_START',
-                  'PAUSE',
-                  'RESUME',
-                  'RTL',
-                  'LAND',
-                ])
-                  OutlinedButton(
-                    onPressed:
-                        blocked || !widget.api.hasLocalMissionControlToken
-                        ? null
-                        : () => _submit(type),
-                    child: Text(type.replaceAll('_', ' ')),
-                  ),
-              ],
-            ),
+            for (final group in const [
+              ('AIRCRAFT', ['ARM', 'DISARM']),
+              ('MISSION', ['MISSION_START', 'PAUSE', 'RESUME']),
+              ('RECOVERY', ['RTL', 'LAND']),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      group.$1,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        letterSpacing: 1,
+                        color: Color(0xFF8797AB),
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final type in group.$2)
+                          OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(72, 34),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                              ),
+                              foregroundColor: group.$1 == 'RECOVERY'
+                                  ? const Color(0xFFF1BD64)
+                                  : const Color(0xFFD6E0FF),
+                              textStyle: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            onPressed:
+                                blocked ||
+                                    !widget.api.hasLocalMissionControlToken
+                                ? null
+                                : () => _submit(type),
+                            child: Text(type.replaceAll('_', ' ')),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            if (_commands.any((c) => c.unresolved))
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'An aircraft command is unresolved. Follow its evidence or reconcile the same command.',
+                  style: TextStyle(fontSize: 11, color: Color(0xFFF1BD64)),
+                ),
+              ),
             if (_pendingKey != null)
               TextButton(
                 onPressed: _sending ? null : () => _submit(_pendingType!),
@@ -197,7 +242,15 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
               ),
             Row(
               children: [
-                const Expanded(child: Text('Command history')),
+                Expanded(
+                  child: Text(
+                    'Command history · ${_commands.length}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
                 IconButton(
                   tooltip: 'Refresh command history',
                   onPressed: () => unawaited(_refresh()),
@@ -207,56 +260,73 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
             ),
             if (!_loading && _commands.isEmpty)
               const Text('No accepted commands for this flight.'),
-            for (final command in _commands)
-              ExpansionTile(
-                key: ValueKey(command.id),
-                title: Text(
-                  '${command.type.replaceAll('_', ' ')} · ${command.state.replaceAll('_', ' ')}',
-                ),
-                subtitle: Text(
-                  'Observation: ${command.observationState} · ${command.attempts} delivery attempts',
-                ),
-                children: [
-                  SelectableText(command.id),
-                  if (command.unresolved ||
-                      (command.state == 'applied' &&
-                          command.observationState == 'pending'))
-                    TextButton(
-                      onPressed: _sending
-                          ? null
-                          : () async {
-                              setState(() => _sending = true);
-                              try {
-                                await widget.api.reconcileFlightCommand(
-                                  widget.flight.id,
-                                  command.id,
-                                );
-                                await _refresh();
-                              } catch (e) {
-                                if (mounted) {
-                                  setState(
-                                    () => _error =
-                                        'Evidence recovery unavailable: $e',
-                                  );
-                                }
-                              } finally {
-                                if (mounted) setState(() => _sending = false);
-                              }
-                            },
-                      child: const Text('Reconcile existing command'),
-                    ),
+            if (_commands.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 240),
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      for (final command in _commands)
+                        ExpansionTile(
+                          key: ValueKey(command.id),
+                          tilePadding: EdgeInsets.zero,
+                          childrenPadding: const EdgeInsets.only(bottom: 10),
+                          dense: true,
+                          title: Text(
+                            '${command.type.replaceAll('_', ' ')} · ${command.state.replaceAll('_', ' ')}',
+                          ),
+                          subtitle: Text(
+                            'Observation: ${command.observationState} · ${command.attempts} delivery attempts',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          children: [
+                            SelectableText(command.id),
+                            if (command.unresolved ||
+                                (command.state == 'applied' &&
+                                    command.observationState == 'pending'))
+                              TextButton(
+                                onPressed: _sending
+                                    ? null
+                                    : () async {
+                                        setState(() => _sending = true);
+                                        try {
+                                          await widget.api
+                                              .reconcileFlightCommand(
+                                                widget.flight.id,
+                                                command.id,
+                                              );
+                                          await _refresh();
+                                        } catch (e) {
+                                          if (mounted) {
+                                            setState(
+                                              () => _error =
+                                                  'Evidence recovery unavailable: $e',
+                                            );
+                                          }
+                                        } finally {
+                                          if (mounted) {
+                                            setState(() => _sending = false);
+                                          }
+                                        }
+                                      },
+                                child: const Text('Reconcile existing command'),
+                              ),
 
-                  for (final event in command.events)
-                    ListTile(
-                      dense: true,
-                      title: Text(
-                        '${event.stage.replaceAll('_', ' ')} · ${event.occurredAt.toLocal()}',
-                      ),
-                      subtitle: Text(
-                        '${event.message}\nSource: ${event.source} · Received: ${event.receivedAt.toLocal()}',
-                      ),
-                    ),
-                ],
+                            for (final event in command.events)
+                              ListTile(
+                                dense: true,
+                                title: Text(
+                                  '${event.stage.replaceAll('_', ' ')} · ${event.occurredAt.toLocal()}',
+                                ),
+                                subtitle: Text(
+                                  '${event.message}\nSource: ${event.source} · Received: ${event.receivedAt.toLocal()}',
+                                ),
+                              ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
               ),
           ],
         ),
