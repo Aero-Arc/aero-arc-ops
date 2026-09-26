@@ -376,8 +376,7 @@ class _ConformanceHistoryPanelState extends State<ConformanceHistoryPanel> {
   }
 }
 
-String _utc(DateTime value) =>
-    '${value.toUtc().toIso8601String().replaceFirst('T', ' ').replaceFirst('Z', '')} UTC';
+String _utc(DateTime value) => '${formatDate(value, utc: true)} UTC';
 
 void _details(BuildContext context, ConformanceHistoryEvent e) {
   OperationalSelectionScope.maybeOf(

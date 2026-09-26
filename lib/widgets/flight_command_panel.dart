@@ -316,10 +316,10 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                               ListTile(
                                 dense: true,
                                 title: Text(
-                                  '${event.stage.replaceAll('_', ' ')} · ${event.occurredAt.toLocal()}',
+                                  '${event.stage.replaceAll('_', ' ')} · ${formatDate(event.occurredAt)}',
                                 ),
                                 subtitle: Text(
-                                  '${event.message}\nSource: ${event.source} · Received: ${event.receivedAt.toLocal()}',
+                                  '${event.message}\nSource: ${event.source} · Received: ${formatDate(event.receivedAt)}',
                                 ),
                               ),
                           ],

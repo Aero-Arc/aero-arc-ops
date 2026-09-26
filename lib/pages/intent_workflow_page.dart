@@ -3252,7 +3252,7 @@ class _DateField extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Expanded(child: Text(_formatDateOnly(value))),
+                Expanded(child: Text(formatDateOnly(value))),
                 const Icon(Icons.calendar_month),
               ],
             ),
@@ -3601,14 +3601,7 @@ String _formatTimeSlot(String slot) {
   final parts = slot.split(':');
   final hour = int.parse(parts[0]);
   final minute = int.parse(parts[1]);
-  final suffix = hour >= 12 ? 'PM' : 'AM';
-  var displayHour = hour % 12;
-  if (displayHour == 0) displayHour = 12;
-  return '$displayHour:${_twoDigits(minute)} $suffix';
-}
-
-String _formatDateOnly(DateTime value) {
-  return '${value.year}-${_twoDigits(value.month)}-${_twoDigits(value.day)}';
+  return formatTime(DateTime(2000, 1, 1, hour, minute));
 }
 
 String _twoDigits(int value) => value.toString().padLeft(2, '0');

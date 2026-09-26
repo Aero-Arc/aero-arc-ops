@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'dashboard_ui.dart';
 
 /// Shared operator header. Environment and identity are never inferred.
 class OperationsHeader extends StatefulWidget {
@@ -27,9 +28,6 @@ class _OperationsHeaderState extends State<OperationsHeader> {
     _clock.cancel();
     super.dispose();
   }
-
-  String _time(DateTime date) =>
-      '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}:${date.second.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) => Container(
@@ -99,12 +97,12 @@ class _OperationsHeaderState extends State<OperationsHeader> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                '${_time(_now.toUtc())} UTC',
+                '${formatDate(_now, utc: true)} UTC',
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
               ),
               const SizedBox(height: 4),
               Text(
-                '${_time(_now)} ${_now.timeZoneName}',
+                '${formatDate(_now)} ${_now.timeZoneName}',
                 style: const TextStyle(fontSize: 10, color: Color(0xFF8797AB)),
               ),
             ],
