@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math';
+
 import 'package:flutter/material.dart';
+
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../models/command.dart';
@@ -27,6 +29,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   bool _reportedFinalization = false;
   String? _completionError;
   Timer? _timer;
+  int _historyGeneration = 0;
   String? _error, _pendingType, _pendingKey;
   bool _loading = true,
       _sending = false,
@@ -49,31 +52,54 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   }
 
   Future<void> _refresh() async {
-    if (_refreshing || !widget.api.hasLocalMissionControlToken) {
+    if (_refreshing || _sending || !widget.api.hasLocalMissionControlToken) {
       if (mounted && _loading) setState(() => _loading = false);
       return;
     }
     _refreshing = true;
     try {
+      await Future.wait([
+        _refreshHistory(_historyGeneration),
+        _refreshCompletion(),
+      ]);
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Future<void> _refreshHistory(int generation) async {
+    try {
       final commands = await widget.api.flightCommands(widget.flight.id);
-      try {
-        final completion = await widget.api.flightCompletion(widget.flight.id);
-        if (mounted) {
-          setState(() {
-            _completion = completion;
-            _completionError = null;
-          });
-        }
-      } catch (error) {
-        if (mounted) {
-          setState(
-            () => _completionError = 'Completion status unavailable: $error',
-          );
-        }
+      if (mounted && generation == _historyGeneration) {
+        setState(() {
+          _commands = commands;
+          _loading = false;
+          _historyAvailable = true;
+          if (_error?.startsWith('Command history unavailable:') ?? false) {
+            _error = null;
+          }
+        });
       }
-      if (mounted &&
-          _completion?.state == 'complete' &&
-          !_reportedFinalization) {
+    } catch (e) {
+      if (mounted && generation == _historyGeneration) {
+        setState(() {
+          _error = 'Command history unavailable: $e';
+          _historyAvailable = false;
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshCompletion() async {
+    try {
+      final completion = await widget.api.flightCompletion(widget.flight.id);
+      if (!mounted) return;
+      setState(() {
+        _completion = completion;
+        _completionError = null;
+      });
+      if (completion?.state == 'complete' && !_reportedFinalization) {
         try {
           await widget.onFinalized?.call();
           _reportedFinalization = true;
@@ -86,26 +112,12 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
           }
         }
       }
+    } catch (error) {
       if (mounted) {
-        setState(() {
-          _commands = commands;
-          _loading = false;
-          _historyAvailable = true;
-          if (_error?.startsWith('Command history unavailable:') ?? false) {
-            _error = null;
-          }
-        });
+        setState(
+          () => _completionError = 'Completion status unavailable: $error',
+        );
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = 'Command history unavailable: $e';
-          _historyAvailable = false;
-          _loading = false;
-        });
-      }
-    } finally {
-      _refreshing = false;
     }
   }
 
@@ -142,6 +154,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     }
     setState(() {
       _sending = true;
+      _historyGeneration++;
       _error = null;
     });
     try {

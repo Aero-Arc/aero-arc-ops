@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -23,6 +25,90 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets('completion refresh survives unavailable command history', (
+    tester,
+  ) async {
+    var finalized = 0;
+    final api = AeroArcApiClient(
+      missionControlToken: 'trusted-session',
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response(
+            '{"event_id":"event","state":"complete","outcome":"mission_completed"}',
+            200,
+          );
+        }
+        return http.Response('unavailable', 503);
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(
+              api: api,
+              flight: flight,
+              onFinalized: () async {
+                finalized++;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(finalized, 1);
+    expect(find.textContaining('Command history unavailable:'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('older history response cannot erase a newly accepted command', (
+    tester,
+  ) async {
+    final stale = Completer<http.Response>();
+    var reads = 0;
+    final api = AeroArcApiClient(
+      missionControlToken: 'trusted-session',
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
+        if (request.method == 'GET') {
+          reads++;
+          if (reads == 2) return stale.future;
+          return http.Response('{"commands":[]}', 200);
+        }
+        return http.Response(jsonEncode(command('accepted')), 202);
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(api: api, flight: flight),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+    expect(reads, 2);
+    await tester.tap(find.text('ARM'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Issue command'));
+    await tester.pumpAndSettle();
+    stale.complete(http.Response('{"commands":[]}', 200));
+    await tester.pumpAndSettle();
+    expect(find.text('ARM · accepted'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'LAND'))
+          .onPressed,
+      isNull,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
     'completion evidence blocks controls until durable finalization',
     (tester) async {

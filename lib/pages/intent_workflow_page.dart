@@ -365,7 +365,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   void _retryMissionStateRestore() {
     final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
     if (intent == null ||
-        (intent.status != 'accepted' && intent.status != 'active') ||
+        (intent.status != 'accepted' &&
+            intent.status != 'active' &&
+            intent.status != 'complete') ||
         intent.aircraftId != widget.aircraftId) {
       return;
     }
@@ -1416,7 +1418,15 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           api: _apiClient,
                           intent: currentIntent,
                           aircraftId: widget.aircraftId,
-                          initialVolumes: _savedVolumes,
+                          initialVolumes: [
+                            ..._savedVolumes,
+                            if (_volume != null &&
+                                _volume!.intentId == currentIntent.id &&
+                                _volume!.intentVersion ==
+                                    currentIntent.version &&
+                                !_savedVolumes.any((v) => v.id == _volume!.id))
+                              _volume!,
+                          ],
                           mission: _mission,
                           renderTiles: widget.renderTiles,
                           onVolumesLoaded: _restoreGeometry,
