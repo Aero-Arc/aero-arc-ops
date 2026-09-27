@@ -1379,7 +1379,15 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
                           api: _apiClient,
                           intent: currentIntent,
                           aircraftId: widget.aircraftId,
-                          initialVolumes: _savedVolumes,
+                          initialVolumes: [
+                            ..._savedVolumes,
+                            if (_volume != null &&
+                                _volume!.intentId == currentIntent.id &&
+                                _volume!.intentVersion ==
+                                    currentIntent.version &&
+                                !_savedVolumes.any((v) => v.id == _volume!.id))
+                              _volume!,
+                          ],
                           mission: _mission,
                           renderTiles: widget.renderTiles,
                           onVolumesLoaded: _restoreGeometry,

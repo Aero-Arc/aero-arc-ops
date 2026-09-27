@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math';
+
 import 'package:flutter/material.dart';
+
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../models/command.dart';
@@ -22,6 +24,7 @@ class FlightCommandPanel extends StatefulWidget {
 class _FlightCommandPanelState extends State<FlightCommandPanel> {
   List<FlightCommand> _commands = [];
   Timer? _timer;
+  int _historyGeneration = 0;
   String? _error, _pendingType, _pendingKey;
   bool _loading = true,
       _sending = false,
@@ -44,14 +47,15 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   }
 
   Future<void> _refresh() async {
-    if (_refreshing || !widget.api.hasLocalMissionControlToken) {
+    if (_refreshing || _sending || !widget.api.hasLocalMissionControlToken) {
       if (mounted && _loading) setState(() => _loading = false);
       return;
     }
     _refreshing = true;
+    final generation = _historyGeneration;
     try {
       final commands = await widget.api.flightCommands(widget.flight.id);
-      if (mounted) {
+      if (mounted && generation == _historyGeneration) {
         setState(() {
           _commands = commands;
           _loading = false;
@@ -62,7 +66,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
         });
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && generation == _historyGeneration) {
         setState(() {
           _error = 'Command history unavailable: $e';
           _historyAvailable = false;
@@ -107,6 +111,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     }
     setState(() {
       _sending = true;
+      _historyGeneration++;
       _error = null;
     });
     try {
