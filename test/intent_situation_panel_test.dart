@@ -63,6 +63,36 @@ Widget page(AeroArcApiClient api, {int version = 1}) => MaterialApp(
 );
 
 void main() {
+  for (final connection in [
+    'connected',
+    'stale',
+    'offline',
+    'unmapped',
+    'unavailable',
+  ]) {
+    testWidgets('shows $connection registry independently of fresh position', (
+      tester,
+    ) async {
+      final api = AeroArcApiClient(
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/map')) {
+            return jsonResponse(mapView(1));
+          }
+          return jsonResponse({
+            ...state('fresh'),
+            'connection': {'connection_status': connection},
+          });
+        }),
+      );
+      await tester.pumpWidget(page(api));
+      await tester.pumpAndSettle();
+      expect(find.text('REGISTRY CONNECTION'), findsOneWidget);
+      expect(find.text(connection), findsOneWidget);
+      expect(find.text('POSITION · fresh'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets(
     'restores saved boundary without passed geometry and preserves stale position identity',
     (tester) async {

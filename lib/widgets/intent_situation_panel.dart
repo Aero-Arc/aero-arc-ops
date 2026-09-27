@@ -397,6 +397,13 @@ class _IntentSituationPanelState extends State<IntentSituationPanel> {
                   runSpacing: 8,
                   children: [
                     _reading(
+                      'REGISTRY CONNECTION',
+                      _liveError != null
+                          ? 'unavailable'
+                          : _live?.connection.status ?? 'unavailable',
+                      _live?.connection.lastHeartbeatAt,
+                    ),
+                    _reading(
                       'POSITION · ${_liveError != null ? 'unavailable' : position?.status ?? 'missing'}',
                       position == null
                           ? 'No sample'
