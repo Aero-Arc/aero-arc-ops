@@ -381,6 +381,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   }
 
   Future<void> _saveAndCheck() async {
+    final status = (_intent ?? _sourceIntent)?.status;
+    if (status == 'complete' || status == 'canceled') return;
     if (_missionRestoreError != null) {
       setState(
         () => _error =
@@ -1304,7 +1306,10 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     );
     final checks = _ChecksPanel(
       busy: workflowBusy,
-      checksBlocked: _missionRestoreError != null,
+      checksBlocked:
+          _missionRestoreError != null ||
+          currentIntent?.status == 'complete' ||
+          currentIntent?.status == 'canceled',
       sourceIntent: _sourceIntent,
       modifyResult: _modifyResult,
       intent: currentIntent,
@@ -1324,7 +1329,10 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           (currentIntent?.status == 'active' ? currentIntent : null),
       checksClear: _checksClear,
       busy: workflowBusy,
-      checksBlocked: _missionRestoreError != null,
+      checksBlocked:
+          _missionRestoreError != null ||
+          currentIntent?.status == 'complete' ||
+          currentIntent?.status == 'canceled',
       onRunChecks: _saveAndCheck,
       onAccept: _acceptIntent,
       onActivate: _activateIntent,

@@ -317,10 +317,11 @@ remain enabled; startup does not arm or start the aircraft. In the intent workfl
 issue ARM and wait for observed armed state, then issue MISSION START.
 `sitl-mission-run` selects AUTO in MAVProxy, waits until fresh API telemetry confirms that mode,
 and sends ARM through the authenticated Relay/Agent command lifecycle. The
-checked-in observer mission deliberately ends at an airborne waypoint rather
-than LAND so the post-mission boundary checks remain possible; landing stays an
-explicit operator action. The command plane also supports explicit ARM and
-DISARM:
+observer stack appends terminal RTL to the checked-in waypoint mission. SITL
+uses `RTL_ALT_FINAL=0` and `DISARM_DELAY=5`, so mission completion returns HOME,
+lands, and disarms automatically before evidence-driven flight finalization. Run
+boundary checks during the mission; there is no post-mission airborne inspection
+window. The command plane also supports explicit ARM and DISARM:
 
 ```sh
 make sitl-arm
