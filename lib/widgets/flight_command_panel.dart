@@ -448,7 +448,14 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                                         _completion != null
                                     ? null
                                     : () async {
-                                        if (_sending || _refreshing) return;
+                                        if (_terminalOperation ||
+                                            _historyRefreshing ||
+                                            !_historyAvailable ||
+                                            _sending ||
+                                            !_completionAvailable ||
+                                            _completion != null) {
+                                          return;
+                                        }
                                         setState(() {
                                           _sending = true;
                                           _historyGeneration++;
