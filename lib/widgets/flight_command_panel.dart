@@ -29,6 +29,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   List<FlightCommand> _commands = [];
   FlightCompletion? _completion;
   bool _reportedFinalization = false;
+  bool _completionAvailable = false;
   String? _completionError;
   Timer? _timer;
   int _historyGeneration = 0;
@@ -105,6 +106,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       if (!mounted) return;
       setState(() {
         _completion = completion;
+        _completionAvailable = true;
         _completionError = null;
       });
       if (completion?.state == 'complete' && !_reportedFinalization) {
@@ -122,9 +124,10 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       }
     } catch (error) {
       if (mounted) {
-        setState(
-          () => _completionError = 'Completion status unavailable: $error',
-        );
+        setState(() {
+          _completionAvailable = false;
+          _completionError = 'Completion status unavailable: $error';
+        });
       }
     } finally {
       _completionRefreshing = false;
@@ -132,6 +135,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   }
 
   bool get _commandBlocked =>
+      !_completionAvailable ||
       _historyRefreshing ||
       _completion != null ||
       ['complete', 'canceled'].contains(widget.flight.status) ||
@@ -143,7 +147,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       _commands.any((c) => c.unresolved);
 
   Future<void> _submit(String type) async {
-    if (_sending) return;
+    if (_sending || !_completionAvailable || _completion != null) return;
     if (_pendingKey == null) {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -227,7 +231,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
             ? (_completion!.state == 'complete' ? 'complete' : 'finalizing')
             : _loading
             ? 'loading'
-            : !_historyAvailable
+            : !_historyAvailable || !_completionAvailable
             ? 'unavailable'
             : _sending
             ? 'sending'
@@ -345,7 +349,10 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
               ),
             if (_pendingKey != null)
               TextButton(
-                onPressed: _sending ? null : () => _submit(_pendingType!),
+                onPressed:
+                    _sending || !_completionAvailable || _completion != null
+                    ? null
+                    : () => _submit(_pendingType!),
                 child: const Text('Retry same request'),
               ),
             if (_loading) const LinearProgressIndicator(),
@@ -402,7 +409,10 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                                 (command.state == 'applied' &&
                                     command.observationState == 'pending'))
                               TextButton(
-                                onPressed: _sending
+                                onPressed:
+                                    _sending ||
+                                        !_completionAvailable ||
+                                        _completion != null
                                     ? null
                                     : () async {
                                         setState(() {

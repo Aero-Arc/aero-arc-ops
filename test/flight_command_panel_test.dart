@@ -25,12 +25,62 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  for (final outcome in ['delayed', 'error', 'timeout']) {
+    testWidgets('commands wait for known completion status: $outcome', (
+      tester,
+    ) async {
+      final stalled = Completer<http.Response>();
+      var recovered = false;
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            if (recovered) return http.Response('{}', 404);
+            if (outcome == 'error') return http.Response('unavailable', 503);
+            return stalled.future;
+          }
+          return http.Response('{"commands":[]}', 200);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      OutlinedButton arm() => tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, 'ARM'),
+      );
+      expect(arm().onPressed, isNull);
+      if (outcome == 'timeout') {
+        await tester.pump(const Duration(seconds: 11));
+        await tester.pump();
+        expect(arm().onPressed, isNull);
+      }
+      recovered = true;
+      if (outcome == 'delayed') {
+        stalled.complete(http.Response('{}', 404));
+      }
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(arm().onPressed, isNotNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets(
     'definitive rejection releases pending identity after history refresh',
     (tester) async {
       final api = AeroArcApiClient(
         missionControlToken: 'test',
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response('{}', 404);
+          }
           return request.method == 'POST'
               ? http.Response('denied', 403)
               : http.Response('{"commands":[]}', 200);
@@ -70,6 +120,9 @@ void main() {
       final api = AeroArcApiClient(
         missionControlToken: 'test',
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response('{}', 404);
+          }
           if (request.method == 'POST') {
             return http.Response(jsonEncode(command('accepted')), 202);
           }
@@ -119,6 +172,9 @@ void main() {
       final api = AeroArcApiClient(
         missionControlToken: 'test',
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response('{}', 404);
+          }
           if (request.method == 'POST') {
             submissions++;
             return http.Response('{}', 500);
@@ -375,6 +431,9 @@ void main() {
       final api = AeroArcApiClient(
         missionControlToken: 'trusted-session',
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response('{}', 404);
+          }
           if (request.method == 'GET') {
             reads++;
             if (reads == 2) return stale.future;
@@ -536,6 +595,9 @@ void main() {
     final api = AeroArcApiClient(
       missionControlToken: 'trusted-session',
       httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
         expect(request.headers['Authorization'], 'Bearer trusted-session');
         return http.Response(
           jsonEncode({
@@ -564,6 +626,9 @@ void main() {
     final api = AeroArcApiClient(
       missionControlToken: 'trusted-session',
       httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
         if (request.method == 'GET') {
           return http.Response('{"commands":[]}', 200);
         }
