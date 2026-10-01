@@ -25,6 +25,84 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets(
+    'uncertain retry retains identity and respects history authority',
+    (tester) async {
+      final stalled = Completer<http.Response>();
+      var reads = 0;
+      var submissions = 0;
+      var blocked = true;
+      final keys = <String?>[];
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response('{}', 404);
+          }
+          if (request.method == 'POST') {
+            submissions++;
+            keys.add(request.headers['Idempotency-Key']);
+            return submissions == 1
+                ? http.Response('response lost', 503)
+                : http.Response(jsonEncode(command('applied')), 202);
+          }
+          reads++;
+          if (reads == 2) return stalled.future;
+          return http.Response(
+            jsonEncode({
+              'commands': reads > 2 && blocked
+                  ? [
+                      {...command('accepted'), 'id': 'other'},
+                    ]
+                  : [],
+            }),
+            200,
+          );
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'ARM'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Issue command'));
+      await tester.pumpAndSettle();
+      final retry = find.widgetWithText(TextButton, 'Retry same request');
+      final queued = tester.widget<TextButton>(retry).onPressed!;
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      queued();
+      await tester.pump();
+      expect(submissions, 1);
+      expect(tester.widget<TextButton>(retry).onPressed, isNull);
+      stalled.complete(http.Response('history unavailable', 503));
+      await tester.pumpAndSettle();
+      queued();
+      expect(submissions, 1);
+      expect(tester.widget<TextButton>(retry).onPressed, isNull);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextButton>(retry).onPressed, isNull);
+      blocked = false;
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(retry);
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+      expect(submissions, 2);
+      expect(keys.first, isNotNull);
+      expect(keys.first, keys.last);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('reconciliation cannot discard an in-flight history refresh', (
     tester,
   ) async {

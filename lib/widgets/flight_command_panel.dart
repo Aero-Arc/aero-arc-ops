@@ -152,7 +152,9 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       ['complete', 'canceled'].contains(widget.flight.status) ||
       ['complete', 'canceled'].contains(widget.intentStatus);
 
-  bool get _commandBlocked =>
+  bool get _commandBlocked => _submissionBlocked || _pendingKey != null;
+
+  bool get _submissionBlocked =>
       !_completionAvailable ||
       _historyRefreshing ||
       _completion != null ||
@@ -160,16 +162,10 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       _loading ||
       !_historyAvailable ||
       _sending ||
-      _pendingKey != null ||
       _commands.any((c) => c.unresolved);
 
   Future<void> _submit(String type) async {
-    if (_terminalOperation ||
-        _sending ||
-        !_completionAvailable ||
-        _completion != null) {
-      return;
-    }
+    if (_submissionBlocked) return;
     if (_pendingKey == null) {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -373,8 +369,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
               ),
             if (_pendingKey != null)
               TextButton(
-                onPressed:
-                    _sending || !_completionAvailable || _completion != null
+                onPressed: _submissionBlocked
                     ? null
                     : () => _submit(_pendingType!),
                 child: const Text('Retry same request'),
