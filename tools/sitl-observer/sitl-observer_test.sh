@@ -154,3 +154,15 @@ jq -e '.deployment_id == "deployment-1" and .status == "already_applied"' <<<"$r
 # The same durable deployment must survive more polls than the old synchronous
 # 15-attempt budget. No poll may create a second deployment.
 echo "sitl-observer headless startup and asynchronous deployment reconciliation tests passed"
+
+# Retaining a pane after exit must never authorize simulator commands.
+(
+  pane_state='0:'
+  tmux() { [[ "$1" == display-message ]] && printf '%s\n' "$pane_state"; }
+  sitl_session_alive
+  pane_state='1:2'
+  if sitl_session_alive; then exit 1; fi
+  api_post() { echo 'dead simulator mutated API state' >&2; exit 99; }
+  if demo_flight; then exit 1; fi
+  if mission_run; then exit 1; fi
+)

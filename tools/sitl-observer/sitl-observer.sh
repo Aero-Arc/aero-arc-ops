@@ -86,6 +86,18 @@ start_sitl() {
   tmux send-keys -t "$pane" Enter
 }
 
+sitl_session_alive() {
+  local pane_state
+  pane_state=$(tmux display-message -p -t "$TMUX_SESSION:0.0" '#{pane_dead}:#{pane_dead_status}' 2>/dev/null) || {
+    echo "SITL simulator pane is unavailable" >&2
+    return 1
+  }
+  if [[ "$pane_state" != 0:* ]]; then
+    echo "SITL simulator exited (pane state $pane_state); see $RUN_DIR/logs/sitl.log" >&2
+    return 1
+  fi
+}
+
 require_mission_relay_source() {
   if [[ ! -d "$RELAY_SOURCE/internal/relay" ]] ||
     ! grep --recursive --fixed-strings --quiet 'func (s *Relay) DeployMission' "$RELAY_SOURCE/internal/relay"; then
@@ -591,6 +603,7 @@ up() {
   fi
   start_sitl
   sleep 5
+  sitl_session_alive || return 1
   if [[ -n "$deployment_id" ]]; then
     wait_deploy_mission "$deployment_id"
   fi
@@ -615,8 +628,8 @@ aircraft_command() {
 }
 
 demo_flight() {
+  sitl_session_alive || return 1
   api_post "/api/v1/flights/$FLIGHT_ID/start" >/dev/null
-  tmux has-session -t "$TMUX_SESSION"
   tmux send-keys -t "$TMUX_SESSION" "mode guided" Enter
   sleep 2
   tmux send-keys -t "$TMUX_SESSION" "arm throttle" Enter
@@ -628,7 +641,7 @@ demo_flight() {
 }
 
 mission_run() {
-  tmux has-session -t "$TMUX_SESSION"
+  sitl_session_alive || return 1
   api_post "/api/v1/flights/$FLIGHT_ID/start" >/dev/null
   # AUTO options are installed at SITL startup for both UI and helper use.
   tmux send-keys -t "$TMUX_SESSION" "mode auto" Enter
@@ -684,21 +697,21 @@ select_guided_airborne() {
 }
 
 move_outside() {
-  tmux has-session -t "$TMUX_SESSION"
+  sitl_session_alive || return 1
   select_guided_airborne
   tmux send-keys -t "$TMUX_SESSION" "guided -35.352500 149.165237 20" Enter
   echo "GUIDED target sent outside the authorized Polygon; the intent itself is unchanged."
 }
 
 move_inside() {
-  tmux has-session -t "$TMUX_SESSION"
+  sitl_session_alive || return 1
   select_guided_airborne
   tmux send-keys -t "$TMUX_SESSION" "guided -35.354000 149.165237 20" Enter
   echo "GUIDED target sent back inside the authorized Polygon."
 }
 
 land() {
-  tmux has-session -t "$TMUX_SESSION"
+  sitl_session_alive || return 1
   tmux send-keys -t "$TMUX_SESSION" "mode land" Enter
   echo "LAND sent through MAVProxy. Wait for landing and disarm before make sitl-complete."
 }
@@ -714,6 +727,7 @@ complete() {
 status() {
   echo "Ops: $OPS_URL"
   echo "API: $API_URL"
+  if sitl_session_alive; then echo "SITL: running"; else echo "SITL: exited or unavailable"; fi
   curl --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" || true
   echo
   curl --silent --show-error "$API_URL/api/v1/operations" || true
