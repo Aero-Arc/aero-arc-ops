@@ -25,6 +25,78 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets('reconciliation cannot discard an in-flight history refresh', (
+    tester,
+  ) async {
+    final history = Completer<http.Response>();
+    var reads = 0;
+    var reconciliations = 0;
+    final api = AeroArcApiClient(
+      missionControlToken: 'test',
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
+        if (request.url.path.endsWith('/reconcile')) {
+          reconciliations++;
+          return http.Response(jsonEncode(command('applied')), 202);
+        }
+        reads++;
+        if (reads == 2) return history.future;
+        return http.Response(
+          jsonEncode({
+            'commands': [command('applied')],
+          }),
+          200,
+        );
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(api: api, flight: flight),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ARM · applied'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    final recover = find.widgetWithText(
+      TextButton,
+      'Reconcile existing command',
+    );
+    expect(tester.widget<TextButton>(recover).onPressed, isNull);
+    history.complete(
+      http.Response(
+        jsonEncode({
+          'commands': [
+            command('applied'),
+            {
+              ...command('accepted'),
+              'id': 'other-console-command',
+              'type': 'LAND',
+            },
+          ],
+        }),
+        200,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(reconciliations, 0);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'ARM'))
+          .onPressed,
+      isNull,
+    );
+    expect(find.text('LAND · accepted'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
     'later command submission preserves an earlier recovery failure',
     (tester) async {
