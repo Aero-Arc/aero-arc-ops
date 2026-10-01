@@ -329,7 +329,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                                 (command.state == 'applied' &&
                                     command.observationState == 'pending'))
                               TextButton(
-                                onPressed: _sending
+                                onPressed: _sending || _refreshing
                                     ? null
                                     : () async {
                                         setState(() {
