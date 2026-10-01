@@ -307,7 +307,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
               ),
             if (!widget.api.hasLocalMissionControlToken)
               const Text(
-                'Configure the trusted local control session to issue commands.',
+                'Configure the trusted local session to read command and finalization evidence or issue commands.',
               ),
             const SizedBox(height: 12),
             for (final group in const [
