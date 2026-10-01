@@ -106,3 +106,62 @@ and exact resubmission preserved command/evidence identity. Its manifest and
 service logs remain at `/tmp/aero-arc-sitl-readiness-sep30-land5/`; exports use
 `/tmp/readiness-land5-*`. That isolated stack was stopped. Later review fixes
 have component-level validation and are not represented as flown by this run.
+
+
+## Latest browser-driven acceptance — October 1, 2026
+
+The isolated `final9` run exercised the release Ops build's ARM and MISSION_START
+controls, terminal RTL, an airborne Agent restart, and automatic finalization.
+The flight completed with event `c89117d6-ed46-5136-871f-bf872d2f1d11` and outcome
+`mission_completed`; monitoring closure and Agent-context cleanup completed.
+Relay/API restarts followed by replay of the exact browser request bodies and
+idempotency keys preserved command IDs, digests, states, attempts, and completion
+evidence. No replacement command identity was used.
+
+| Component | Flown revision |
+| --- | --- |
+| api | `ef16b3b09c1ce3274ec46ec4a35e3c92a0579422` |
+| relay | `5503c7e9051055b983530f3c47b8cf4ed523b048` |
+| agent | `dfc0ad89f067b021f4ea832b11c3cec89d5ba4e4` |
+| registry | `b72e02cefe1772d750e034dae0f58165de8b3894` |
+| conformance | `bc222e75cf05d5710ba4df65592e6375f368b023` |
+| ops | `3e6a82634f67f94f8a087457ca9c5e0624528ca0` |
+
+The manifest records clean tracked trees, binary hashes, and the hash of the
+actual served release `main.dart.js`. Artifacts remain under
+`/tmp/aero-arc-sitl-readiness-oct1-final9/` and `/tmp/readiness-final9-*`.
+Nine deterministic federation scenarios passed against this API revision with
+seed `20261001` (zero failures or skips); real-DSS was not rerun.
+
+The preceding browser-driven `final8` LAND run also completed across airborne
+Agent restart and subsequent Relay/API replay. Its completion event is
+`132fd1c7-f19a-5aa2-9b78-1fe65f9525dc`. Its older source revisions are recorded in
+`/tmp/aero-arc-sitl-readiness-oct1-final8/component-versions.json`; that run is not
+claimed as validation of later fixes. Its database dump and runtime artifacts
+were preserved before stopping only that isolated stack.
+
+### Create Intent and remaining demo limits
+
+On the `final9` release UI, Create Intent -> Save & check -> Accept -> WPL import
+passed with the installed battery prerequisite present. The imported plan used
+the checked-by-default RTL ending and produced five canonical items. This test
+used an MSL operational volume, matching the supported GLOBAL-frame WPL fixture.
+Browser requests/screenshots are in `/tmp/readiness-final9-create2-*`.
+
+The earlier attempt after API restart correctly exposed a broader persistence
+limit: battery and battery-installation records still use the embedded memory
+store and disappear on restart, even with PostgreSQL configured. The command,
+mission, intent, flight and completion records in the replay test survived.
+Recreating only the isolated test's battery prerequisites allowed Create Intent
+to pass; that repair is explicit and is not evidence of restart-safe fleet data.
+The aircraft-operator inheritance fix preserves ownership but does not solve
+this memory-store limitation.
+
+Two additional limits apply to a customer walkthrough: the form still labels
+altitude metadata as AGL when selecting an MSL volume, and new UI intents do not
+automatically provision the Conformance assignment that the prepared SITL runner
+creates. The Create Intent test therefore proves acceptance/import, not a second
+fully monitored flight launched solely from that form. Keep a prepared monitored
+flight for the control/finalization demonstration. Persisting fleet prerequisites,
+clarifying altitude references, and provisioning monitoring for arbitrary new
+intents remain follow-up work before claiming an unrestricted restart-safe demo.
