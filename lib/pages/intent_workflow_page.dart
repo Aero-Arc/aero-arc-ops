@@ -107,12 +107,13 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   late List<LatLng> _volumePoints;
   List<OperationalVolume> _savedVolumes = [];
   bool _geometryEdited = false;
+  bool _geometryLoaded = false;
   List<LatLng>? get _savedPolygon => _savedVolumes.isEmpty
       ? null
       : _pointsFromGeoJson(_savedVolumes.first.geoJson);
 
   void _restoreGeometry(List<OperationalVolume> volumes) {
-    if (!mounted || volumes.isEmpty || _savedVolumes.isNotEmpty) {
+    if (!mounted || _geometryLoaded) {
       return;
     }
     final current = _acceptedIntent ?? _intent ?? _sourceIntent;
@@ -123,7 +124,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       return;
     }
     setState(() {
+      _geometryLoaded = true;
       _savedVolumes = volumes;
+      if (volumes.isEmpty) return;
       final points = _savedPolygon;
       if (!_geometryEdited && points != null && points.length >= 3) {
         _volumePoints = points;
@@ -159,6 +162,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
               v.intentVersion == _sourceIntent?.version,
         )
         .toList();
+    _geometryLoaded = _sourceIntent == null || _savedVolumes.isNotEmpty;
     _hydrateFromInitialIntent(now);
     _startMissionStateRestore();
   }
@@ -195,6 +199,13 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       _deconfliction = null;
       _modifyResult = null;
       _geometryEdited = false;
+      _geometryLoaded =
+          nextIntent == null ||
+          widget.initialVolumes.any(
+            (v) =>
+                v.intentId == nextIntent.id &&
+                v.intentVersion == nextIntent.version,
+          );
       _savedVolumes = widget.initialVolumes
           .where(
             (v) =>
@@ -364,7 +375,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   }
 
   Future<void> _saveAndCheck() async {
-    if (_sourceIntent != null && _savedVolumes.isEmpty) {
+    if (!_geometryLoaded) {
       setState(
         () => _error = 'Load the saved intent volume before modification.',
       );
@@ -1173,7 +1184,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
 
   @override
   Widget build(BuildContext context) {
-    final editingLocked = _editingLocked;
+    final editingLocked = _editingLocked || !_geometryLoaded;
     final workflowBusy = _busy || _restoringMissionState;
     final currentIntent = _acceptedIntent ?? _intent ?? _sourceIntent;
     final volumeEditor = _VolumesPanel(
@@ -1278,9 +1289,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     );
     final checks = _ChecksPanel(
       busy: workflowBusy,
-      checksBlocked:
-          _missionRestoreError != null ||
-          (_sourceIntent != null && _savedVolumes.isEmpty),
+      checksBlocked: _missionRestoreError != null || (!_geometryLoaded),
       sourceIntent: _sourceIntent,
       modifyResult: _modifyResult,
       intent: currentIntent,
@@ -1300,9 +1309,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           (currentIntent?.status == 'active' ? currentIntent : null),
       checksClear: _checksClear,
       busy: workflowBusy,
-      checksBlocked:
-          _missionRestoreError != null ||
-          (_sourceIntent != null && _savedVolumes.isEmpty),
+      checksBlocked: _missionRestoreError != null || (!_geometryLoaded),
       onRunChecks: _saveAndCheck,
       onAccept: _acceptIntent,
       onActivate: _activateIntent,

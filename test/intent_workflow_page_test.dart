@@ -57,6 +57,12 @@ void main() {
       await tester.pump();
       final save = find.widgetWithText(FilledButton, 'Save & check');
       expect(tester.widget<FilledButton>(save).onPressed, isNull);
+      expect(
+        tester
+            .widgetList<TextFormField>(find.byType(TextFormField))
+            .every((field) => field.enabled == false),
+        isTrue,
+      );
       volumes.complete(
         _jsonResponse({
           'volumes': [
@@ -85,6 +91,76 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  testWidgets('empty saved draft can create its first volume after loading', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final volumes = Completer<http.Response>();
+    Map<String, dynamic>? modification;
+    final api = AeroArcApiClient(
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/volumes')) return volumes.future;
+        if (request.url.path.endsWith('/modify')) {
+          modification = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response('{}', 400);
+        }
+        if (request.url.path.endsWith('/state'))
+          return _jsonResponse({
+            'aircraft_id': 'aircraft-1',
+            'telemetry': {'status': 'missing'},
+          });
+        return _jsonResponse({'flights': []});
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: IntentWorkflowPage(
+            aircraftId: 'aircraft-1',
+            apiClient: api,
+            renderTiles: false,
+            initialIntent: OperationalIntent.fromJson(
+              _intentJson(status: 'draft', name: 'Recover draft'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final save = find.widgetWithText(FilledButton, 'Save & check');
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    volumes.complete(_jsonResponse({'volumes': []}));
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+    await tester.ensureVisible(find.text('Edit intent boundary'));
+    await tester.tap(find.text('Edit intent boundary'));
+    await tester.pumpAndSettle();
+    final editorMap = tester
+        .widgetList<FlutterMap>(find.byType(FlutterMap))
+        .firstWhere((map) => map.options.onTap != null);
+    editorMap.options.onTap!(
+      const TapPosition(Offset.zero, Offset.zero),
+      const LatLng(35.21, -97.21),
+    );
+    await tester.pump();
+
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(
+      modification?['volumes'],
+      isNotEmpty,
+      reason: tester
+          .widgetList<Text>(find.byType(Text))
+          .map((t) => t.data)
+          .join(' | '),
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
 
   for (final width in [390.0, 1600.0]) {
     testWidgets(
