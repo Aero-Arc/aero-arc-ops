@@ -349,18 +349,19 @@ make sitl-out-of-bounds
 make sitl-return-in-bounds
 ```
 
-Land first, observe the landing/disarm, and only then complete the operational
-lifecycle:
+For the default mission, let automatic RTL finish landing and disarming, then
+wait for durable finalization before shutting down:
 
 ```sh
-make sitl-land
 make sitl-complete
 make sitl-down
 ```
 
 `sitl-complete` waits for durable completion evidence and background cleanup to
 reach `complete`. It never clears Agent context or treats HTTP acceptance as
-finished cleanup. `sitl-land` submits durable LAND. Command helper retries retain
+finished cleanup. `sitl-land` is an optional early-recovery action while the flight
+is still active; it submits durable LAND. Do not issue it after automatic
+finalization. Command helper retries retain
 one stable identity per flight and command type; use a new flight for another
 mission demonstration. The boundary-movement helpers remain explicit simulator
 fault injection through MAVProxy, outside the normal mission command path.
