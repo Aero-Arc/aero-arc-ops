@@ -303,7 +303,10 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
 
       MissionDeployment? deployment;
       final terminalIntent = ['complete', 'canceled'].contains(intent.status);
-      if (!terminalIntent &&
+      final terminalOperation =
+          terminalIntent || ['complete', 'canceled'].contains(flight?.status);
+      String? deploymentWarning;
+      if (!terminalOperation &&
           flight != null &&
           mission != null &&
           !_apiClient.hasLocalMissionControlToken) {
@@ -318,27 +321,33 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           deployment = await _apiClient
               .getCurrentMissionDeployment(flight.id)
               .timeout(const Duration(seconds: 10));
-        } on AeroArcApiException catch (error) {
-          if (error.statusCode != 404) rethrow;
-        }
-        if (deployment != null &&
-            !_missionDeploymentCanRestore(
-              deployment,
-              mission: mission,
-              flight: flight,
-              intent: intent,
-            )) {
-          if (_missionDeploymentIsTerminalPriorMission(
+          if (!_missionDeploymentCanRestore(
             deployment,
             mission: mission,
             flight: flight,
             intent: intent,
           )) {
+            if (_missionDeploymentIsTerminalPriorMission(
+              deployment,
+              mission: mission,
+              flight: flight,
+              intent: intent,
+            )) {
+              deployment = null;
+            } else {
+              throw const AeroArcApiException(
+                'Current deployment identity is stale or does not match the current flight, exact intent version, and current or unresolved prior mission.',
+              );
+            }
+          }
+        } catch (error) {
+          if (error is AeroArcApiException && error.statusCode == 404) {
             deployment = null;
+          } else if (terminalOperation) {
+            deployment = null;
+            deploymentWarning = 'Could not restore deployment history: $error';
           } else {
-            throw const AeroArcApiException(
-              'Current deployment identity is stale or does not match the current flight, exact intent version, and current or unresolved prior mission.',
-            );
+            rethrow;
           }
         }
       }
@@ -363,6 +372,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         _missionDeploymentReplayed = false;
         _restoringMissionState = false;
         _missionRestoreError = null;
+        if (deploymentWarning != null) _error = deploymentWarning;
       });
     } catch (error) {
       if (!mounted || generation != _missionRestoreGeneration) return;
@@ -2523,7 +2533,7 @@ class _MissionImportPanel extends StatelessWidget {
             ),
             if (mission != null && mission!.items.isNotEmpty)
               DetailLine(
-                label: 'Onboard ending',
+                label: 'Validated ending',
                 value: mission!.items.last.command == 20
                     ? 'Return to launch'
                     : mission!.items.last.command == 21
