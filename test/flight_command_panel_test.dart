@@ -26,6 +26,92 @@ Map<String, dynamic> command(String state) => {
 };
 void main() {
   testWidgets(
+    'definitive rejection releases pending identity after history refresh',
+    (tester) async {
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          return request.method == 'POST'
+              ? http.Response('denied', 403)
+              : http.Response('{"commands":[]}', 200);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'ARM'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Issue command'));
+      await tester.pumpAndSettle();
+      expect(find.text('Retry same request'), findsNothing);
+      expect(find.textContaining('Command rejected:'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'LAND'))
+            .onPressed,
+        isNotNull,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'stalled invalidated history cannot stop future command polling',
+    (tester) async {
+      final stale = Completer<http.Response>();
+      var reads = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          if (request.method == 'POST') {
+            return http.Response(jsonEncode(command('accepted')), 202);
+          }
+          reads++;
+          if (reads == 2) return stale.future;
+          return http.Response(
+            jsonEncode({
+              'commands': reads > 2 ? [command('applied')] : [],
+            }),
+            200,
+          );
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'ARM'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Issue command'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(find.text('ARM · applied'), findsOneWidget);
+      stale.complete(http.Response('{"commands":[]}', 200));
+      await tester.pumpAndSettle();
+      expect(find.text('ARM · applied'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
     'history blocker arriving during confirmation prevents submission',
     (tester) async {
       var blocked = false;

@@ -178,6 +178,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       _historyGeneration++;
       _error = null;
     });
+    var definitivelyRejected = false;
     try {
       final command = await widget.api.submitFlightCommand(
         flightId: widget.flight.id,
@@ -192,13 +193,26 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       });
     } catch (e) {
       if (mounted) {
-        setState(
-          () => _error =
-              'Submission outcome not confirmed: $e. Retry uses the same request identity.',
-        );
+        definitivelyRejected =
+            e is AeroArcApiException &&
+            [400, 401, 403, 404, 409, 422].contains(e.statusCode);
+        setState(() {
+          if (definitivelyRejected) {
+            _pendingKey = null;
+            _pendingType = null;
+            _historyAvailable = false;
+            _error = 'Command rejected: $e';
+          } else {
+            _error =
+                'Submission outcome not confirmed: $e. Retry uses the same request identity.';
+          }
+        });
       }
     } finally {
-      if (mounted) setState(() => _sending = false);
+      if (mounted) {
+        setState(() => _sending = false);
+        if (definitivelyRejected) unawaited(_refresh());
+      }
     }
   }
 
