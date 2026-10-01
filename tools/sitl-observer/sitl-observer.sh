@@ -107,6 +107,13 @@ start_sitl() {
   tmux send-keys -t "$pane" Enter
 }
 
+sitl_session_alive() {
+  local dead
+  tmux has-session -t "$TMUX_SESSION" 2>/dev/null || return 1
+  dead=$(tmux display-message -p -t "$TMUX_SESSION:0.0" '#{pane_dead}' 2>/dev/null) || return 1
+  [[ "$dead" == "0" ]]
+}
+
 require_mission_relay_source() {
   if [[ ! -d "$RELAY_SOURCE/internal/relay" ]] ||
     ! grep --recursive --fixed-strings --quiet 'func (s *Relay) DeployMission' "$RELAY_SOURCE/internal/relay"; then
@@ -778,14 +785,14 @@ select_guided_airborne() {
 }
 
 move_outside() {
-  tmux has-session -t "$TMUX_SESSION"
+  sitl_session_alive || { echo "SITL simulator pane is no longer running" >&2; return 1; }
   select_guided_airborne
   tmux send-keys -t "$TMUX_SESSION" "guided -35.352500 149.165237 20" Enter
   echo "GUIDED target sent outside the authorized Polygon; the intent itself is unchanged."
 }
 
 move_inside() {
-  tmux has-session -t "$TMUX_SESSION"
+  sitl_session_alive || { echo "SITL simulator pane is no longer running" >&2; return 1; }
   select_guided_airborne
   tmux send-keys -t "$TMUX_SESSION" "guided -35.354000 149.165237 20" Enter
   echo "GUIDED target sent back inside the authorized Polygon."
@@ -824,6 +831,11 @@ complete() {
 status() {
   echo "Ops: $OPS_URL"
   echo "API: $API_URL"
+  if sitl_session_alive; then
+    echo "SITL: running"
+  else
+    echo "SITL: exited or unavailable"
+  fi
   curl --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" || true
   echo
   curl --silent --show-error "$API_URL/api/v1/operations" || true

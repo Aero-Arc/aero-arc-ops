@@ -128,6 +128,21 @@ if (
 fi
 grep --fixed-strings --quiet 'stop-processes' "$CLEANUP_CALLS_FILE"
 grep --fixed-strings --quiet "tmux send-keys -t $TMUX_SESSION C-c" "$CLEANUP_CALLS_FILE"
+
+# A retained tmux pane is not a live simulator. pane_dead must fail closed.
+(
+  tmux() {
+    case "$1" in
+      has-session) return 0 ;;
+      display-message) printf '1\n'; return 0 ;;
+    esac
+    return 0
+  }
+  if sitl_session_alive; then
+    echo 'dead SITL pane was reported live' >&2
+    exit 1
+  fi
+)
 grep --fixed-strings --quiet "tmux kill-session -t $TMUX_SESSION" "$CLEANUP_CALLS_FILE"
 grep --fixed-strings --quiet \
   "docker compose -p aero-arc-sitl-observer -f $SCRIPT_DIR/compose.yaml down --volumes --remove-orphans" \

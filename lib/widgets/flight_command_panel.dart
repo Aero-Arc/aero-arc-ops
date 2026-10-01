@@ -410,7 +410,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                 ),
               ],
             ),
-            if (!_loading && _commands.isEmpty)
+            if (!_loading && _historyAvailable && _commands.isEmpty)
               const Text('No accepted commands for this flight.'),
             if (_commands.isNotEmpty)
               ConstrainedBox(
