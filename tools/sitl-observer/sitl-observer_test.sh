@@ -158,6 +158,9 @@ echo "sitl-observer headless startup and asynchronous deployment reconciliation 
 # Command helpers must use authenticated durable submission and wait for evidence.
 (
   calls="$TEST_RUN_DIR/command-calls"
+  mkdir -p "$RUN_DIR/logs"
+  printf 'AP: EKF3 IMU0 is using GPS\n' >"$RUN_DIR/logs/sitl.log"
+
   api_post_file() {
     [[ "$1" == "/api/v1/flights/$FLIGHT_ID/commands" ]]
     local type
@@ -168,6 +171,10 @@ echo "sitl-observer headless startup and asynchronous deployment reconciliation 
     printf '{"id":"command-%s","state":"accepted"}' "$type"
   }
   curl() {
+    if [[ "$*" == *"/state"* ]]; then
+      printf '{"telemetry":{"position":{"status":"fresh"},"gps":{"status":"fresh","gps_fix_type":"gps_fix_type_3d_fix"}}}'
+      return
+    fi
     [[ "$*" == *"Authorization: Bearer $MISSION_DEPLOY_TOKEN"* ]]
     [[ "$*" == *"/commands/command-"* ]]
     printf '{"state":"applied","observation_state":"observed"}'
@@ -199,3 +206,11 @@ echo "sitl-observer headless startup and asynchronous deployment reconciliation 
   [[ $(cat "$count_file") == 3 ]]
 )
 echo 'durable command and completion helper tests passed'
+
+# Readiness fails closed before any command when fresh position is missing.
+(
+  sleep() { :; }
+  curl() { printf '{"telemetry":{"position":{"status":"stale"},"gps":{"status":"fresh","gps_fix_type":"gps_fix_type_rtk_fixed"}}}'; }
+  durable_command() { echo 'command unexpectedly submitted before navigation readiness' >&2; exit 99; }
+  if mission_run; then echo 'stale navigation was accepted' >&2; exit 1; fi
+)

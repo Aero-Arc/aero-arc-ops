@@ -25,6 +25,47 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  for (final flightStatus in ['planned', 'canceled']) {
+    testWidgets('canceled intent disables commands for $flightStatus flight', (
+      tester,
+    ) async {
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          return request.url.path.endsWith('/completion')
+              ? http.Response('{}', 404)
+              : http.Response('{"commands":[]}', 200);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(
+                api: api,
+                intentStatus: 'canceled',
+                flight: FlightRecord(
+                  id: 'flight-1',
+                  aircraftId: 'aircraft-1',
+                  intentId: 'intent-1',
+                  intentVersion: 1,
+                  status: flightStatus,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final controls = tester.widgetList<FilledButton>(
+        find.byType(FilledButton),
+      );
+      expect(controls, isNotEmpty);
+      expect(controls.every((button) => button.onPressed == null), isTrue);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('stalled finalization callback times out and retries', (
     tester,
   ) async {

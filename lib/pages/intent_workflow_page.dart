@@ -1429,6 +1429,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
             key: ValueKey(_flight!.id),
             api: _apiClient,
             flight: _flight!,
+            intentStatus: currentIntent?.status,
             onFinalized: _refreshFinalizedFlight,
           );
     return Container(

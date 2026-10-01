@@ -692,7 +692,27 @@ demo_flight() {
   mission_run
 }
 
+# SITL can accept ARM before its EKF can enter AUTO. Require the current
+# simulator boot's GPS-fusion announcement plus fresh API navigation samples.
+# This is demo startup readiness, not an override of autopilot command checks.
+wait_navigation_ready() {
+  local attempt
+  for attempt in $(seq 1 90); do
+    if grep -Eq 'EKF[23] IMU[0-9]+ is using GPS' "$RUN_DIR/logs/sitl.log" 2>/dev/null &&
+       curl --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" |
+       jq -e '.telemetry.position.status == "fresh" and
+              .telemetry.gps.status == "fresh" and
+              (.telemetry.gps.gps_fix_type | IN("gps_fix_type_3d_fix", "gps_fix_type_dgps", "gps_fix_type_rtk_float", "gps_fix_type_rtk_fixed"))' >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "SITL navigation did not become ready; no ARM or START command submitted" >&2
+  return 1
+}
+
 mission_run() {
+  wait_navigation_ready || return
   durable_command ARM
   durable_command MISSION_START
   echo "Durable mission start applied. Watch independent telemetry and automatic flight finalization in Ops."

@@ -15,9 +15,11 @@ class FlightCommandPanel extends StatefulWidget {
     required this.api,
     required this.flight,
     this.onFinalized,
+    this.intentStatus,
   });
   final AeroArcApiClient api;
   final FlightRecord flight;
+  final String? intentStatus;
   final Future<void> Function()? onFinalized;
   @override
   State<FlightCommandPanel> createState() => _FlightCommandPanelState();
@@ -193,7 +195,8 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   Widget build(BuildContext context) {
     final blocked =
         _completion != null ||
-        widget.flight.status == "complete" ||
+        ['complete', 'canceled'].contains(widget.flight.status) ||
+        ['complete', 'canceled'].contains(widget.intentStatus) ||
         _loading ||
         !_historyAvailable ||
         _sending ||
