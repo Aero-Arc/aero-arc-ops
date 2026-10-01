@@ -332,6 +332,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                                 onPressed: _sending || _refreshing
                                     ? null
                                     : () async {
+                                        if (_sending || _refreshing) return;
                                         setState(() {
                                           _sending = true;
                                           _historyGeneration++;
