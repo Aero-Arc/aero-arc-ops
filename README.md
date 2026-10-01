@@ -318,8 +318,9 @@ issue ARM and wait for observed armed state, then issue MISSION START.
 `sitl-mission-run` submits authenticated durable ARM, waits for observed armed
 state, then submits durable MISSION_START through the same API as the UI. The
 observer stack appends terminal RTL to the checked-in waypoint mission. SITL
-uses `RTL_ALT_FINAL=0` and `DISARM_DELAY=5`, so mission completion returns HOME,
-lands, and disarms automatically before evidence-driven flight finalization. Run
+uses `RTL_ALT_FINAL=0` and `DISARM_DELAY=30`, so mission completion returns HOME,
+lands, and disarms automatically before evidence-driven flight finalization. The
+30-second delay also leaves time for durable mission verification before takeoff. Run
 boundary checks during the mission; there is no post-mission airborne inspection
 window. The command plane also supports explicit ARM and DISARM:
 
