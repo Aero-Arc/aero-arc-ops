@@ -368,8 +368,12 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   Future<void> _refreshFinalizedFlight() async {
     final flight = _flight;
     if (flight == null) return;
-    final intent = await _apiClient.getOperationalIntent(flight.intentId);
-    final flights = await _apiClient.listAircraftFlights(widget.aircraftId);
+    final intent = await _apiClient
+        .getOperationalIntent(flight.intentId)
+        .timeout(const Duration(seconds: 4));
+    final flights = await _apiClient
+        .listAircraftFlights(widget.aircraftId)
+        .timeout(const Duration(seconds: 4));
     if (!mounted || _flight?.id != flight.id) return;
     final completed = flights.flights
         .where((f) => f.id == flight.id)

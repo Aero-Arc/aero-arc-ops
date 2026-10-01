@@ -107,7 +107,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       });
       if (completion?.state == 'complete' && !_reportedFinalization) {
         try {
-          await widget.onFinalized?.call();
+          await widget.onFinalized?.call().timeout(const Duration(seconds: 10));
           _reportedFinalization = true;
         } catch (error) {
           if (mounted) {

@@ -25,6 +25,51 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets('stalled finalization callback times out and retries', (
+    tester,
+  ) async {
+    final stalled = Completer<void>();
+    var callbacks = 0;
+    final api = AeroArcApiClient(
+      missionControlToken: 'test',
+      httpClient: MockClient((request) async {
+        return request.url.path.endsWith('/completion')
+            ? http.Response(
+                '{"event_id":"event","state":"complete","outcome":"mission_completed"}',
+                200,
+              )
+            : http.Response('{"commands":[]}', 200);
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(
+              api: api,
+              flight: flight,
+              onFinalized: () {
+                callbacks++;
+                return callbacks == 1 ? stalled.future : Future<void>.value();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(callbacks, 1);
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
+    expect(find.textContaining('summary refresh will retry'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    expect(callbacks, 2);
+    stalled.complete();
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final blockedPath in ['/commands', '/completion']) {
     testWidgets('status polling stays independent when $blockedPath hangs', (
       tester,
