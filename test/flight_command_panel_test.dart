@@ -63,13 +63,17 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('ARM · applied'));
     await tester.pumpAndSettle();
-    await tester.pump(const Duration(seconds: 3));
-    await tester.pump();
     final recover = find.widgetWithText(
       TextButton,
       'Reconcile existing command',
     );
+    final queuedTap = tester.widget<TextButton>(recover).onPressed!;
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
     expect(tester.widget<TextButton>(recover).onPressed, isNull);
+    queuedTap();
+    await tester.pump();
+    expect(reconciliations, 0);
     history.complete(
       http.Response(
         jsonEncode({
