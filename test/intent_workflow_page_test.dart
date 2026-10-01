@@ -329,7 +329,7 @@ void main() {
         httpClient: MockClient((request) async {
           final path = request.url.path;
           if (fail && path.endsWith(stalledPath)) return stalled.future;
-          if (path.endsWith('/flights'))
+          if (path.endsWith('/flights')) {
             return _jsonResponse({
               'flights': [
                 {
@@ -341,12 +341,15 @@ void main() {
                 },
               ],
             });
-          if (path.endsWith('/missions/current'))
+          }
+          if (path.endsWith('/missions/current')) {
             return _jsonResponse(_missionJson());
-          if (path.endsWith('/volumes'))
+          }
+          if (path.endsWith('/volumes')) {
             return _jsonResponse({
               'volumes': [_volumeJson()],
             });
+          }
           return http.Response('{}', 404);
         }),
       );

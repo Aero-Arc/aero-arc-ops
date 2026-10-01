@@ -168,8 +168,9 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     if (_terminalOperation ||
         _sending ||
         !_completionAvailable ||
-        _completion != null)
+        _completion != null) {
       return;
+    }
     if (_pendingKey == null) {
       final confirmed = await showDialog<bool>(
         context: context,

@@ -93,3 +93,16 @@ An earlier fresh simulator run rejected START with
 bounded timeout, for the current boot's EKF GPS-fusion announcement and fresh
 position/GPS telemetry before submitting ARM or START. It does not bypass an
 autopilot rejection or generate a replacement command identity.
+
+A second isolated LAND/restart rehearsal (`land5`) also passed with API
+8d973061192acd457e86aeb74a4b6a435dfb5c7f, Relay
+99970137cf21ba03d6a7ffacd90a424537e0981e, Agent
+6459cf26c675fe53d033fc969df02ba2d186e5a7, and Ops
+655be71e9be1a830748f56698f89bb5da1c72b85 (Registry and Conformance unchanged
+from the table above). Completion event b97800d2-0a90-5e8c-ac64-859359ab1822
+reported `mission_completed`; ARM/START were applied and observed, the airborne
+Agent restart retained completion authority, and subsequent Relay/API restarts
+and exact resubmission preserved command/evidence identity. Its manifest and
+service logs remain at `/tmp/aero-arc-sitl-readiness-sep30-land5/`; exports use
+`/tmp/readiness-land5-*`. That isolated stack was stopped. Later review fixes
+have component-level validation and are not represented as flown by this run.
