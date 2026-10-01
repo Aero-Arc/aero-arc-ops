@@ -68,8 +68,7 @@ The isolated terminal-LAND rehearsal completed with these source revisions:
 | Ops | 124e95178dcd8a496eb35162c06093dd514eee1e |
 
 All tracked component trees were clean when the runner recorded its manifest.
-The manifest also records binary SHA-256 values. Subsequent UI-only review fixes
-are covered by widget tests and builds; this table identifies the actual flight.
+The manifest also records binary SHA-256 values. Subsequent review fixes are covered by component, integration, and widget tests; this table identifies the actual flight.
 
 ARM and MISSION_START were both applied and observed. Agent was restarted after
 airborne telemetry, preserving its WAL. The flight then landed, disarmed, and

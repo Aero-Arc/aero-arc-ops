@@ -33,8 +33,9 @@ void main() {
       final api = AeroArcApiClient(
         missionControlToken: 'test',
         httpClient: MockClient((request) async {
-          if (request.url.path.endsWith('/completion'))
+          if (request.url.path.endsWith('/completion')) {
             return http.Response('{}', 404);
+          }
           if (request.method == 'POST') {
             submissions++;
             return http.Response('{}', 500);
