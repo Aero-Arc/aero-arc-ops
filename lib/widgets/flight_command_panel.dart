@@ -69,8 +69,9 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                         c.observationState != failed.observationState ||
                         c.events.length > failed.events.length),
               )) {
-            if (_error?.startsWith('Evidence recovery unavailable:') ?? false)
+            if (_error?.startsWith('Evidence recovery unavailable:') ?? false) {
               _error = null;
+            }
             _failedReconciliation = null;
           }
           _commands = commands;
