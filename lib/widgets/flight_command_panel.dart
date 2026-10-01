@@ -185,11 +185,13 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     });
     var definitivelyRejected = false;
     try {
-      final command = await widget.api.submitFlightCommand(
-        flightId: widget.flight.id,
-        type: _pendingType!,
-        idempotencyKey: _pendingKey!,
-      );
+      final command = await widget.api
+          .submitFlightCommand(
+            flightId: widget.flight.id,
+            type: _pendingType!,
+            idempotencyKey: _pendingKey!,
+          )
+          .timeout(const Duration(seconds: 10));
       if (!mounted) return;
       setState(() {
         _commands = [command, ..._commands.where((c) => c.id != command.id)];

@@ -25,6 +25,54 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets('stalled submission retries the original request identity', (
+    tester,
+  ) async {
+    final stalled = Completer<http.Response>();
+    final keys = <String?>[];
+    final api = AeroArcApiClient(
+      missionControlToken: 'test',
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
+        if (request.method == 'POST') {
+          keys.add(request.headers['idempotency-key']);
+          return keys.length == 1
+              ? stalled.future
+              : http.Response(jsonEncode(command('accepted')), 202);
+        }
+        return http.Response('{"commands":[]}', 200);
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(api: api, flight: flight),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'ARM'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Issue command'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Retry same request'));
+    await tester.pumpAndSettle();
+    expect(keys.length, 2);
+    expect(keys[0], isNotNull);
+    expect(keys[0], keys[1]);
+    expect(find.text('ARM · accepted'), findsOneWidget);
+    stalled.complete(http.Response(jsonEncode(command('rejected')), 200));
+    await tester.pumpAndSettle();
+    expect(find.text('ARM · accepted'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final outcome in ['delayed', 'error', 'timeout']) {
     testWidgets('commands wait for known completion status: $outcome', (
       tester,
