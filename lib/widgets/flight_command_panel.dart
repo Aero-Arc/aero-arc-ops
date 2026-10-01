@@ -324,6 +324,9 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                                               .reconcileFlightCommand(
                                                 widget.flight.id,
                                                 command.id,
+                                              )
+                                              .timeout(
+                                                const Duration(seconds: 10),
                                               );
                                           if (!mounted) return;
                                           setState(() {

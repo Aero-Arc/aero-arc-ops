@@ -25,6 +25,73 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets(
+    'stalled reconciliation resumes polling and retries the same command',
+    (tester) async {
+      final stalled = Completer<http.Response>();
+      final paths = <String>[];
+      var reads = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/reconcile')) {
+            paths.add(request.url.path);
+            return paths.length == 1
+                ? stalled.future
+                : http.Response(
+                    jsonEncode({
+                      ...command('applied'),
+                      'observation_state': 'observed',
+                    }),
+                    200,
+                  );
+          }
+          reads++;
+          return http.Response(
+            jsonEncode({
+              'commands': [command('outcome_unknown')],
+            }),
+            200,
+          );
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('ARM ·').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Reconcile existing command'));
+      await tester.tap(find.text('Reconcile existing command'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Evidence recovery unavailable:'),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(reads, greaterThan(1));
+      await tester.ensureVisible(find.text('Reconcile existing command'));
+      await tester.tap(find.text('Reconcile existing command'));
+      await tester.pumpAndSettle();
+      expect(paths.length, 2);
+      expect(paths[0], paths[1]);
+      expect(find.text('ARM · applied'), findsOneWidget);
+      stalled.complete(http.Response(jsonEncode(command('rejected')), 200));
+      await tester.pumpAndSettle();
+      expect(find.text('ARM · applied'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('stalled submission retries the original request identity', (
     tester,
   ) async {
