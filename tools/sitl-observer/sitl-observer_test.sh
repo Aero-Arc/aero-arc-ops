@@ -157,10 +157,10 @@ echo "sitl-observer headless startup and asynchronous deployment reconciliation 
 
 # Retaining a pane after exit must never authorize simulator commands.
 (
-  pane_state='0:'
-  tmux() { [[ "$1" == display-message ]] && printf '%s\n' "$pane_state"; }
+  simulated_pane_state='0:'
+  tmux() { [[ "$1" == display-message ]] && printf '%s\n' "$simulated_pane_state"; }
   sitl_session_alive
-  pane_state='1:2'
+  simulated_pane_state='1:2'
   if sitl_session_alive; then exit 1; fi
   api_post() { echo 'dead simulator mutated API state' >&2; exit 99; }
   if demo_flight; then exit 1; fi
