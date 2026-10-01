@@ -671,9 +671,13 @@ durable_command() {
   fi
   command_id=$(jq -er '.id' "$response")
   for attempt in $(seq 1 90); do
-    curl --max-time 10 --connect-timeout 5 --fail --silent --show-error -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN" \
-      "$API_URL/api/v1/flights/$FLIGHT_ID/commands/$command_id" >"$response"
-    state=$(jq -er '.state' "$response")
+    if ! curl --max-time 10 --connect-timeout 5 --fail --silent --show-error -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN" \
+      "$API_URL/api/v1/flights/$FLIGHT_ID/commands/$command_id" >"$response"; then
+      echo "Command evidence temporarily unavailable; retrying retained command $command_id" >&2
+      sleep 1
+      continue
+    fi
+    if ! state=$(jq -er '.state' "$response"); then sleep 1; continue; fi
     case "$state" in
       applied)
         if [[ "$type" != ARM && "$type" != DISARM ]] || jq -e '.observation_state == "observed"' "$response" >/dev/null; then
@@ -708,7 +712,7 @@ wait_navigation_ready() {
   local attempt
   for attempt in $(seq 1 90); do
     if grep -Eq 'EKF[23] IMU[0-9]+ is using GPS' "$RUN_DIR/logs/sitl.log" 2>/dev/null &&
-       curl --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" |
+       curl --max-time 10 --connect-timeout 5 --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" |
        jq -e '.telemetry.position.status == "fresh" and
               .telemetry.gps.status == "fresh" and
               (.telemetry.gps.gps_fix_type | IN("gps_fix_type_3d_fix", "gps_fix_type_dgps", "gps_fix_type_rtk_float", "gps_fix_type_rtk_fixed"))' >/dev/null; then
@@ -730,7 +734,7 @@ mission_run() {
 wait_vehicle_mode() {
   local expected_mode=$1 mode_name=$2 attempt
   for attempt in $(seq 1 20); do
-    if curl --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
+    if curl --max-time 10 --connect-timeout 5 --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
       | jq -e --argjson expected "$expected_mode" \
         '.telemetry.vehicle.status == "fresh" and .telemetry.vehicle.custom_mode == $expected' >/dev/null; then
       return 0
@@ -744,7 +748,7 @@ wait_vehicle_mode() {
 wait_airborne() {
   local attempt
   for attempt in $(seq 1 45); do
-    if curl --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
+    if curl --max-time 10 --connect-timeout 5 --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
       | jq -e '
           .telemetry.vehicle.status == "fresh" and
           ((.telemetry.vehicle.base_mode // "") | contains("mav_mode_flag_safety_armed")) and
@@ -763,7 +767,7 @@ select_guided_airborne() {
   wait_airborne
   tmux send-keys -t "$TMUX_SESSION" "mode guided" Enter
   wait_vehicle_mode 4 GUIDED
-  if ! curl --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
+  if ! curl --max-time 10 --connect-timeout 5 --fail --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" \
     | jq -e '
         .telemetry.vehicle.status == "fresh" and
         ((.telemetry.vehicle.base_mode // "") | contains("mav_mode_flag_safety_armed"))
@@ -792,13 +796,20 @@ land() {
 }
 
 complete() {
-  local attempt state status response="$RUN_DIR/completion-progress.json"
-  for attempt in $(seq 1 "$COMPLETION_TIMEOUT"); do
-    status=$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
-      -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN" "$API_URL/api/v1/flights/$FLIGHT_ID/completion")
-    if [[ "$status" == 404 ]]; then sleep 1; continue; fi
+  local state status remaining request_timeout deadline=$((SECONDS + COMPLETION_TIMEOUT)) response="$RUN_DIR/completion-progress.json"
+  while ((SECONDS < deadline)); do
+    remaining=$((deadline - SECONDS))
+    request_timeout=$remaining
+    if ((request_timeout > 10)); then request_timeout=10; fi
+    if ! status=$(curl --max-time "$request_timeout" --connect-timeout 5 --silent --show-error --output "$response" --write-out '%{http_code}' \
+      -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN" "$API_URL/api/v1/flights/$FLIGHT_ID/completion"); then
+      echo "Completion status temporarily unavailable; retaining flight identity" >&2
+      sleep 1
+      continue
+    fi
+    if [[ "$status" == 404 || "$status" == 408 || "$status" == 429 || "$status" == 5?? ]]; then sleep 1; continue; fi
     if [[ "$status" != 200 ]]; then cat "$response" >&2; return 1; fi
-    state=$(jq -er '.state' "$response")
+    if ! state=$(jq -er '.state' "$response"); then sleep 1; continue; fi
     if [[ "$state" == complete ]]; then
       echo "Flight finalization completed, including monitoring and Agent-context cleanup."
       return 0
@@ -806,7 +817,7 @@ complete() {
     sleep 1
   done
   echo "Flight finalization remains pending; evidence and cleanup obligations are retained" >&2
-  cat "$response" >&2
+  if [[ -f "$response" ]]; then cat "$response" >&2; fi
   return 1
 }
 

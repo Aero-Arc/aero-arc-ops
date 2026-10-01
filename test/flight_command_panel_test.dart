@@ -327,7 +327,7 @@ void main() {
     },
   );
 
-  for (final flightStatus in ['planned', 'canceled']) {
+  for (final flightStatus in ['planned', 'canceled', 'complete']) {
     testWidgets('canceled intent disables commands for $flightStatus flight', (
       tester,
     ) async {
@@ -336,7 +336,12 @@ void main() {
         httpClient: MockClient((request) async {
           return request.url.path.endsWith('/completion')
               ? http.Response('{}', 404)
-              : http.Response('{"commands":[]}', 200);
+              : http.Response(
+                  jsonEncode({
+                    'commands': [command('outcome_unknown')],
+                  }),
+                  200,
+                );
         }),
       );
       await tester.pumpWidget(
@@ -364,6 +369,12 @@ void main() {
       );
       expect(controls, isNotEmpty);
       expect(controls.every((button) => button.onPressed == null), isTrue);
+      await tester.tap(find.textContaining('ARM ·').last);
+      await tester.pumpAndSettle();
+      final recovery = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, 'Reconcile existing command'),
+      );
+      expect(recovery.onPressed, isNull);
       await tester.pumpWidget(const SizedBox());
     });
   }

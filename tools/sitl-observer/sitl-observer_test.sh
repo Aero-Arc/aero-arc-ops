@@ -197,13 +197,15 @@ echo "sitl-observer headless startup and asynchronous deployment reconciliation 
     done
     count=$(<"$count_file"); count=$((count+1)); printf '%s' "$count" >"$count_file"
     case "$count" in
-      1) printf '{}' >"$output"; printf 404 ;;
-      2) printf '{"state":"finalizing"}' >"$output"; printf 200 ;;
+      1) return 28 ;;
+      2) printf '{}' >"$output"; printf 503 ;;
+      3) printf '{}' >"$output"; printf 404 ;;
+      4) printf '{"state":"finalizing"}' >"$output"; printf 200 ;;
       *) printf '{"state":"complete"}' >"$output"; printf 200 ;;
     esac
   }
   complete
-  [[ $(cat "$count_file") == 3 ]]
+  [[ $(cat "$count_file") == 5 ]]
 )
 echo 'durable command and completion helper tests passed'
 
@@ -239,4 +241,26 @@ echo 'durable command and completion helper tests passed'
   durable_command RTL
   [[ "$before" == "$(sha256sum "$RUN_DIR/command-RTL-request.json")" ]]
   [[ $(sed -n '1p' "$post_log") == "$(sed -n '2p' "$post_log")" ]]
+)
+
+# Evidence polling survives a transport failure without resubmitting the command.
+(
+  calls="$TEST_RUN_DIR/poll-recovery"
+  api_post_file() { printf '{"id":"retained-command"}'; }
+  curl() {
+    [[ "$*" == *"--max-time 10 --connect-timeout 5"* ]]
+    [[ "$*" == *"/commands/retained-command"* ]]
+    if [[ ! -f "$calls" ]]; then touch "$calls";return 28;fi
+    printf '{"state":"applied","observation_state":"observed"}'
+  }
+  durable_command LAND
+)
+# Completion timeout is a wall-clock deadline, including failed requests.
+(
+  COMPLETION_TIMEOUT=2
+  SECONDS=0
+  curl() { [[ "$*" == *"--max-time 2"* ]];SECONDS=3;return 28; }
+  # Command substitution runs curl in a subshell; advance the caller at retry.
+  sleep() { SECONDS=3; }
+  if complete;then echo 'completion timeout reported success' >&2;exit 1;fi
 )

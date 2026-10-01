@@ -318,6 +318,67 @@ void main() {
     },
   );
 
+  for (final stalledPath in ['/flights', '/missions/current']) {
+    testWidgets('terminal restoration timeout at $stalledPath can retry', (
+      tester,
+    ) async {
+      final stalled = Completer<http.Response>();
+      var fail = true;
+      final api = AeroArcApiClient(
+        missionControlToken: '',
+        httpClient: MockClient((request) async {
+          final path = request.url.path;
+          if (fail && path.endsWith(stalledPath)) return stalled.future;
+          if (path.endsWith('/flights'))
+            return _jsonResponse({
+              'flights': [
+                {
+                  'id': 'flight-1',
+                  'aircraft_id': 'aircraft-1',
+                  'intent_id': 'intent-1',
+                  'intent_version': 1,
+                  'status': 'complete',
+                },
+              ],
+            });
+          if (path.endsWith('/missions/current'))
+            return _jsonResponse(_missionJson());
+          if (path.endsWith('/volumes'))
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          return http.Response('{}', 404);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              apiClient: api,
+              renderTiles: false,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'canceled'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pumpAndSettle();
+      expect(find.text('Retry durable state restore'), findsOneWidget);
+      fail = false;
+      await _tapVisible(tester, find.text('Retry durable state restore'));
+      expect(find.text('Retry durable state restore'), findsNothing);
+      expect(find.text('Aircraft commands'), findsOneWidget);
+      stalled.complete(http.Response('late failure', 500));
+      await tester.pumpAndSettle();
+      expect(find.text('Aircraft commands'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('empty saved draft can create its first volume after loading', (
     tester,
   ) async {

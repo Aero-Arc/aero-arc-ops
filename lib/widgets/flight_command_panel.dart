@@ -134,12 +134,15 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     }
   }
 
+  bool get _terminalOperation =>
+      ['complete', 'canceled'].contains(widget.flight.status) ||
+      ['complete', 'canceled'].contains(widget.intentStatus);
+
   bool get _commandBlocked =>
       !_completionAvailable ||
       _historyRefreshing ||
       _completion != null ||
-      ['complete', 'canceled'].contains(widget.flight.status) ||
-      ['complete', 'canceled'].contains(widget.intentStatus) ||
+      _terminalOperation ||
       _loading ||
       !_historyAvailable ||
       _sending ||
@@ -147,7 +150,11 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       _commands.any((c) => c.unresolved);
 
   Future<void> _submit(String type) async {
-    if (_sending || !_completionAvailable || _completion != null) return;
+    if (_terminalOperation ||
+        _sending ||
+        !_completionAvailable ||
+        _completion != null)
+      return;
     if (_pendingKey == null) {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -412,7 +419,10 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                                     command.observationState == 'pending'))
                               TextButton(
                                 onPressed:
-                                    _sending ||
+                                    _terminalOperation ||
+                                        _historyRefreshing ||
+                                        !_historyAvailable ||
+                                        _sending ||
                                         !_completionAvailable ||
                                         _completion != null
                                     ? null

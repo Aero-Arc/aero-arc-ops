@@ -252,7 +252,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     int generation,
   ) async {
     try {
-      final flights = await _apiClient.listAircraftFlights(widget.aircraftId);
+      final flights = await _apiClient
+          .listAircraftFlights(widget.aircraftId)
+          .timeout(const Duration(seconds: 10));
       final exactFlights = flights.flights
           .where(
             (flight) =>
@@ -264,7 +266,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       final missionFlights = <MapEntry<FlightRecord, Mission>>[];
       for (final flight in exactFlights) {
         try {
-          final mission = await _apiClient.getCurrentMission(flight.id);
+          final mission = await _apiClient
+              .getCurrentMission(flight.id)
+              .timeout(const Duration(seconds: 10));
           if (!_missionBindingMatches(
             mission,
             flight: flight,
@@ -311,7 +315,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           mission != null &&
           _apiClient.hasLocalMissionControlToken) {
         try {
-          deployment = await _apiClient.getCurrentMissionDeployment(flight.id);
+          deployment = await _apiClient
+              .getCurrentMissionDeployment(flight.id)
+              .timeout(const Duration(seconds: 10));
         } on AeroArcApiException catch (error) {
           if (error.statusCode != 404) rethrow;
         }
@@ -666,7 +672,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         flight = null;
       }
       if (flight == null) {
-        final flights = await _apiClient.listAircraftFlights(widget.aircraftId);
+        final flights = await _apiClient
+            .listAircraftFlights(widget.aircraftId)
+            .timeout(const Duration(seconds: 10));
         final candidates = flights.flights
             .where(
               (candidate) =>
