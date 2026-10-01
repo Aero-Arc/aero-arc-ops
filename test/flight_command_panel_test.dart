@@ -95,6 +95,63 @@ void main() {
     },
   );
 
+  testWidgets('history progress clears a failed reconciliation message', (
+    tester,
+  ) async {
+    var recovered = false;
+    final api = AeroArcApiClient(
+      missionControlToken: 'test',
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion'))
+          return http.Response('{}', 404);
+        if (request.url.path.endsWith('/reconcile'))
+          return http.Response('unavailable', 503);
+        return http.Response(
+          jsonEncode({
+            'commands': [
+              {
+                ...command(recovered ? 'applied' : 'outcome_unknown'),
+                'observation_state': recovered ? 'observed' : 'pending',
+              },
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(api: api, flight: flight),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('ARM ·').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Reconcile existing command'));
+    await tester.tap(find.text('Reconcile existing command'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Evidence recovery unavailable:'),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Evidence recovery unavailable:'),
+      findsOneWidget,
+    );
+    recovered = true;
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Evidence recovery unavailable:'), findsNothing);
+    expect(find.text('ARM · applied'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('stalled submission retries the original request identity', (
     tester,
   ) async {

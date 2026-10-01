@@ -34,6 +34,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   Timer? _timer;
   int _historyGeneration = 0;
   String? _error, _pendingType, _pendingKey;
+  FlightCommand? _failedReconciliation;
   bool _loading = true,
       _sending = false,
       _historyRefreshing = false,
@@ -75,6 +76,19 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
           .timeout(const Duration(seconds: 10));
       if (mounted && generation == _historyGeneration) {
         setState(() {
+          final failed = _failedReconciliation;
+          if (failed != null &&
+              commands.any(
+                (c) =>
+                    c.id == failed.id &&
+                    (c.state != failed.state ||
+                        c.observationState != failed.observationState ||
+                        c.events.length > failed.events.length),
+              )) {
+            if (_error?.startsWith('Evidence recovery unavailable:') ?? false)
+              _error = null;
+            _failedReconciliation = null;
+          }
           _commands = commands;
           _loading = false;
           _historyAvailable = true;
@@ -452,10 +466,11 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                                           });
                                         } catch (e) {
                                           if (mounted) {
-                                            setState(
-                                              () => _error =
-                                                  'Evidence recovery unavailable: $e',
-                                            );
+                                            setState(() {
+                                              _failedReconciliation = command;
+                                              _error =
+                                                  'Evidence recovery unavailable: $e';
+                                            });
                                           }
                                         } finally {
                                           if (mounted) {
