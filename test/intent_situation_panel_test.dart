@@ -64,6 +64,73 @@ Widget page(AeroArcApiClient api, {int version = 1}) => MaterialApp(
 );
 
 void main() {
+  testWidgets('stalled geometry can be retried after timeout', (tester) async {
+    final stalled = Completer<http.Response>();
+    var reads = 0;
+    final api = AeroArcApiClient(
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/volumes')) {
+          reads++;
+          return reads == 1
+              ? stalled.future
+              : jsonResponse({'volumes': mapView(1)['operational_volumes']});
+        }
+        return jsonResponse(state('fresh'));
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: IntentSituationPanel(
+              api: api,
+              intent: intent(1, status: 'accepted'),
+              aircraftId: 'aircraft-1',
+              renderTiles: false,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
+    expect(find.textContaining('Saved geometry unavailable:'), findsOneWidget);
+    await tester.tap(find.byTooltip('Refresh operation map'));
+    await tester.pumpAndSettle();
+    expect(reads, 2);
+    expect(find.textContaining('Saved geometry unavailable:'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets(
+    'stalled live state marks unavailable and later polling recovers',
+    (tester) async {
+      final stalled = Completer<http.Response>();
+      final recovered = Completer<http.Response>();
+      var reads = 0;
+      final api = AeroArcApiClient(
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/state')) {
+            reads++;
+            return reads == 1 ? stalled.future : recovered.future;
+          }
+          return jsonResponse(mapView(1));
+        }),
+      );
+      await tester.pumpWidget(page(api));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pump();
+      expect(find.textContaining('Live state unavailable'), findsOneWidget);
+      recovered.complete(jsonResponse(state('fresh')));
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(reads, greaterThan(1));
+      expect(find.textContaining('Live state unavailable'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets(
     'same-intent added volume replaces empty geometry and stale read',
     (tester) async {

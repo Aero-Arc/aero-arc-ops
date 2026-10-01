@@ -51,7 +51,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       if (mounted && _loading) setState(() => _loading = false);
       return;
     }
-    _refreshing = true;
+    setState(() => _refreshing = true);
     final generation = _historyGeneration;
     try {
       final commands = await widget.api
@@ -76,11 +76,12 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
         });
       }
     } finally {
-      _refreshing = false;
+      if (mounted) setState(() => _refreshing = false);
     }
   }
 
   bool get _commandBlocked =>
+      _refreshing ||
       _loading ||
       !_historyAvailable ||
       _sending ||

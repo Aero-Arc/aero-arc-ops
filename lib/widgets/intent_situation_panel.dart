@@ -118,10 +118,9 @@ class _IntentSituationPanelState extends State<IntentSituationPanel> {
     if (mounted) setState(() => _loading = true);
     try {
       if (widget.intent.status != 'active') {
-        final volumes = await widget.api.getIntentVolumes(
-          widget.intent.id,
-          widget.intent.version,
-        );
+        final volumes = await widget.api
+            .getIntentVolumes(widget.intent.id, widget.intent.version)
+            .timeout(const Duration(seconds: 10));
         if (!mounted || generation != _generation) return;
         if (volumes.any((v) => !_matches(v))) {
           throw const AeroArcApiException(
@@ -138,10 +137,9 @@ class _IntentSituationPanelState extends State<IntentSituationPanel> {
         _fitOnce();
         return;
       }
-      final view = await widget.api.getAircraftMapView(
-        widget.aircraftId,
-        limit: 200,
-      );
+      final view = await widget.api
+          .getAircraftMapView(widget.aircraftId, limit: 200)
+          .timeout(const Duration(seconds: 10));
       if (!mounted || generation != _generation) return;
       if (view.aircraft.id != widget.aircraftId ||
           view.activeIntent?.id != widget.intent.id ||
@@ -181,7 +179,9 @@ class _IntentSituationPanelState extends State<IntentSituationPanel> {
     _refreshing = true;
     final generation = _generation;
     try {
-      final live = await widget.api.getAircraftState(widget.aircraftId);
+      final live = await widget.api
+          .getAircraftState(widget.aircraftId)
+          .timeout(const Duration(seconds: 10));
       if (!mounted || generation != _generation) return;
       if (live.aircraftId != widget.aircraftId) {
         throw const AeroArcApiException('Aircraft state identity mismatch');

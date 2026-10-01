@@ -63,7 +63,7 @@ void main() {
   );
 
   testWidgets(
-    'stalled invalidated history cannot stop future command polling',
+    'stalled history blocks confirmation then permits polling recovery',
     (tester) async {
       final stale = Completer<http.Response>();
       var reads = 0;
@@ -93,10 +93,10 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pump();
       await tester.tap(find.widgetWithText(OutlinedButton, 'ARM'));
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
       await tester.tap(find.text('Issue command'));
       await tester.pumpAndSettle();
       await tester.pump(const Duration(seconds: 11));
@@ -153,49 +153,58 @@ void main() {
     },
   );
 
-  testWidgets('older history response cannot erase a newly accepted command', (
-    tester,
-  ) async {
-    final stale = Completer<http.Response>();
-    var reads = 0;
-    final api = AeroArcApiClient(
-      missionControlToken: 'trusted-session',
-      httpClient: MockClient((request) async {
-        if (request.method == 'GET') {
-          reads++;
-          if (reads == 2) return stale.future;
-          return http.Response('{"commands":[]}', 200);
-        }
-        return http.Response(jsonEncode(command('accepted')), 202);
-      }),
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: FlightCommandPanel(api: api, flight: flight),
+  testWidgets(
+    'in-flight history blocks confirmation until other console authority arrives',
+    (tester) async {
+      final stale = Completer<http.Response>();
+      var reads = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: 'trusted-session',
+        httpClient: MockClient((request) async {
+          if (request.method == 'GET') {
+            reads++;
+            if (reads == 2) return stale.future;
+            return http.Response('{"commands":[]}', 200);
+          }
+          return http.Response(jsonEncode(command('accepted')), 202);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.pump(const Duration(seconds: 3));
-    expect(reads, 2);
-    await tester.tap(find.text('ARM'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Issue command'));
-    await tester.pumpAndSettle();
-    stale.complete(http.Response('{"commands":[]}', 200));
-    await tester.pumpAndSettle();
-    expect(find.text('ARM · accepted'), findsOneWidget);
-    expect(
-      tester
-          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'LAND'))
-          .onPressed,
-      isNull,
-    );
-    await tester.pumpWidget(const SizedBox());
-  });
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('ARM'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 3));
+      expect(reads, 2);
+      await tester.tap(find.text('Issue command'));
+      await tester.pumpAndSettle();
+      expect(find.text('ARM · accepted'), findsNothing);
+      stale.complete(
+        http.Response(
+          jsonEncode({
+            'commands': [command('acknowledged')],
+          }),
+          200,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('ARM · acknowledged'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'LAND'))
+            .onPressed,
+        isNull,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets(
     'shows verification progress separately from recovery deliveries',
