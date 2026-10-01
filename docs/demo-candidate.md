@@ -43,8 +43,8 @@ requires a new flight ID, not silently regenerated command keys. `sitl-complete`
 polls evidence; it neither forces completion nor clears Agent context itself.
 Autopilot completion is bound to endpoint, system/component IDs and vehicle
 profile. A changed binding fails closed; MAVLink IDs are not authenticated
-hardware identities. UDP peer-port changes require explicit recovery rather than
-silently transferring a flight watch.
+hardware identities. The configured UDP listener remains stable across peer-port
+changes; changing the configured endpoint requires explicit recovery.
 
 A parallel rehearsal can select AERO_ARC_SITL_PORT_OFFSET (0..9000), a distinct
 AERO_ARC_SITL_INSTANCE, AERO_ARC_SITL_COMPOSE_PROJECT, AERO_ARC_SITL_TMUX_SESSION,
@@ -53,3 +53,44 @@ AERO_ARC_SITL_CONFORMANCE_DB_PORT. All must identify test-owned resources. Set
 AERO_ARC_SITL_ENDING_BEHAVIOR to rtl (default) or land. Keep the normal demo running
 untouched. Candidate evidence must distinguish component tests, full-stack tests,
 and real cloud/hardware validation.
+
+## Recorded validation — October 1, 2026
+
+The isolated terminal-LAND rehearsal completed with these source revisions:
+
+| Component | Revision |
+| --- | --- |
+| API | 8714701fc1a079f4e2874271c982d4351e05f3b6 |
+| Relay | dc07307ced5f18d53b28984d59aef0f30ce13f51 |
+| Agent | 494bc3566709dedf28e190d711d09c50d2e05ced |
+| Registry | b72e02cefe1772d750e034dae0f58165de8b3894 |
+| Conformance | bc222e75cf05d5710ba4df65592e6375f368b023 |
+| Ops | 124e95178dcd8a496eb35162c06093dd514eee1e |
+
+All tracked component trees were clean when the runner recorded its manifest.
+The manifest also records binary SHA-256 values. Subsequent UI-only review fixes
+are covered by widget tests and builds; this table identifies the actual flight.
+
+ARM and MISSION_START were both applied and observed. Agent was restarted after
+airborne telemetry, preserving its WAL. The flight then landed, disarmed, and
+completed with event 4468a154-cc0d-54fc-bf7c-17d97b71eed8 and outcome
+mission_completed. Monitoring closure and Agent-context cleanup completed.
+
+After completion, Relay and API were restarted with retained stores. Exact ARM
+and MISSION_START resubmission preserved command IDs, digests, states, attempt
+counts, and completion evidence. Nine deterministic federation scenarios also
+passed against API 8714701 with seed 20261001; none were skipped.
+
+Local artifacts are retained under
+/tmp/aero-arc-sitl-readiness-sep30-land4/ (component manifest and service logs),
+/tmp/readiness-land4-*.json, /tmp/readiness-land4-*.log,
+/tmp/readiness-land4-*.sql, and /tmp/readiness-harness-artifacts30/.
+These are local validation artifacts, not an uploaded archive or cloud evidence
+bundle. The isolated stack was stopped after collection; the normal demo was
+not restarted.
+
+An earlier fresh simulator run rejected START with
+"Mode change to AUTO failed: requires position". The runner now waits, with a
+bounded timeout, for the current boot's EKF GPS-fusion announcement and fresh
+position/GPS telemetry before submitting ARM or START. It does not bypass an
+autopilot rejection or generate a replacement command identity.
