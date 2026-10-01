@@ -401,6 +401,13 @@ build_binaries() {
 
 write_version_manifest() {
   local source name sha patch binary_hash
+  # Hash the served entrypoint, not a separate build/web directory that another
+  # Flutter process may have rebuilt. Debug bootstrap is explicitly distinguished
+  # from the compiled release/profile artifact used for candidate rehearsals.
+  curl --fail --silent --show-error --max-time 30 "$OPS_URL/main.dart.js" >"$RUN_DIR/ops-main.dart.js" || return $?
+  [[ -s "$RUN_DIR/ops-main.dart.js" ]] || { echo 'Ops served an empty web entrypoint' >&2; return 1; }
+  local web_hash
+  web_hash=$(sha256sum "$RUN_DIR/ops-main.dart.js" | cut -d' ' -f1)
   : >"$RUN_DIR/component-versions.jsonl"
   for name in api relay agent registry conformance ops; do
     case "$name" in
@@ -412,8 +419,8 @@ write_version_manifest() {
     patch=$(git -C "$source" diff HEAD --binary | sha256sum | cut -d' ' -f1)
     binary_hash=""
     if [[ -f "$RUN_DIR/bin/$name" ]]; then binary_hash=$(sha256sum "$RUN_DIR/bin/$name" | cut -d' ' -f1); fi
-    jq -n --arg component "$name" --arg commit "$sha" --arg patch "$patch" --arg binary "$binary_hash" \
-      '{component:$component,commit:$commit,tracked_diff_sha256:$patch,binary_sha256:$binary}' >>"$RUN_DIR/component-versions.jsonl"
+    jq -n --arg component "$name" --arg commit "$sha" --arg patch "$patch" --arg binary "$binary_hash" --arg web "$web_hash" --arg mode "$OPS_WEB_MODE" \
+      '{component:$component,commit:$commit,tracked_diff_sha256:$patch} + (if $component == "ops" then {web_mode:$mode,web_entrypoint:"main.dart.js",web_entrypoint_sha256:$web} else {binary_sha256:$binary} end)' >>"$RUN_DIR/component-versions.jsonl"
   done
   jq -s '{components: .}' "$RUN_DIR/component-versions.jsonl" >"$RUN_DIR/component-versions.json"
 }
@@ -638,7 +645,6 @@ up() {
   generate_tls
   generate_configs
   build_binaries
-  write_version_manifest
   docker compose -p "$COMPOSE_PROJECT" -f "$SCRIPT_DIR/compose.yaml" up -d --wait
   wait_port PostGIS "$CONFORMANCE_DB_PORT"
   sleep 1
@@ -656,6 +662,7 @@ up() {
   start_ops
   # Cold release compilation can take longer than service startup.
   wait_http Ops "$OPS_URL" 300
+  write_version_manifest || return $?
   # Create the durable operation and mission before SITL emits telemetry.
   activate --defer-deploy
   # Acceptance commits the command and outbox. The worker establishes Agent

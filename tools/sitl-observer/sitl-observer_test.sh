@@ -24,6 +24,20 @@ if validate_ops_web_mode 2>/dev/null; then
   exit 1
 fi
 OPS_WEB_MODE=release
+# The manifest hashes bytes served by Ops after startup, independently of any
+# local Flutter build directory. A failed asset read cannot produce evidence.
+(
+  git() { if [[ "$*" == *'rev-parse HEAD'* ]]; then printf 'candidate-sha'; fi; }
+  curl() { [[ "${!#}" == "$OPS_URL/main.dart.js" ]]; printf 'served compiled application'; }
+  mkdir -p "$RUN_DIR/bin"
+  for component in api relay agent registry conformance; do printf '%s' "$component" >"$RUN_DIR/bin/$component"; done
+  write_version_manifest
+  expected=$(printf 'served compiled application' | sha256sum | cut -d' ' -f1)
+  jq -e --arg expected "$expected" '.components[] | select(.component == "ops") | .web_entrypoint_sha256 == $expected and .web_mode == "release" and (has("binary_sha256") | not)' "$RUN_DIR/component-versions.json" >/dev/null
+  jq -e '[.components[] | select(.component != "ops") | .binary_sha256 | length == 64] | all' "$RUN_DIR/component-versions.json" >/dev/null
+  curl() { return 22; }
+  if write_version_manifest; then echo 'failed web read produced a manifest' >&2; exit 1; fi
+)
 # Stub in a subshell so subsequent process tests retain the real launcher.
 (
   start_process() {
