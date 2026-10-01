@@ -64,6 +64,53 @@ Widget page(AeroArcApiClient api, {int version = 1}) => MaterialApp(
 );
 
 void main() {
+  testWidgets(
+    'same-intent added volume replaces empty geometry and stale read',
+    (tester) async {
+      final staleRead = Completer<http.Response>();
+      final api = AeroArcApiClient(
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/volumes')) {
+            return staleRead.future;
+          }
+          return jsonResponse(state('missing'));
+        }),
+      );
+      Widget view(List<OperationalVolume> volumes) => MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: IntentSituationPanel(
+              api: api,
+              intent: intent(1, status: 'accepted'),
+              aircraftId: 'aircraft-1',
+              renderTiles: false,
+              initialVolumes: volumes,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(view([]));
+      await tester.pump();
+      final volume = OperationalVolume.fromJson(
+        (mapView(1)['operational_volumes'] as List).single
+            as Map<String, dynamic>,
+      );
+      await tester.pumpWidget(view([volume]));
+      await tester.pump();
+      staleRead.complete(jsonResponse({'volumes': []}));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('No saved geometry'), findsNothing);
+      expect(
+        tester
+            .widgetList<PolygonLayer>(find.byType(PolygonLayer))
+            .any((p) => p.polygons.isNotEmpty),
+        isTrue,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   for (final status in ['accepted', 'complete', 'canceled']) {
     testWidgets('$status geometry uses the exact saved intent version', (
       tester,

@@ -2435,7 +2435,7 @@ class _MissionImportPanel extends StatelessWidget {
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               value: returnHome,
-              onChanged: busy
+              onChanged: busy || hasFailedSelection
                   ? null
                   : (value) => onReturnHomeChanged(value ?? true),
               title: const Text('Return to launch after mission'),

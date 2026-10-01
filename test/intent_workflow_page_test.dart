@@ -33,11 +33,12 @@ void main() {
             modification = jsonDecode(request.body) as Map<String, dynamic>;
             return http.Response('{}', 400);
           }
-          if (request.url.path.endsWith('/state'))
+          if (request.url.path.endsWith('/state')) {
             return _jsonResponse({
               'aircraft_id': 'aircraft-1',
               'telemetry': {'status': 'missing'},
             });
+          }
           return _jsonResponse({'flights': []});
         }),
       );
@@ -896,6 +897,12 @@ void main() {
       expect(find.text('deployment-1'), findsOneWidget);
       expect(find.text('Refresh durable status'), findsOneWidget);
       expect(find.text('Retry same import'), findsOneWidget);
+
+      final ending = find.widgetWithText(
+        CheckboxListTile,
+        'Return to launch after mission',
+      );
+      expect(tester.widget<CheckboxListTile>(ending).onChanged, isNull);
 
       await _tapVisible(tester, find.text('Retry same import'));
 
