@@ -91,16 +91,17 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     }
   }
 
-  bool get _commandBlocked =>
+  bool get _commandBlocked => _submissionBlocked || _pendingKey != null;
+
+  bool get _submissionBlocked =>
       _refreshing ||
       _loading ||
       !_historyAvailable ||
       _sending ||
-      _pendingKey != null ||
       _commands.any((c) => c.unresolved);
 
   Future<void> _submit(String type) async {
-    if (_sending) return;
+    if (_submissionBlocked) return;
     if (_pendingKey == null) {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -266,7 +267,9 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
               ),
             if (_pendingKey != null)
               TextButton(
-                onPressed: _sending ? null : () => _submit(_pendingType!),
+                onPressed: _submissionBlocked
+                    ? null
+                    : () => _submit(_pendingType!),
                 child: const Text('Retry same request'),
               ),
             if (_loading) const LinearProgressIndicator(),
