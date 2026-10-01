@@ -25,6 +25,52 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  for (final blockedPath in ['/commands', '/completion']) {
+    testWidgets('status polling stays independent when $blockedPath hangs', (
+      tester,
+    ) async {
+      final stalled = Completer<http.Response>();
+      var historyReads = 0;
+      var completionReads = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          final completion = request.url.path.endsWith('/completion');
+          if (completion) {
+            completionReads++;
+          } else {
+            historyReads++;
+          }
+          if (request.url.path.endsWith(blockedPath)) return stalled.future;
+          return completion
+              ? http.Response('{}', 404)
+              : http.Response('{"commands":[]}', 200);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(blockedPath == '/commands' ? completionReads : historyReads, 2);
+      expect(blockedPath == '/commands' ? historyReads : completionReads, 1);
+      stalled.complete(
+        blockedPath == '/commands'
+            ? http.Response('{"commands":[]}', 200)
+            : http.Response('{}', 404),
+      );
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('reconcile response updates evidence before the next poll', (
     tester,
   ) async {

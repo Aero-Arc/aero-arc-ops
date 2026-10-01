@@ -134,7 +134,7 @@ class _IntentSituationPanelState extends State<IntentSituationPanel> {
               ? 'No saved geometry is available for this intent version.'
               : null;
         });
-        if (volumes.isNotEmpty) widget.onVolumesLoaded?.call(volumes);
+        widget.onVolumesLoaded?.call(volumes);
         _fitOnce();
         return;
       }
@@ -160,7 +160,7 @@ class _IntentSituationPanelState extends State<IntentSituationPanel> {
             ? 'No saved geometry is available for this intent version.'
             : null;
       });
-      if (volumes.isNotEmpty) widget.onVolumesLoaded?.call(volumes);
+      widget.onVolumesLoaded?.call(volumes);
       _fitOnce();
     } catch (e) {
       if (mounted && generation == _generation) {

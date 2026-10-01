@@ -33,7 +33,8 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   String? _error, _pendingType, _pendingKey;
   bool _loading = true,
       _sending = false,
-      _refreshing = false,
+      _historyRefreshing = false,
+      _completionRefreshing = false,
       _historyAvailable = false;
   @override
   void initState() {
@@ -52,24 +53,23 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   }
 
   Future<void> _refresh() async {
-    if (_refreshing || _sending || !widget.api.hasLocalMissionControlToken) {
+    if (_sending || !widget.api.hasLocalMissionControlToken) {
       if (mounted && _loading) setState(() => _loading = false);
       return;
     }
-    _refreshing = true;
-    try {
-      await Future.wait([
-        _refreshHistory(_historyGeneration),
-        _refreshCompletion(),
-      ]);
-    } finally {
-      _refreshing = false;
-    }
+    await Future.wait([
+      _refreshHistory(_historyGeneration),
+      _refreshCompletion(),
+    ]);
   }
 
   Future<void> _refreshHistory(int generation) async {
+    if (_historyRefreshing) return;
+    _historyRefreshing = true;
     try {
-      final commands = await widget.api.flightCommands(widget.flight.id);
+      final commands = await widget.api
+          .flightCommands(widget.flight.id)
+          .timeout(const Duration(seconds: 10));
       if (mounted && generation == _historyGeneration) {
         setState(() {
           _commands = commands;
@@ -88,12 +88,18 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
           _loading = false;
         });
       }
+    } finally {
+      _historyRefreshing = false;
     }
   }
 
   Future<void> _refreshCompletion() async {
+    if (_completionRefreshing) return;
+    _completionRefreshing = true;
     try {
-      final completion = await widget.api.flightCompletion(widget.flight.id);
+      final completion = await widget.api
+          .flightCompletion(widget.flight.id)
+          .timeout(const Duration(seconds: 10));
       if (!mounted) return;
       setState(() {
         _completion = completion;
@@ -118,6 +124,8 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
           () => _completionError = 'Completion status unavailable: $error',
         );
       }
+    } finally {
+      _completionRefreshing = false;
     }
   }
 
