@@ -33,11 +33,12 @@ void main() {
             modification = jsonDecode(request.body) as Map<String, dynamic>;
             return http.Response('{}', 400);
           }
-          if (request.url.path.endsWith('/state'))
+          if (request.url.path.endsWith('/state')) {
             return _jsonResponse({
               'aircraft_id': 'aircraft-1',
               'telemetry': {'status': 'missing'},
             });
+          }
           return _jsonResponse({'flights': []});
         }),
       );

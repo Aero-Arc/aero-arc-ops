@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -86,6 +87,21 @@ class _IntentSituationPanelState extends State<IntentSituationPanel> {
       _refreshing = false;
       unawaited(_loadGeometry());
       unawaited(_refreshLive());
+    } else if (widget.initialVolumes.isNotEmpty &&
+        !listEquals(oldWidget.initialVolumes, widget.initialVolumes)) {
+      final supplied = widget.initialVolumes.where(_matches).toList();
+      if (supplied.isNotEmpty) {
+        // Invalidate a GET started before the add-volume POST committed.
+        _generation++;
+        _refreshing = false;
+        _loading = false;
+        _volumes = supplied;
+        _geometryError = null;
+        _fitted = false;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _fitOnce();
+        });
+      }
     }
   }
 
