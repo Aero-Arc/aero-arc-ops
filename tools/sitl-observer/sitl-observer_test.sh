@@ -158,7 +158,10 @@ echo "sitl-observer headless startup and asynchronous deployment reconciliation 
 # Retaining a pane after exit must never authorize simulator commands.
 (
   simulated_pane_state='0:'
-  tmux() { [[ "$1" == display-message ]] && printf '%s\n' "$simulated_pane_state"; }
+  tmux() {
+    [[ "$1" == display-message && "$4" == "$TMUX_SESSION:" ]] || return 1
+    printf '%s\n' "$simulated_pane_state"
+  }
   sitl_session_alive
   simulated_pane_state='1:2'
   if sitl_session_alive; then exit 1; fi

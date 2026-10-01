@@ -88,7 +88,7 @@ start_sitl() {
 
 sitl_session_alive() {
   local pane_state
-  pane_state=$(tmux display-message -p -t "$TMUX_SESSION:0.0" '#{pane_dead}:#{pane_dead_status}' 2>/dev/null) || {
+  pane_state=$(tmux display-message -p -t "$TMUX_SESSION:" '#{pane_dead}:#{pane_dead_status}' 2>/dev/null) || {
     echo "SITL simulator pane is unavailable" >&2
     return 1
   }
