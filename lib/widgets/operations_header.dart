@@ -47,6 +47,8 @@ class _OperationsHeaderState extends State<OperationsHeader> {
               children: [
                 const Text(
                   'Aero Arc Operations',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -58,6 +60,8 @@ class _OperationsHeaderState extends State<OperationsHeader> {
                   box.maxWidth > 1050
                       ? 'Live operational state across missions, aircraft, airspace, and infrastructure.'
                       : 'Live fleet & mission workspace',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 11,
                     color: Color(0xFF8797AB),
@@ -84,29 +88,34 @@ class _OperationsHeaderState extends State<OperationsHeader> {
             ),
             const SizedBox(width: 12),
           ],
-          const Tooltip(
-            message: 'Platform health feed is not configured',
-            child: Text(
-              '○ Health unavailable',
-              style: TextStyle(fontSize: 11, color: Color(0xFF8797AB)),
+          if (box.maxWidth > 600) ...[
+            const Tooltip(
+              message: 'Platform health feed is not configured',
+              child: Text(
+                '○ Health unavailable',
+                style: TextStyle(fontSize: 11, color: Color(0xFF8797AB)),
+              ),
             ),
-          ),
-          const SizedBox(width: 20),
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '${formatDate(_now, utc: true)} UTC',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${formatDate(_now)} ${_now.timeZoneName}',
-                style: const TextStyle(fontSize: 10, color: Color(0xFF8797AB)),
-              ),
-            ],
-          ),
+            const SizedBox(width: 20),
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${formatDate(_now, utc: true)} UTC',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${formatDate(_now)} ${_now.timeZoneName}',
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Color(0xFF8797AB),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     ),
