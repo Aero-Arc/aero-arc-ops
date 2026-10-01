@@ -113,7 +113,10 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
 
   Future<void> _refreshCompletion() async {
     if (_completionRefreshing) return;
-    _completionRefreshing = true;
+    setState(() {
+      _completionRefreshing = true;
+      _completionAvailable = false;
+    });
     try {
       final completion = await widget.api
           .flightCompletion(widget.flight.id)

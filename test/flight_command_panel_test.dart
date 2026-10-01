@@ -202,6 +202,53 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('a delayed second completion poll blocks confirmation', (
+    tester,
+  ) async {
+    final second = Completer<http.Response>();
+    var reads = 0;
+    var posts = 0;
+    final api = AeroArcApiClient(
+      missionControlToken: 'test',
+      httpClient: MockClient((request) async {
+        if (request.method == 'POST') posts++;
+        if (request.url.path.endsWith('/completion')) {
+          reads++;
+          if (reads == 1) return http.Response('{}', 404);
+          return second.future;
+        }
+        return http.Response('{"commands":[]}', 200);
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(api: api, flight: flight),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'ARM'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    await tester.tap(find.text('Issue command'));
+    await tester.pumpAndSettle();
+    expect(posts, 0);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'ARM'))
+          .onPressed,
+      isNull,
+    );
+    second.complete(http.Response('{"state":"finalizing"}', 200));
+    await tester.pumpAndSettle();
+    expect(posts, 0);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final outcome in ['delayed', 'error', 'timeout']) {
     testWidgets('commands wait for known completion status: $outcome', (
       tester,
