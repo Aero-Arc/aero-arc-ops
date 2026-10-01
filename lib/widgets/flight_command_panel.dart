@@ -67,7 +67,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
 
   Future<void> _refreshHistory(int generation) async {
     if (_historyRefreshing) return;
-    _historyRefreshing = true;
+    setState(() => _historyRefreshing = true);
     try {
       final commands = await widget.api
           .flightCommands(widget.flight.id)
@@ -91,7 +91,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
         });
       }
     } finally {
-      _historyRefreshing = false;
+      if (mounted) setState(() => _historyRefreshing = false);
     }
   }
 
@@ -132,6 +132,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   }
 
   bool get _commandBlocked =>
+      _historyRefreshing ||
       _completion != null ||
       ['complete', 'canceled'].contains(widget.flight.status) ||
       ['complete', 'canceled'].contains(widget.intentStatus) ||
