@@ -99,6 +99,17 @@ class AeroArcApiClient {
     OperationalIntent.fromJson,
   );
 
+  Future<List<OperationalVolume>> getIntentVolumes(
+    String intentId,
+    int version,
+  ) => _get(
+    '/api/v1/operational-intents/${Uri.encodeComponent(intentId)}/volumes',
+    (json) => (json['volumes'] as List<dynamic>)
+        .map((v) => OperationalVolume.fromJson(v as Map<String, dynamic>))
+        .toList(),
+    queryParameters: {'version': '$version'},
+  );
+
   Future<OperationalIntent> createOperationalIntent(
     CreateOperationalIntentRequest request,
   ) {

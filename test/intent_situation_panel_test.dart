@@ -9,13 +9,14 @@ import 'package:aero_arc_web/api/aero_arc_api.dart';
 import 'package:aero_arc_web/models/aero_arc_models.dart';
 import 'package:aero_arc_web/widgets/intent_situation_panel.dart';
 
-OperationalIntent intent(int version) => OperationalIntent.fromJson({
-  'id': 'intent-1',
-  'aircraft_id': 'aircraft-1',
-  'version': version,
-  'status': 'active',
-  'name': 'Inspection',
-});
+OperationalIntent intent(int version, {String status = 'active'}) =>
+    OperationalIntent.fromJson({
+      'id': 'intent-1',
+      'aircraft_id': 'aircraft-1',
+      'version': version,
+      'status': status,
+      'name': 'Inspection',
+    });
 Map<String, dynamic> mapView(int version) => {
   'aircraft': {'id': 'aircraft-1'},
   'active_intent': {
@@ -63,6 +64,41 @@ Widget page(AeroArcApiClient api, {int version = 1}) => MaterialApp(
 );
 
 void main() {
+  for (final status in ['accepted', 'complete', 'canceled']) {
+    testWidgets('$status geometry uses the exact saved intent version', (
+      tester,
+    ) async {
+      var geometryRead = false;
+      final api = AeroArcApiClient(
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/volumes')) {
+            expect(request.url.queryParameters['version'], '2');
+            geometryRead = true;
+            return jsonResponse({'volumes': mapView(2)['operational_volumes']});
+          }
+          expect(request.url.path.endsWith('/map'), isFalse);
+          return jsonResponse(state('fresh'));
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentSituationPanel(
+              api: api,
+              intent: intent(2, status: status),
+              aircraftId: 'aircraft-1',
+              renderTiles: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(geometryRead, isTrue);
+      expect(find.textContaining('Saved geometry unavailable'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   for (final connection in [
     'connected',
     'stale',

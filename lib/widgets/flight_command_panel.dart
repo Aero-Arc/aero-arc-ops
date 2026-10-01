@@ -376,14 +376,26 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                                 onPressed: _sending
                                     ? null
                                     : () async {
-                                        setState(() => _sending = true);
+                                        setState(() {
+                                          _sending = true;
+                                          _historyGeneration++;
+                                        });
                                         try {
-                                          await widget.api
+                                          final updated = await widget.api
                                               .reconcileFlightCommand(
                                                 widget.flight.id,
                                                 command.id,
                                               );
-                                          await _refresh();
+                                          if (!mounted) return;
+                                          setState(() {
+                                            _commands = [
+                                              updated,
+                                              ..._commands.where(
+                                                (c) => c.id != updated.id,
+                                              ),
+                                            ];
+                                            _error = null;
+                                          });
                                         } catch (e) {
                                           if (mounted) {
                                             setState(

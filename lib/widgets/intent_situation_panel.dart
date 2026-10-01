@@ -101,6 +101,27 @@ class _IntentSituationPanelState extends State<IntentSituationPanel> {
     final generation = _generation;
     if (mounted) setState(() => _loading = true);
     try {
+      if (widget.intent.status != 'active') {
+        final volumes = await widget.api.getIntentVolumes(
+          widget.intent.id,
+          widget.intent.version,
+        );
+        if (!mounted || generation != _generation) return;
+        if (volumes.any((v) => !_matches(v))) {
+          throw const AeroArcApiException(
+            'Saved geometry has a different intent binding.',
+          );
+        }
+        setState(() {
+          _volumes = volumes;
+          _geometryError = volumes.isEmpty
+              ? 'No saved geometry is available for this intent version.'
+              : null;
+        });
+        if (volumes.isNotEmpty) widget.onVolumesLoaded?.call(volumes);
+        _fitOnce();
+        return;
+      }
       final view = await widget.api.getAircraftMapView(
         widget.aircraftId,
         limit: 200,

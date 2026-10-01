@@ -25,6 +25,51 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets('reconcile response updates evidence before the next poll', (
+    tester,
+  ) async {
+    final api = AeroArcApiClient(
+      missionControlToken: 'trusted-session',
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
+        if (request.url.path.endsWith('/reconcile')) {
+          return http.Response(
+            jsonEncode({
+              ...command('applied'),
+              'observation_state': 'observed',
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'commands': [command('outcome_unknown')],
+          }),
+          200,
+        );
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(api: api, flight: flight),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('ARM').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Reconcile existing command'));
+    await tester.tap(find.text('Reconcile existing command'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Observation: observed'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('completion refresh survives unavailable command history', (
     tester,
   ) async {

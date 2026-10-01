@@ -213,7 +213,12 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   void _startMissionStateRestore() {
     final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
     if (intent == null ||
-        (!['accepted', 'active', 'complete'].contains(intent.status)) ||
+        (![
+          'accepted',
+          'active',
+          'complete',
+          'canceled',
+        ].contains(intent.status)) ||
         intent.aircraftId != widget.aircraftId) {
       _restoringMissionState = false;
       _missionRestoreError = null;
@@ -351,7 +356,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     final completed = flights.flights
         .where((f) => f.id == flight.id)
         .firstOrNull;
-    if (intent.status != 'complete' || completed?.status != 'complete') {
+    if (!['complete', 'canceled'].contains(intent.status) ||
+        completed?.status != 'complete') {
       throw const AeroArcApiException('Finalized records not yet visible');
     }
     setState(() {
@@ -367,7 +373,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     if (intent == null ||
         (intent.status != 'accepted' &&
             intent.status != 'active' &&
-            intent.status != 'complete') ||
+            intent.status != 'complete' &&
+            intent.status != 'canceled') ||
         intent.aircraftId != widget.aircraftId) {
       return;
     }

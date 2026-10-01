@@ -13,8 +13,23 @@ REGISTRY_SOURCE=${AERO_ARC_REGISTRY_SOURCE:-$PARENT_DIR/aero-arc-registry}
 AGENT_SOURCE=${AERO_ARC_AGENT_SOURCE:-$PARENT_DIR/aero-arc-agent}
 ARDUPILOT_SOURCE=${ARDUPILOT_SOURCE:-$PARENT_DIR/ardupilot}
 SIM_VEHICLE=${SIM_VEHICLE:-$ARDUPILOT_SOURCE/Tools/autotest/sim_vehicle.py}
-API_URL=${AERO_ARC_SITL_API_URL:-http://127.0.0.1:8080}
-OPS_URL=${AERO_ARC_SITL_OPS_URL:-http://127.0.0.1:7357}
+PORT_OFFSET=${AERO_ARC_SITL_PORT_OFFSET:-0}
+[[ "$PORT_OFFSET" =~ ^[0-9]+$ && "$PORT_OFFSET" -le 9000 ]] || { echo 'invalid SITL port offset' >&2; exit 2; }
+API_PORT=$((8080+PORT_OFFSET))
+OPS_PORT=$((7357+PORT_OFFSET))
+RELAY_PORT=$((50050+PORT_OFFSET))
+REGISTRY_PORT=$((50051+PORT_OFFSET))
+CONFORMANCE_PORT=$((50052+PORT_OFFSET))
+CONFORMANCE_METRICS_PORT=$((2113+PORT_OFFSET))
+RELAY_METRICS_PORT=$((2112+PORT_OFFSET))
+MAVLINK_PORT=$((14550+PORT_OFFSET))
+COMPOSE_PROJECT=${AERO_ARC_SITL_COMPOSE_PROJECT:-aero-arc-sitl-observer}
+SITL_SPEEDUP=${AERO_ARC_SITL_SPEEDUP:-1}
+[[ "$SITL_SPEEDUP" =~ ^([1-9]|10)$ ]] || { echo "invalid simulator speedup" >&2; exit 2; }
+SITL_INSTANCE=${AERO_ARC_SITL_INSTANCE:-0}
+[[ "$SITL_INSTANCE" =~ ^[0-9]+$ ]] || { echo 'invalid simulator instance' >&2; exit 2; }
+API_URL=${AERO_ARC_SITL_API_URL:-http://127.0.0.1:$API_PORT}
+OPS_URL=${AERO_ARC_SITL_OPS_URL:-http://127.0.0.1:$OPS_PORT}
 OPS_WEB_MODE=${AERO_ARC_SITL_WEB_MODE:-release}
 AGENT_ID=${AERO_ARC_SITL_AGENT_ID:-7bddaca99083eb313cf715a7d02db998869892d466d2000407311a6cbf5f4725}
 AGENT_TOKEN=${AERO_ARC_SITL_AGENT_TOKEN:-sitl-agent-local-secret}
@@ -28,6 +43,10 @@ ASSIGNMENT_ID=${AERO_ARC_SITL_ASSIGNMENT_ID:-$INTENT_ID}
 TMUX_SESSION=${AERO_ARC_SITL_TMUX_SESSION:-aeroarc-sitl}
 PLAN_MINUTES=${AERO_ARC_SITL_PLAN_MINUTES:-10}
 MONITOR_HOURS=${AERO_ARC_SITL_MONITOR_HOURS:-24}
+COMPLETION_TIMEOUT=${AERO_ARC_SITL_COMPLETION_TIMEOUT_SECONDS:-600}
+[[ "$COMPLETION_TIMEOUT" =~ ^[1-9][0-9]*$ && "$COMPLETION_TIMEOUT" -le 3600 ]] || { echo "invalid completion timeout" >&2; exit 2; }
+ENDING_BEHAVIOR=${AERO_ARC_SITL_ENDING_BEHAVIOR:-rtl}
+[[ "$ENDING_BEHAVIOR" == rtl || "$ENDING_BEHAVIOR" == land ]] || { echo "invalid ending behavior" >&2; exit 2; }
 SITL_STREAM_RATE_HZ=${AERO_ARC_SITL_STREAM_RATE_HZ:-4}
 INFLUX_PORT=${AERO_ARC_SITL_INFLUX_PORT:-28181}
 CONFORMANCE_DB_PORT=${AERO_ARC_SITL_CONFORMANCE_DB_PORT:-55433}
@@ -54,7 +73,7 @@ validate_ops_web_mode() {
 
 start_ops() {
   validate_ops_web_mode
-  start_process ops make -C "$OPS_DIR" web API_BASE_URL="$API_URL" MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" WEB_HOST=127.0.0.1 WEB_PORT=7357 WEB_MODE="$OPS_WEB_MODE"
+  start_process ops make -C "$OPS_DIR" web API_BASE_URL="$API_URL" MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" WEB_HOST=127.0.0.1 WEB_PORT="$OPS_PORT" WEB_MODE="$OPS_WEB_MODE"
 }
 
 validate_sitl_stream_rate() {
@@ -69,8 +88,10 @@ validate_sitl_stream_rate() {
 
 sitl_vehicle_command() {
   local command
-  printf -v command 'cd %q && exec env -u DISPLAY -u WAYLAND_DISPLAY PYTHONUNBUFFERED=1 %q -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --add-param-file %q --out=udp:127.0.0.1:14550 %q' \
-    "$ARDUPILOT_SOURCE/ArduCopter" "$SIM_VEHICLE" "$RUN_DIR/sitl" "$SCRIPT_DIR/ui-command-defaults.parm" "--mavproxy-args=--streamrate=$SITL_STREAM_RATE_HZ"
+  printf -v command 'cd %q && exec env -u DISPLAY -u WAYLAND_DISPLAY PYTHONUNBUFFERED=1 %q -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --add-param-file %q --out=udp:127.0.0.1:%s %q' \
+    "$ARDUPILOT_SOURCE/ArduCopter" "$SIM_VEHICLE" "$RUN_DIR/sitl" "$SCRIPT_DIR/ui-command-defaults.parm" "$MAVLINK_PORT" "--mavproxy-args=--streamrate=$SITL_STREAM_RATE_HZ"
+  if [[ "$SITL_INSTANCE" != 0 ]]; then command+=" --instance=$SITL_INSTANCE"; fi
+  if [[ "$SITL_SPEEDUP" != 1 ]]; then command+=" --speedup=$SITL_SPEEDUP"; fi
   printf '%s\n' "$command"
 }
 
@@ -178,7 +199,7 @@ stop_sitl_session() {
 }
 
 stop_compose_stack() {
-  docker compose -p aero-arc-sitl-observer -f "$SCRIPT_DIR/compose.yaml" down "$@" --remove-orphans
+  docker compose -p "$COMPOSE_PROJECT" -f "$SCRIPT_DIR/compose.yaml" down "$@" --remove-orphans
 }
 
 stop_processes() {
@@ -240,10 +261,11 @@ generate_tls() {
 generate_configs() {
   mkdir -p "$RUN_DIR/config"
   cat >"$RUN_DIR/config/relay.yaml" <<EOF
+metrics_address: "127.0.0.1:$RELAY_METRICS_PORT"
 completion_outbox_path: "$RUN_DIR/data/relay-completions.db"
 registry:
   enabled: true
-  address: "127.0.0.1:50051"
+  address: "127.0.0.1:$REGISTRY_PORT"
   relay_id: "relay-local-1"
   advertise_address: "localhost"
   heartbeat_interval: "5s"
@@ -288,8 +310,8 @@ logging:
 EOF
   cat >"$RUN_DIR/config/conformance.yaml" <<EOF
 service:
-  management_address: "127.0.0.1:2113"
-  grpc_address: "127.0.0.1:50052"
+  management_address: "127.0.0.1:$CONFORMANCE_METRICS_PORT"
+  grpc_address: "127.0.0.1:$CONFORMANCE_PORT"
   grpc_tls:
     certificate_file: "$RUN_DIR/tls/conformance.crt"
     private_key_file: "$RUN_DIR/tls/conformance.key"
@@ -307,7 +329,7 @@ influx:
   aircraft_batch_size: 100
   max_rows: 10000
 registry:
-  address: "127.0.0.1:50051"
+  address: "127.0.0.1:$REGISTRY_PORT"
   insecure: true
   publish_interval: 1s
   request_timeout: 3s
@@ -342,6 +364,25 @@ build_binaries() {
   (cd "$API_SOURCE" && GOCACHE="$cache" CCACHE_DIR="$ccache" go build -buildvcs=false -o "$RUN_DIR/bin/api" ./cmd/aero-arc-api)
   (cd "$AGENT_SOURCE" && GOCACHE="$cache" CCACHE_DIR="$ccache" go build -buildvcs=false -o "$RUN_DIR/bin/agent" ./cmd/aero-arc-agent)
   (cd "$SCRIPT_DIR/control" && GOCACHE="$cache" CCACHE_DIR="$ccache" go build -buildvcs=false -o "$RUN_DIR/bin/control" .)
+}
+
+write_version_manifest() {
+  local source name sha patch binary_hash
+  : >"$RUN_DIR/component-versions.jsonl"
+  for name in api relay agent registry conformance ops; do
+    case "$name" in
+      api) source=$API_SOURCE ;; relay) source=$RELAY_SOURCE ;;
+      agent) source=$AGENT_SOURCE ;; registry) source=$REGISTRY_SOURCE ;;
+      conformance) source=$CONFORMANCE_SOURCE ;; ops) source=$OPS_DIR ;;
+    esac
+    sha=$(git -C "$source" rev-parse HEAD)
+    patch=$(git -C "$source" diff HEAD --binary | sha256sum | cut -d' ' -f1)
+    binary_hash=""
+    if [[ -f "$RUN_DIR/bin/$name" ]]; then binary_hash=$(sha256sum "$RUN_DIR/bin/$name" | cut -d' ' -f1); fi
+    jq -n --arg component "$name" --arg commit "$sha" --arg patch "$patch" --arg binary "$binary_hash" \
+      '{component:$component,commit:$commit,tracked_diff_sha256:$patch,binary_sha256:$binary}' >>"$RUN_DIR/component-versions.jsonl"
+  done
+  jq -s '{components: .}' "$RUN_DIR/component-versions.jsonl" >"$RUN_DIR/component-versions.json"
 }
 
 api_post() {
@@ -391,8 +432,8 @@ import_mission() {
   local source_file=$SCRIPT_DIR/fixtures/inside-intent.waypoints
   local request_file=$RUN_DIR/mission-import-request.json
   jq --null-input --rawfile source "$source_file" \
-    --arg aircraft_id "$AIRCRAFT_ID" --arg intent_id "$INTENT_ID" \
-    '{source_format:"qgc_wpl_110",ending_behavior:"rtl",source:$source,aircraft_id:$aircraft_id,intent_id:$intent_id,intent_version:1}' \
+    --arg aircraft_id "$AIRCRAFT_ID" --arg intent_id "$INTENT_ID" --arg ending "$ENDING_BEHAVIOR" \
+    '{source_format:"qgc_wpl_110",ending_behavior:$ending,source:$source,aircraft_id:$aircraft_id,intent_id:$intent_id,intent_version:1}' \
     >"$request_file"
   api_post_file "/api/v1/flights/$FLIGHT_ID/missions/import" "$request_file" "sitl-$FLIGHT_ID-mission-import" >/dev/null
   api_get_file "/api/v1/flights/$FLIGHT_ID/missions/current" "$RUN_DIR/current-mission.json"
@@ -525,7 +566,7 @@ activate() {
   api_post "/api/v1/operational-intents/$INTENT_ID/flights" "{\"id\":\"$FLIGHT_ID\",\"operator_id\":\"$OPERATOR_ID\",\"mission_type\":\"sitl\"}" >/dev/null
   import_mission
   api_post "/api/v1/operational-intents/$INTENT_ID/activate" >/dev/null
-  "$RUN_DIR/bin/control" activate \
+  "$RUN_DIR/bin/control" activate --relay "127.0.0.1:$RELAY_PORT" --conformance "127.0.0.1:$CONFORMANCE_PORT" \
     --ca "$RUN_DIR/tls/ca.crt" --cert "$RUN_DIR/tls/bootstrap.crt" --key "$RUN_DIR/tls/bootstrap.key" \
     --skip-operation-context \
     --assignment-id "$ASSIGNMENT_ID" --operator-id "$OPERATOR_ID" --aircraft-id "$AIRCRAFT_ID" \
@@ -550,27 +591,28 @@ up() {
   fi
   stop_sitl_session
   stop_compose_stack --volumes >/dev/null 2>&1 || true
-  for port in 8080 7357 50050 50051 50052 2113 "$INFLUX_PORT" "$CONFORMANCE_DB_PORT"; do require_free_port "$port"; done
+  for port in "$API_PORT" "$OPS_PORT" "$RELAY_PORT" "$REGISTRY_PORT" "$CONFORMANCE_PORT" "$RELAY_METRICS_PORT" "$CONFORMANCE_METRICS_PORT" "$INFLUX_PORT" "$CONFORMANCE_DB_PORT"; do require_free_port "$port"; done
   rm -rf -- "$RUN_DIR"
   mkdir -p "$RUN_DIR/logs" "$RUN_DIR/pids"
   trap cleanup_failed_up EXIT
   generate_tls
   generate_configs
   build_binaries
-  docker compose -p aero-arc-sitl-observer -f "$SCRIPT_DIR/compose.yaml" up -d --wait
+  write_version_manifest
+  docker compose -p "$COMPOSE_PROJECT" -f "$SCRIPT_DIR/compose.yaml" up -d --wait
   wait_port PostGIS "$CONFORMANCE_DB_PORT"
   sleep 1
-  start_process registry "$RUN_DIR/bin/registry" --backend memory --grpc-listen-address 127.0.0.1 --grpc-listen-port 50051 --conformance-ttl 30s
-  wait_port Registry 50051
-  start_process relay "$RUN_DIR/bin/relay" --config-path "$RUN_DIR/config/relay.yaml" --grpc-port 50050 --tls-cert-path "$RUN_DIR/tls/relay.crt" --tls-key-path "$RUN_DIR/tls/relay.key"
-  wait_port Relay 50050
+  start_process registry "$RUN_DIR/bin/registry" --backend memory --grpc-listen-address 127.0.0.1 --grpc-listen-port "$REGISTRY_PORT" --conformance-ttl 30s
+  wait_port Registry "$REGISTRY_PORT"
+  start_process relay "$RUN_DIR/bin/relay" --config-path "$RUN_DIR/config/relay.yaml" --grpc-port "$RELAY_PORT" --tls-cert-path "$RUN_DIR/tls/relay.crt" --tls-key-path "$RUN_DIR/tls/relay.key"
+  wait_port Relay "$RELAY_PORT"
   start_process conformance "$RUN_DIR/bin/conformance" --config-path "$RUN_DIR/config/conformance.yaml"
-  wait_port Conformance 50052
+  wait_port Conformance "$CONFORMANCE_PORT"
   # shellcheck source=history-environment.sh
   source "$SCRIPT_DIR/history-environment.sh"
-  start_process api env AERO_API_ADDR=127.0.0.1:8080 AERO_API_DURABLE_STORE=postgres AERO_API_DATABASE_URL="postgres://aero_arc:aero_arc@127.0.0.1:$CONFORMANCE_DB_PORT/aero_arc?sslmode=disable" AERO_API_AIRSPACE_PROVIDERS=local AERO_API_TELEMETRY_STORE=influxdb AERO_API_REPLAY_STORE=memory AERO_API_INFLUXDB_HOST="http://127.0.0.1:$INFLUX_PORT" AERO_API_INFLUXDB_TOKEN=local-development-no-auth AERO_API_INFLUXDB_DATABASE=aero_arc AERO_API_REGISTRY_MODE=grpc AERO_API_REGISTRY_ADDR=127.0.0.1:50051 AERO_API_RELAY_CONTROL_CA_FILE="$RUN_DIR/tls/ca.crt" AERO_API_RELAY_CONTROL_CERT_FILE="$RUN_DIR/tls/bootstrap.crt" AERO_API_RELAY_CONTROL_KEY_FILE="$RUN_DIR/tls/bootstrap.key" AERO_API_RELAY_CONTROL_SERVER_NAME=localhost AERO_API_MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" AERO_API_SEED= "$RUN_DIR/bin/api" start
+  start_process api env AERO_API_ADDR=127.0.0.1:$API_PORT AERO_API_DURABLE_STORE=postgres AERO_API_DATABASE_URL="postgres://aero_arc:aero_arc@127.0.0.1:$CONFORMANCE_DB_PORT/aero_arc?sslmode=disable" AERO_API_AIRSPACE_PROVIDERS=local AERO_API_TELEMETRY_STORE=influxdb AERO_API_REPLAY_STORE=memory AERO_API_INFLUXDB_HOST="http://127.0.0.1:$INFLUX_PORT" AERO_API_INFLUXDB_TOKEN=local-development-no-auth AERO_API_INFLUXDB_DATABASE=aero_arc AERO_API_REGISTRY_MODE=grpc AERO_API_REGISTRY_ADDR=127.0.0.1:$REGISTRY_PORT AERO_API_RELAY_CONTROL_CA_FILE="$RUN_DIR/tls/ca.crt" AERO_API_RELAY_CONTROL_CERT_FILE="$RUN_DIR/tls/bootstrap.crt" AERO_API_RELAY_CONTROL_KEY_FILE="$RUN_DIR/tls/bootstrap.key" AERO_API_RELAY_CONTROL_SERVER_NAME=localhost AERO_API_MISSION_DEPLOY_TOKEN="$MISSION_DEPLOY_TOKEN" AERO_API_SEED= "$RUN_DIR/bin/api" start
   wait_http API "$API_URL/readyz"
-  start_process agent env AERO_ARC_API_KEY="$AGENT_TOKEN" "$RUN_DIR/bin/agent" --server-address 127.0.0.1 --server-port 50050 --skip-tls-verification --debug --wal-path "$RUN_DIR/agent-wal.db" --wal-flush-timeout 250ms --aircraft-command-timeout 10s
+  start_process agent env AERO_ARC_API_KEY="$AGENT_TOKEN" "$RUN_DIR/bin/agent" --server-address 127.0.0.1 --server-port "$RELAY_PORT" --skip-tls-verification --debug --debug-mavlink-address "127.0.0.1:$MAVLINK_PORT" --wal-path "$RUN_DIR/agent-wal.db" --wal-flush-timeout 250ms --aircraft-command-timeout 10s
   start_ops
   # Cold release compilation can take longer than service startup.
   wait_http Ops "$OPS_URL" 300
@@ -607,35 +649,53 @@ up() {
   trap - EXIT
 }
 
+durable_command() {
+  local type=$1 key request response command_id state attempt
+  key="sitl-$FLIGHT_ID-$type"
+  request="$RUN_DIR/command-$type-request.json"
+  response="$RUN_DIR/command-$type-response.json"
+  # Persist request content as well as identity so a retry cannot silently bind
+  # a changed mission to the same command.
+  if [[ ! -f "$request" ]]; then
+    jq -n --arg type "$type" '{type:$type}' >"$request"
+  fi
+  api_post_file "/api/v1/flights/$FLIGHT_ID/commands" "$request" "$key" >"$response"
+  command_id=$(jq -er '.id' "$response")
+  for attempt in $(seq 1 90); do
+    curl --fail --silent --show-error -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN" \
+      "$API_URL/api/v1/flights/$FLIGHT_ID/commands/$command_id" >"$response"
+    state=$(jq -er '.state' "$response")
+    case "$state" in
+      applied)
+        if [[ "$type" != ARM && "$type" != DISARM ]] || jq -e '.observation_state == "observed"' "$response" >/dev/null; then
+          echo "$type applied; observed state: $(jq -r '.observation_state' "$response")"
+          return 0
+        fi ;;
+      rejected|failed|timed_out|outcome_unknown)
+        echo "$type requires attention; reuse command $command_id, do not create another identity" >&2
+        cat "$response" >&2
+        return 1 ;;
+    esac
+    sleep 1
+  done
+  echo "Timed out waiting for $type evidence; retained command $command_id" >&2
+  return 1
+}
+
 aircraft_command() {
   local action=${1:-}
-  [[ "$action" == arm || "$action" == disarm ]] || { echo "aircraft-command requires arm or disarm" >&2; exit 2; }
-  "$RUN_DIR/bin/control" aircraft-command \
-    --ca "$RUN_DIR/tls/ca.crt" --cert "$RUN_DIR/tls/bootstrap.crt" --key "$RUN_DIR/tls/bootstrap.key" \
-    --agent-id "$AGENT_ID" --aircraft-id "$AIRCRAFT_ID" --command-id "sitl-$action-$(date +%s%N)" --action "$action"
+  [[ "$action" == arm || "$action" == disarm ]] || { echo "aircraft-command requires arm or disarm" >&2; return 2; }
+  durable_command "${action^^}"
 }
 
 demo_flight() {
-  api_post "/api/v1/flights/$FLIGHT_ID/start" >/dev/null
-  tmux has-session -t "$TMUX_SESSION"
-  tmux send-keys -t "$TMUX_SESSION" "mode guided" Enter
-  sleep 2
-  tmux send-keys -t "$TMUX_SESSION" "arm throttle" Enter
-  sleep 3
-  tmux send-keys -t "$TMUX_SESSION" "takeoff 15" Enter
-  sleep 12
-  tmux send-keys -t "$TMUX_SESSION" "guided -35.362500 149.166000 20" Enter
-  echo "SITL is taking off and moving to the demo waypoint; it remains active for observation."
+  mission_run
 }
 
 mission_run() {
-  tmux has-session -t "$TMUX_SESSION"
-  api_post "/api/v1/flights/$FLIGHT_ID/start" >/dev/null
-  # AUTO options are installed at SITL startup for both UI and helper use.
-  tmux send-keys -t "$TMUX_SESSION" "mode auto" Enter
-  wait_vehicle_mode 3 AUTO
-  aircraft_command arm
-  echo "AUTO selected in SITL and ARM sent through Relay/Agent. The deployed route is authoritative; watch commanded versus observed tracks in Ops."
+  durable_command ARM
+  durable_command MISSION_START
+  echo "Durable mission start applied. Watch independent telemetry and automatic flight finalization in Ops."
 }
 
 wait_vehicle_mode() {
@@ -699,17 +759,26 @@ move_inside() {
 }
 
 land() {
-  tmux has-session -t "$TMUX_SESSION"
-  tmux send-keys -t "$TMUX_SESSION" "mode land" Enter
-  echo "LAND sent through MAVProxy. Wait for landing and disarm before make sitl-complete."
+  durable_command LAND
 }
 
 complete() {
-  api_post "/api/v1/operational-intents/$INTENT_ID/complete" >/dev/null
-  "$RUN_DIR/bin/control" clear \
-    --ca "$RUN_DIR/tls/ca.crt" --cert "$RUN_DIR/tls/bootstrap.crt" --key "$RUN_DIR/tls/bootstrap.key" \
-    --agent-id "$AGENT_ID" --flight-id "$FLIGHT_ID" --command-id "sitl-$FLIGHT_ID-clear"
-  echo "Intent completed and Agent operation context cleared."
+  local attempt state status response="$RUN_DIR/completion-progress.json"
+  for attempt in $(seq 1 "$COMPLETION_TIMEOUT"); do
+    status=$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
+      -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN" "$API_URL/api/v1/flights/$FLIGHT_ID/completion")
+    if [[ "$status" == 404 ]]; then sleep 1; continue; fi
+    if [[ "$status" != 200 ]]; then cat "$response" >&2; return 1; fi
+    state=$(jq -er '.state' "$response")
+    if [[ "$state" == complete ]]; then
+      echo "Flight finalization completed, including monitoring and Agent-context cleanup."
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Flight finalization remains pending; evidence and cleanup obligations are retained" >&2
+  cat "$response" >&2
+  return 1
 }
 
 status() {

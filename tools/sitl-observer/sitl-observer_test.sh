@@ -154,3 +154,48 @@ jq -e '.deployment_id == "deployment-1" and .status == "already_applied"' <<<"$r
 # The same durable deployment must survive more polls than the old synchronous
 # 15-attempt budget. No poll may create a second deployment.
 echo "sitl-observer headless startup and asynchronous deployment reconciliation tests passed"
+
+# Command helpers must use authenticated durable submission and wait for evidence.
+(
+  calls="$TEST_RUN_DIR/command-calls"
+  api_post_file() {
+    [[ "$1" == "/api/v1/flights/$FLIGHT_ID/commands" ]]
+    local type
+    type=$(jq -er '.type' "$2")
+    [[ "$3" == "sitl-$FLIGHT_ID-$type" ]]
+    [[ $(jq 'keys | length' "$2") == 1 ]]
+    printf '%s\n' "$type" >>"$calls"
+    printf '{"id":"command-%s","state":"accepted"}' "$type"
+  }
+  curl() {
+    [[ "$*" == *"Authorization: Bearer $MISSION_DEPLOY_TOKEN"* ]]
+    [[ "$*" == *"/commands/command-"* ]]
+    printf '{"state":"applied","observation_state":"observed"}'
+  }
+  tmux() { echo 'legacy simulator command unexpectedly used' >&2; return 1; }
+  mission_run
+  [[ $(cat "$calls") == $'ARM\nMISSION_START' ]]
+  land
+  [[ $(tail -1 "$calls") == LAND ]]
+)
+# Completion 404 and asynchronous progress must not be presented as finished.
+(
+  count_file="$TEST_RUN_DIR/completion-count"
+  printf '0' >"$count_file"
+  curl() {
+    [[ "$*" == *"Authorization: Bearer $MISSION_DEPLOY_TOKEN"* ]]
+    local output= count
+    while (($#)); do
+      if [[ "$1" == --output ]]; then output=$2; shift 2; else shift; fi
+    done
+    count=$(<"$count_file"); count=$((count+1)); printf '%s' "$count" >"$count_file"
+    case "$count" in
+      1) printf '{}' >"$output"; printf 404 ;;
+      2) printf '{"state":"finalizing"}' >"$output"; printf 200 ;;
+      *) printf '{"state":"complete"}' >"$output"; printf 200 ;;
+    esac
+  }
+  complete
+  [[ $(cat "$count_file") == 3 ]]
+)
+echo 'durable command and completion helper tests passed'
