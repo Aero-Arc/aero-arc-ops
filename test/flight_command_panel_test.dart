@@ -25,6 +25,50 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets(
+    'history blocker arriving during confirmation prevents submission',
+    (tester) async {
+      var blocked = false;
+      var submissions = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion'))
+            return http.Response('{}', 404);
+          if (request.method == 'POST') {
+            submissions++;
+            return http.Response('{}', 500);
+          }
+          return http.Response(
+            jsonEncode({
+              'commands': blocked ? [command('acknowledged')] : [],
+            }),
+            200,
+          );
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'ARM'));
+      await tester.pumpAndSettle();
+      blocked = true;
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Issue command'));
+      await tester.pumpAndSettle();
+      expect(submissions, 0);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   for (final flightStatus in ['planned', 'canceled']) {
     testWidgets('canceled intent disables commands for $flightStatus flight', (
       tester,

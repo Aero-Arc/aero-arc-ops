@@ -131,6 +131,16 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     }
   }
 
+  bool get _commandBlocked =>
+      _completion != null ||
+      ['complete', 'canceled'].contains(widget.flight.status) ||
+      ['complete', 'canceled'].contains(widget.intentStatus) ||
+      _loading ||
+      !_historyAvailable ||
+      _sending ||
+      _pendingKey != null ||
+      _commands.any((c) => c.unresolved);
+
   Future<void> _submit(String type) async {
     if (_sending) return;
     if (_pendingKey == null) {
@@ -155,6 +165,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
         ),
       );
       if (confirmed != true || !mounted) return;
+      if (_commandBlocked || !widget.api.hasLocalMissionControlToken) return;
       final random = Random.secure();
       _pendingKey = List.generate(
         24,
@@ -193,15 +204,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final blocked =
-        _completion != null ||
-        ['complete', 'canceled'].contains(widget.flight.status) ||
-        ['complete', 'canceled'].contains(widget.intentStatus) ||
-        _loading ||
-        !_historyAvailable ||
-        _sending ||
-        _pendingKey != null ||
-        _commands.any((c) => c.unresolved);
+    final blocked = _commandBlocked;
     return Panel(
       title: 'Aircraft commands',
       trailing: StatusBadge(
