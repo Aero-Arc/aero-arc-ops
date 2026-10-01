@@ -112,10 +112,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       : _pointsFromGeoJson(_savedVolumes.first.geoJson);
 
   void _restoreGeometry(List<OperationalVolume> volumes) {
-    if (_geometryEdited ||
-        !mounted ||
-        volumes.isEmpty ||
-        _savedVolumes.isNotEmpty) {
+    if (!mounted || volumes.isEmpty || _savedVolumes.isNotEmpty) {
       return;
     }
     final current = _acceptedIntent ?? _intent ?? _sourceIntent;
@@ -128,7 +125,17 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     setState(() {
       _savedVolumes = volumes;
       final points = _savedPolygon;
-      if (points != null && points.length >= 3) _volumePoints = points;
+      if (!_geometryEdited && points != null && points.length >= 3) {
+        _volumePoints = points;
+      }
+      final volume = volumes.first;
+      _bufferMeters.text = volume.bufferMeters?.toString() ?? '';
+      if (current.minAltitudeFtAgl == null) {
+        _minAltitudeFt.text = _metersToFeet(volume.minAltitudeM).toString();
+      }
+      if (current.maxAltitudeFtAgl == null) {
+        _maxAltitudeFt.text = _metersToFeet(volume.maxAltitudeM).toString();
+      }
       _altitudeRef = volumes.first.altitudeRef;
       _volumeType = volumes.first.volumeType ?? _volumeType;
     });
@@ -357,6 +364,12 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   }
 
   Future<void> _saveAndCheck() async {
+    if (_sourceIntent != null && _savedVolumes.isEmpty) {
+      setState(
+        () => _error = 'Load the saved intent volume before modification.',
+      );
+      return;
+    }
     if (_missionRestoreError != null) {
       setState(
         () => _error =
@@ -1097,16 +1110,12 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     if (intent?.minAltitudeFtAgl != null) {
       _minAltitudeFt.text = intent!.minAltitudeFtAgl!.toStringAsFixed(0);
     } else if (firstVolume != null) {
-      _minAltitudeFt.text = _metersToFeet(
-        firstVolume.minAltitudeM,
-      ).toStringAsFixed(0);
+      _minAltitudeFt.text = _metersToFeet(firstVolume.minAltitudeM).toString();
     }
     if (intent?.maxAltitudeFtAgl != null) {
       _maxAltitudeFt.text = intent!.maxAltitudeFtAgl!.toStringAsFixed(0);
     } else if (firstVolume != null) {
-      _maxAltitudeFt.text = _metersToFeet(
-        firstVolume.maxAltitudeM,
-      ).toStringAsFixed(0);
+      _maxAltitudeFt.text = _metersToFeet(firstVolume.maxAltitudeM).toString();
     }
     _authorizationPath = intent?.authorizationPath.isNotEmpty == true
         ? intent!.authorizationPath
@@ -1120,7 +1129,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         : _altitudeRef;
     _volumeType = firstVolume?.volumeType ?? _volumeType;
     _bufferMeters.text =
-        firstVolume?.bufferMeters?.toStringAsFixed(0) ?? _bufferMeters.text;
+        firstVolume?.bufferMeters?.toString() ?? _bufferMeters.text;
     final points = _pointsFromGeoJson(firstVolume?.geoJson);
     if (points.length >= 3) _volumePoints = points;
   }
@@ -1269,7 +1278,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     );
     final checks = _ChecksPanel(
       busy: workflowBusy,
-      checksBlocked: _missionRestoreError != null,
+      checksBlocked:
+          _missionRestoreError != null ||
+          (_sourceIntent != null && _savedVolumes.isEmpty),
       sourceIntent: _sourceIntent,
       modifyResult: _modifyResult,
       intent: currentIntent,
@@ -1289,7 +1300,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           (currentIntent?.status == 'active' ? currentIntent : null),
       checksClear: _checksClear,
       busy: workflowBusy,
-      checksBlocked: _missionRestoreError != null,
+      checksBlocked:
+          _missionRestoreError != null ||
+          (_sourceIntent != null && _savedVolumes.isEmpty),
       onRunChecks: _saveAndCheck,
       onAccept: _acceptIntent,
       onActivate: _activateIntent,
