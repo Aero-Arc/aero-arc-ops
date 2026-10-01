@@ -20,7 +20,7 @@ class ConformanceEventDialog extends StatelessWidget {
         : opened
         ? const Color(0xFFE4A100)
         : const Color(0xFF8797AB);
-    final time = event.observedAt.toUtc().toIso8601String();
+    final time = _displayTime(event.observedAt);
     final title =
         '${displayEnum(event.violationType)} · ${resolved
             ? 'Resolved'
@@ -148,7 +148,7 @@ class ConformanceEventDialog extends StatelessWidget {
                           ),
                         ),
                       Text(
-                        '${time.substring(0, 10)} · ${time.substring(11, 19)} UTC',
+                        time,
                         style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xFFA0ADBB),
@@ -212,12 +212,12 @@ class ConformanceEventDialog extends StatelessWidget {
                     if (event.isTemporal && event.plannedStartAt != null)
                       _EventField(
                         label: 'Planned start',
-                        value: event.plannedStartAt!.toUtc().toIso8601String(),
+                        value: _displayTime(event.plannedStartAt!),
                       ),
                     if (event.isTemporal && event.plannedEndAt != null)
                       _EventField(
                         label: 'Planned end',
-                        value: event.plannedEndAt!.toUtc().toIso8601String(),
+                        value: _displayTime(event.plannedEndAt!),
                       ),
                   ],
                 ),
@@ -256,5 +256,4 @@ class _EventField extends StatelessWidget {
       ConformanceEvidenceField(label: label, value: value);
 }
 
-String _displayTime(DateTime value) =>
-    '${value.toUtc().toIso8601String().substring(0, 19).replaceFirst('T', ' ')} UTC';
+String _displayTime(DateTime value) => '${formatDate(value, utc: true)} UTC';

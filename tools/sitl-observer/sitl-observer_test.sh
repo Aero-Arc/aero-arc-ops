@@ -38,8 +38,10 @@ validate_sitl_stream_rate
 SITL_STREAM_RATE_HZ=7
 ARDUPILOT_SOURCE='/tmp/ardupilot source'
 SIM_VEHICLE='/tmp/sim vehicle.py'
-printf -v expected_command 'cd /tmp/ardupilot\\ source/ArduCopter && exec /tmp/sim\\ vehicle.py -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --console --out=udp:127.0.0.1:14550 --mavproxy-args=--streamrate=7' "$RUN_DIR/sitl"
+printf -v expected_command 'cd /tmp/ardupilot\\ source/ArduCopter && exec env -u DISPLAY -u WAYLAND_DISPLAY PYTHONUNBUFFERED=1 /tmp/sim\\ vehicle.py -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --add-param-file %q --out=udp:127.0.0.1:14550 --mavproxy-args=--streamrate=7' "$RUN_DIR/sitl" "$SCRIPT_DIR/ui-command-defaults.parm"
 [[ "$(sitl_vehicle_command)" == "$expected_command" ]]
+# Startup supplies only the required AUTO options, retaining arming checks.
+[[ $(sed '/^#/d; /^$/d' "$SCRIPT_DIR/ui-command-defaults.parm") == 'AUTO_OPTIONS 3' ]]
 for invalid_rate in 0 4.5 51 '4; touch /tmp/unsafe'; do
   SITL_STREAM_RATE_HZ=$invalid_rate
   if validate_sitl_stream_rate 2>/dev/null; then
@@ -90,7 +92,7 @@ curl() {
       count=$(<"$RECONCILE_COUNT_FILE")
       count=$((count + 1))
       printf '%s\n' "$count" >"$RECONCILE_COUNT_FILE"
-      if [[ "$count" -eq 1 ]]; then
+      if [[ "$count" -le 16 ]]; then
         printf '{"deployment":{"id":"deployment-1","status":"temporary_error","mission_id":"mission-1","mission_digest":"%064d","message":"agent not ready"},"replayed":false}\n' 0 >"$output_file"
       else
         printf '{"deployment":{"id":"deployment-1","status":"already_applied","mission_id":"mission-1","mission_digest":"%064d","onboard_mission_digest":"%064d","uploaded_item_count":0},"replayed":false}\n' 0 0 >"$output_file"
@@ -146,7 +148,24 @@ fi
 result=$(wait_deploy_mission deployment-1)
 jq -e '.deployment_id == "deployment-1" and .status == "already_applied"' <<<"$result" >/dev/null
 [[ $(grep -c '/missions/mission-1/deploy' "$CURL_CALLS_FILE") -eq 1 ]]
-[[ $(grep -c '/mission-deployments/deployment-1/reconcile' "$CURL_CALLS_FILE") -eq 2 ]]
+[[ $(grep -c '/mission-deployments/deployment-1/reconcile' "$CURL_CALLS_FILE") -eq 17 ]]
 ! grep '/mission-deployments/deployment-1/reconcile.*body=1' "$CURL_CALLS_FILE" >/dev/null
 
-echo "sitl-observer stream-rate and durable deployment reconciliation tests passed"
+# The same durable deployment must survive more polls than the old synchronous
+# 15-attempt budget. No poll may create a second deployment.
+echo "sitl-observer headless startup and asynchronous deployment reconciliation tests passed"
+
+# Retaining a pane after exit must never authorize simulator commands.
+(
+  simulated_pane_state='0:'
+  tmux() {
+    [[ "$1" == display-message && "$4" == "$TMUX_SESSION:" ]] || return 1
+    printf '%s\n' "$simulated_pane_state"
+  }
+  sitl_session_alive
+  simulated_pane_state='1:2'
+  if sitl_session_alive; then exit 1; fi
+  api_post() { echo 'dead simulator mutated API state' >&2; exit 99; }
+  if demo_flight; then exit 1; fi
+  if mission_run; then exit 1; fi
+)

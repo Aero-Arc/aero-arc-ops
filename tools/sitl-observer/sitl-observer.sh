@@ -69,9 +69,33 @@ validate_sitl_stream_rate() {
 
 sitl_vehicle_command() {
   local command
-  printf -v command 'cd %q && exec %q -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --console --out=udp:127.0.0.1:14550 %q' \
-    "$ARDUPILOT_SOURCE/ArduCopter" "$SIM_VEHICLE" "$RUN_DIR/sitl" "--mavproxy-args=--streamrate=$SITL_STREAM_RATE_HZ"
+  printf -v command 'cd %q && exec env -u DISPLAY -u WAYLAND_DISPLAY PYTHONUNBUFFERED=1 %q -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --add-param-file %q --out=udp:127.0.0.1:14550 %q' \
+    "$ARDUPILOT_SOURCE/ArduCopter" "$SIM_VEHICLE" "$RUN_DIR/sitl" "$SCRIPT_DIR/ui-command-defaults.parm" "--mavproxy-args=--streamrate=$SITL_STREAM_RATE_HZ"
   printf '%s\n' "$command"
+}
+
+start_sitl() {
+  local pane log_command
+  # Keep the interactive MAVProxy text console, without a desktop dependency.
+  # Install logging before launch so even immediate Python failures are retained.
+  pane=$(tmux new-session -d -P -F '#{pane_id}' -s "$TMUX_SESSION" 'bash --noprofile --norc')
+  tmux set-option -w -t "$pane" remain-on-exit on
+  printf -v log_command 'cat >> %q' "$RUN_DIR/logs/sitl.log"
+  tmux pipe-pane -o -t "$pane" "$log_command"
+  tmux send-keys -l -t "$pane" "$(sitl_vehicle_command)"
+  tmux send-keys -t "$pane" Enter
+}
+
+sitl_session_alive() {
+  local pane_state
+  pane_state=$(tmux display-message -p -t "$TMUX_SESSION:" '#{pane_dead}:#{pane_dead_status}' 2>/dev/null) || {
+    echo "SITL simulator pane is unavailable" >&2
+    return 1
+  }
+  if [[ "$pane_state" != 0:* ]]; then
+    echo "SITL simulator exited (pane state $pane_state); see $RUN_DIR/logs/sitl.log" >&2
+    return 1
+  fi
 }
 
 require_mission_relay_source() {
@@ -473,8 +497,10 @@ wait_deploy_mission() {
     deployment_id=$(jq -er '.deployment.id' "$RUN_DIR/mission-deployment.json")
   fi
 
-  for attempt in $(seq 2 15); do
-    echo "mission deployment not ready (attempt $((attempt - 1))/15); reconciling durable deployment $deployment_id" >&2
+  # Reconciliation reads persisted status while the outbox worker retries with
+  # backoff. Allow the two-minute admission window plus result delivery time.
+  for attempt in $(seq 2 91); do
+    echo "mission deployment not ready (poll $((attempt - 1))/90); reconciling durable deployment $deployment_id" >&2
     sleep 2
     if reconcile_mission_deployment "$deployment_id"; then
       return 0
@@ -486,7 +512,7 @@ wait_deploy_mission() {
       fi
     fi
   done
-  echo "mission deployment did not complete after 15 total attempts" >&2
+  echo "mission deployment did not complete within the three-minute startup wait; see $RUN_DIR/logs/{api,agent,sitl}.log" >&2
   return 1
 }
 
@@ -561,9 +587,8 @@ up() {
   wait_http Ops "$OPS_URL" 300
   # Create the durable operation and mission before SITL emits telemetry.
   activate --defer-deploy
-  # The first API deployment attempt establishes Agent operation context while
-  # its Relay stream is quiet. Mission upload is expected to remain retryable
-  # until SITL supplies fresh heartbeat and landed-state evidence.
+  # Acceptance commits the command and outbox. The worker establishes Agent
+  # context independently; upload waits for fresh heartbeat and landed state.
   local deployment_id= deployment_status
   if deploy_mission; then
     echo "mission deployed before SITL telemetry became available"
@@ -574,10 +599,11 @@ up() {
       return "$deployment_status"
     fi
     deployment_id=$(jq -er '.deployment.id' "$RUN_DIR/mission-deployment.json")
-    echo "Agent context established; waiting for SITL evidence before durable deployment reconciliation"
+    echo "Mission command accepted; the background worker will establish Agent context and collect SITL evidence"
   fi
-  tmux new-session -d -s "$TMUX_SESSION" "$(sitl_vehicle_command)"
+  start_sitl
   sleep 5
+  sitl_session_alive || return 1
   if [[ -n "$deployment_id" ]]; then
     wait_deploy_mission "$deployment_id"
   fi
@@ -602,8 +628,8 @@ aircraft_command() {
 }
 
 demo_flight() {
+  sitl_session_alive || return 1
   api_post "/api/v1/flights/$FLIGHT_ID/start" >/dev/null
-  tmux has-session -t "$TMUX_SESSION"
   tmux send-keys -t "$TMUX_SESSION" "mode guided" Enter
   sleep 2
   tmux send-keys -t "$TMUX_SESSION" "arm throttle" Enter
@@ -615,15 +641,9 @@ demo_flight() {
 }
 
 mission_run() {
-  tmux has-session -t "$TMUX_SESSION"
+  sitl_session_alive || return 1
   api_post "/api/v1/flights/$FLIGHT_ID/start" >/dev/null
-  # These two parameters are local SITL scaffolding, not production aircraft
-  # commands. They let AUTO start without RC throttle input or a physical GPS
-  # safety environment while leaving ARM on the authenticated Relay/Agent path.
-  tmux send-keys -t "$TMUX_SESSION" "param set ARMING_CHECK 0" Enter
-  sleep 2
-  tmux send-keys -t "$TMUX_SESSION" "param set AUTO_OPTIONS 3" Enter
-  sleep 2
+  # AUTO options are installed at SITL startup for both UI and helper use.
   tmux send-keys -t "$TMUX_SESSION" "mode auto" Enter
   wait_vehicle_mode 3 AUTO
   aircraft_command arm
@@ -677,21 +697,21 @@ select_guided_airborne() {
 }
 
 move_outside() {
-  tmux has-session -t "$TMUX_SESSION"
+  sitl_session_alive || return 1
   select_guided_airborne
   tmux send-keys -t "$TMUX_SESSION" "guided -35.352500 149.165237 20" Enter
   echo "GUIDED target sent outside the authorized Polygon; the intent itself is unchanged."
 }
 
 move_inside() {
-  tmux has-session -t "$TMUX_SESSION"
+  sitl_session_alive || return 1
   select_guided_airborne
   tmux send-keys -t "$TMUX_SESSION" "guided -35.354000 149.165237 20" Enter
   echo "GUIDED target sent back inside the authorized Polygon."
 }
 
 land() {
-  tmux has-session -t "$TMUX_SESSION"
+  sitl_session_alive || return 1
   tmux send-keys -t "$TMUX_SESSION" "mode land" Enter
   echo "LAND sent through MAVProxy. Wait for landing and disarm before make sitl-complete."
 }
@@ -707,6 +727,7 @@ complete() {
 status() {
   echo "Ops: $OPS_URL"
   echo "API: $API_URL"
+  if sitl_session_alive; then echo "SITL: running"; else echo "SITL: exited or unavailable"; fi
   curl --silent --show-error "$API_URL/api/v1/aircraft/$AIRCRAFT_ID/state" || true
   echo
   curl --silent --show-error "$API_URL/api/v1/operations" || true

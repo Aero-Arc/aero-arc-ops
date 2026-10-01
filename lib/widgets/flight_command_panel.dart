@@ -1,0 +1,406 @@
+import 'dart:async';
+import 'dart:math';
+
+import 'package:flutter/material.dart';
+
+import '../api/aero_arc_api.dart';
+import '../models/aero_arc_models.dart';
+import '../models/command.dart';
+import 'dashboard_ui.dart';
+
+/// Flight controls backed by durable command acceptance and restored history.
+class FlightCommandPanel extends StatefulWidget {
+  const FlightCommandPanel({
+    super.key,
+    required this.api,
+    required this.flight,
+  });
+  final AeroArcApiClient api;
+  final FlightRecord flight;
+  @override
+  State<FlightCommandPanel> createState() => _FlightCommandPanelState();
+}
+
+class _FlightCommandPanelState extends State<FlightCommandPanel> {
+  List<FlightCommand> _commands = [];
+  Timer? _timer;
+  int _historyGeneration = 0;
+  String? _error, _pendingType, _pendingKey;
+  String? _historyError;
+  final _reconciliationFailures =
+      <String, ({FlightCommand command, String message})>{};
+  bool _loading = true,
+      _sending = false,
+      _refreshing = false,
+      _historyAvailable = false;
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refresh());
+    _timer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => unawaited(_refresh()),
+    );
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    if (_refreshing || _sending || !widget.api.hasLocalMissionControlToken) {
+      if (mounted && _loading) setState(() => _loading = false);
+      return;
+    }
+    setState(() => _refreshing = true);
+    final generation = _historyGeneration;
+    try {
+      final commands = await widget.api
+          .flightCommands(widget.flight.id)
+          .timeout(const Duration(seconds: 10));
+      if (mounted && generation == _historyGeneration) {
+        setState(() {
+          _reconciliationFailures.removeWhere((id, failure) {
+            final failed = failure.command;
+            return commands.any(
+              (c) =>
+                  c.id == failed.id &&
+                  (c.state != failed.state ||
+                      c.observationState != failed.observationState ||
+                      c.events.length > failed.events.length),
+            );
+          });
+          _commands = commands;
+          _loading = false;
+          _historyAvailable = true;
+          _historyError = null;
+        });
+      }
+    } catch (e) {
+      if (mounted && generation == _historyGeneration) {
+        setState(() {
+          _historyError = 'Command history unavailable: $e';
+          _historyAvailable = false;
+          _loading = false;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  bool get _commandBlocked => _submissionBlocked || _pendingKey != null;
+
+  bool get _submissionBlocked =>
+      _refreshing ||
+      _loading ||
+      !_historyAvailable ||
+      _sending ||
+      _commands.any((c) => c.unresolved);
+
+  Future<void> _submit(String type) async {
+    if (_submissionBlocked) return;
+    if (_pendingKey == null) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Issue ${type.replaceAll('_', ' ')}?'),
+          content: Text(
+            'Aircraft ${widget.flight.aircraftId}\nFlight ${widget.flight.id}\n\n'
+            'This requests an aircraft action. Acceptance records the request; execution and observation are reported separately.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Issue command'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      if (_commandBlocked || !widget.api.hasLocalMissionControlToken) return;
+      final random = Random.secure();
+      _pendingKey = List.generate(
+        24,
+        (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+      ).join();
+      _pendingType = type;
+    }
+    setState(() {
+      _sending = true;
+      _historyGeneration++;
+      _historyAvailable = false;
+      _error = null;
+    });
+    var definitivelyRejected = false;
+    try {
+      final command = await widget.api
+          .submitFlightCommand(
+            flightId: widget.flight.id,
+            type: _pendingType!,
+            idempotencyKey: _pendingKey!,
+          )
+          .timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      setState(() {
+        _commands = [command, ..._commands.where((c) => c.id != command.id)];
+        _pendingKey = null;
+        _pendingType = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        definitivelyRejected =
+            e is AeroArcApiException &&
+            [400, 401, 403, 404, 409, 422].contains(e.statusCode);
+        setState(() {
+          if (definitivelyRejected) {
+            _pendingKey = null;
+            _pendingType = null;
+            _historyAvailable = false;
+            _error = 'Command rejected: $e';
+          } else {
+            _error =
+                'Submission outcome not confirmed: $e. Retry uses the same request identity.';
+          }
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _sending = false);
+        unawaited(_refresh());
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final blocked = _commandBlocked;
+    return Panel(
+      title: 'Aircraft commands',
+      trailing: StatusBadge(
+        label: _loading
+            ? 'loading'
+            : !_historyAvailable
+            ? 'unavailable'
+            : _sending
+            ? 'sending'
+            : _pendingKey != null || _commands.any((c) => c.unresolved)
+            ? 'pending'
+            : 'ready',
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Issue an action, then follow its execution and vehicle evidence.',
+              style: TextStyle(fontSize: 12, color: Color(0xFF8797AB)),
+            ),
+            if (!widget.api.hasLocalMissionControlToken)
+              const Text(
+                'Configure the trusted local control session to issue commands.',
+              ),
+            const SizedBox(height: 12),
+            for (final group in const [
+              ('AIRCRAFT', ['ARM', 'DISARM']),
+              ('MISSION', ['MISSION_START', 'PAUSE', 'RESUME']),
+              ('RECOVERY', ['RTL', 'LAND']),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      group.$1,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        letterSpacing: 1,
+                        color: Color(0xFF8797AB),
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final type in group.$2)
+                          OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(72, 34),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                              ),
+                              foregroundColor: group.$1 == 'RECOVERY'
+                                  ? const Color(0xFFF1BD64)
+                                  : const Color(0xFFD6E0FF),
+                              textStyle: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            onPressed:
+                                blocked ||
+                                    !widget.api.hasLocalMissionControlToken
+                                ? null
+                                : () => _submit(type),
+                            child: Text(type.replaceAll('_', ' ')),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            if (_commands.any((c) => c.unresolved))
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'An aircraft command is unresolved. Follow its evidence or reconcile the same command.',
+                  style: TextStyle(fontSize: 11, color: Color(0xFFF1BD64)),
+                ),
+              ),
+            if (_pendingKey != null)
+              TextButton(
+                onPressed: _submissionBlocked
+                    ? null
+                    : () => _submit(_pendingType!),
+                child: const Text('Retry same request'),
+              ),
+            if (_loading) const LinearProgressIndicator(),
+            for (final error in [
+              _historyError,
+              _error,
+              ..._reconciliationFailures.values.map(
+                (failure) => failure.message,
+              ),
+            ].whereType<String>())
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  error,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Command history · ${_commands.length}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh command history',
+                  onPressed: () => unawaited(_refresh()),
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            if (!_loading && _historyAvailable && _commands.isEmpty)
+              const Text('No accepted commands for this flight.'),
+            if (_commands.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 240),
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      for (final command in _commands)
+                        ExpansionTile(
+                          key: ValueKey(command.id),
+                          tilePadding: EdgeInsets.zero,
+                          childrenPadding: const EdgeInsets.only(bottom: 10),
+                          dense: true,
+                          title: Text(
+                            '${command.type.replaceAll('_', ' ')} · ${command.progressLabel ?? command.state.replaceAll('_', ' ')}',
+                          ),
+                          subtitle: Text(
+                            'Observation: ${command.observationState} · ${command.attempts == 0 ? 'Awaiting delivery' : 'Initial delivery'}${command.recoveryDeliveries > 0 ? ' + ${command.recoveryDeliveries} recovery deliveries' : ''}',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          children: [
+                            SelectableText(command.id),
+                            if (command.unresolved ||
+                                (command.state == 'applied' &&
+                                    command.observationState == 'pending'))
+                              TextButton(
+                                onPressed: _sending || _refreshing
+                                    ? null
+                                    : () async {
+                                        if (_sending || _refreshing) return;
+                                        setState(() {
+                                          _sending = true;
+                                          _historyGeneration++;
+                                        });
+                                        try {
+                                          final updated = await widget.api
+                                              .reconcileFlightCommand(
+                                                widget.flight.id,
+                                                command.id,
+                                              )
+                                              .timeout(
+                                                const Duration(seconds: 10),
+                                              );
+                                          if (!mounted) return;
+                                          setState(() {
+                                            _commands = [
+                                              updated,
+                                              ..._commands.where(
+                                                (c) => c.id != updated.id,
+                                              ),
+                                            ];
+                                            _reconciliationFailures.remove(
+                                              command.id,
+                                            );
+                                          });
+                                        } catch (e) {
+                                          if (mounted) {
+                                            setState(() {
+                                              _reconciliationFailures[command
+                                                  .id] = (
+                                                command: command,
+                                                message:
+                                                    'Evidence recovery unavailable: ${command.type} (${command.id}): $e',
+                                              );
+                                            });
+                                          }
+                                        } finally {
+                                          if (mounted) {
+                                            setState(() => _sending = false);
+                                          }
+                                        }
+                                      },
+                                child: const Text('Reconcile existing command'),
+                              ),
+
+                            for (final event in command.events)
+                              ListTile(
+                                dense: true,
+                                title: Text(
+                                  '${event.stage.replaceAll('_', ' ')} · ${formatDate(event.occurredAt)}',
+                                ),
+                                subtitle: Text(
+                                  '${event.message}\nSource: ${event.source} · Received: ${formatDate(event.receivedAt)}',
+                                ),
+                              ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}

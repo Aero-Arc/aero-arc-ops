@@ -1,0 +1,4 @@
+# Local SITL only: permit arming in AUTO and mission takeoff without RC throttle.
+# This configures eligibility; it does not arm or start the aircraft.
+# Keep normal arming checks enabled.
+AUTO_OPTIONS 3

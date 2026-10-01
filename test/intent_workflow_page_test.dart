@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -12,6 +13,298 @@ import 'package:aero_arc_web/models/aero_arc_models.dart';
 import 'package:aero_arc_web/pages/intent_workflow_page.dart';
 
 void main() {
+  testWidgets(
+    'repeated saves preserve the returned version geometry after failed checks',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final saved = <Map<String, dynamic>>[];
+      final api = AeroArcApiClient(
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/modify')) {
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            saved.add((body['volumes'] as List).single as Map<String, dynamic>);
+            return _jsonResponse({
+              'intent': {
+                ..._intentJson(status: 'submitted'),
+                'version': saved.length + 1,
+              },
+              'volumes': [
+                {..._volumeJson(), 'intent_version': saved.length + 1},
+              ],
+              'supersedes_intent_id': 'intent-1',
+              'supersedes_version': saved.length,
+            });
+          }
+          if (request.url.path.endsWith('/volumes')) {
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          }
+          if (request.url.path.endsWith('/preflight/evaluate')) {
+            return http.Response('unavailable', 503);
+          }
+          if (request.url.path.endsWith('/state')) {
+            return _jsonResponse({
+              'aircraft_id': 'aircraft-1',
+              'telemetry': {'status': 'missing'},
+            });
+          }
+          return _jsonResponse({'flights': []});
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              apiClient: api,
+              renderTiles: false,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'submitted'),
+              ),
+              initialVolumes: [_volumeModel()],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final save = find.widgetWithText(FilledButton, 'Save & check');
+      for (var attempt = 0; attempt < 3; attempt++) {
+        await tester.ensureVisible(save);
+        await tester.tap(save);
+        await tester.pumpAndSettle();
+      }
+      expect(saved, hasLength(3));
+      for (final volume in saved) {
+        expect(
+          jsonDecode(volume['geojson'] as String),
+          jsonDecode(_volumeJson()['geojson'] as String),
+        );
+        expect(volume['buffer_meters'], 15);
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'late volumes preserve buffer and altitude fallback on modification',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final volumes = Completer<http.Response>();
+      final source = _intentJson(status: 'accepted', name: 'Inspection')
+        ..remove('min_altitude_ft_agl')
+        ..remove('max_altitude_ft_agl');
+      Map<String, dynamic>? modification;
+      final api = AeroArcApiClient(
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/volumes')) return volumes.future;
+          if (request.method == 'POST' &&
+              request.url.path.endsWith('/modify')) {
+            modification = jsonDecode(request.body) as Map<String, dynamic>;
+            return http.Response('{}', 400);
+          }
+          if (request.url.path.endsWith('/state')) {
+            return _jsonResponse({
+              'aircraft_id': 'aircraft-1',
+              'telemetry': {'status': 'missing'},
+            });
+          }
+          return _jsonResponse({'flights': []});
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              apiClient: api,
+              renderTiles: false,
+              initialIntent: OperationalIntent.fromJson(source),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      final save = find.widgetWithText(FilledButton, 'Save & check');
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+      expect(
+        tester
+            .widgetList<TextFormField>(find.byType(TextFormField))
+            .every((field) => field.enabled == false),
+        isTrue,
+      );
+      volumes.complete(
+        _jsonResponse({
+          'volumes': [
+            {
+              ..._volumeJson(),
+              'buffer_meters': 37.5,
+              'min_altitude_m': 42.125,
+              'max_altitude_m': 113.75,
+              'altitude_ref': 'msl',
+            },
+          ],
+        }),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(save);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(modification, isNotNull);
+      final volume =
+          (modification!['volumes'] as List).single as Map<String, dynamic>;
+      expect(volume['buffer_meters'], 37.5);
+      expect(volume['min_altitude_m'], closeTo(42.125, 0.000001));
+      expect(volume['max_altitude_m'], closeTo(113.75, 0.000001));
+      expect(volume['altitude_ref'], 'msl');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('empty saved draft can create its first volume after loading', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final volumes = Completer<http.Response>();
+    Map<String, dynamic>? modification;
+    final api = AeroArcApiClient(
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/volumes')) return volumes.future;
+        if (request.url.path.endsWith('/modify')) {
+          modification = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response('{}', 400);
+        }
+        if (request.url.path.endsWith('/state')) {
+          return _jsonResponse({
+            'aircraft_id': 'aircraft-1',
+            'telemetry': {'status': 'missing'},
+          });
+        }
+        return _jsonResponse({'flights': []});
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: IntentWorkflowPage(
+            aircraftId: 'aircraft-1',
+            apiClient: api,
+            renderTiles: false,
+            initialIntent: OperationalIntent.fromJson(
+              _intentJson(status: 'draft', name: 'Recover draft'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final save = find.widgetWithText(FilledButton, 'Save & check');
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    volumes.complete(_jsonResponse({'volumes': []}));
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+    await tester.ensureVisible(find.text('Edit intent boundary'));
+    await tester.tap(find.text('Edit intent boundary'));
+    await tester.pumpAndSettle();
+    final editorMap = tester
+        .widgetList<FlutterMap>(find.byType(FlutterMap))
+        .firstWhere((map) => map.options.onTap != null);
+    editorMap.options.onTap!(
+      const TapPosition(Offset.zero, Offset.zero),
+      const LatLng(35.21, -97.21),
+    );
+    await tester.pump();
+
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(
+      modification?['volumes'],
+      isNotEmpty,
+      reason: tester
+          .widgetList<Text>(find.byType(Text))
+          .map((t) => t.data)
+          .join(' | '),
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final width in [390.0, 1600.0]) {
+    testWidgets(
+      'restores active operation without geometry arguments at $width px',
+      (tester) async {
+        tester.view.physicalSize = Size(width, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final source = _intentJson(status: 'active', name: 'Inspection');
+        final requests = <String>[];
+        final api = AeroArcApiClient(
+          httpClient: MockClient((request) async {
+            requests.add(request.method);
+            if (request.url.path.endsWith('/map')) {
+              return _jsonResponse({
+                'aircraft': {'id': 'aircraft-1'},
+                'active_intent': source,
+                'operational_volumes': [
+                  {..._volumeJson(), 'altitude_ref': 'msl'},
+                ],
+              });
+            }
+            if (request.url.path.endsWith('/state')) {
+              return _jsonResponse({
+                'aircraft_id': 'aircraft-1',
+                'telemetry': {'status': 'missing'},
+              });
+            }
+            return _jsonResponse({'flights': []});
+          }),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: IntentWorkflowPage(
+                aircraftId: 'aircraft-1',
+                apiClient: api,
+                renderTiles: false,
+                initialIntent: OperationalIntent.fromJson(source),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Operation map'), findsOneWidget);
+        expect(find.text('Position unavailable'), findsOneWidget);
+        final polygons = tester.widgetList<PolygonLayer>(
+          find.byType(PolygonLayer),
+        );
+        expect(
+          polygons.any(
+            (layer) => layer.polygons.any(
+              (polygon) => polygon.points.first.longitude == -97.52,
+            ),
+          ),
+          isTrue,
+        );
+        expect(find.text('Draft form'), findsNothing);
+        expect(requests.every((method) => method == 'GET'), isTrue);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   testWidgets(
     'new intent starts with one route point at the aircraft position',
     (WidgetTester tester) async {
@@ -76,6 +369,9 @@ void main() {
       missionControlToken: 'local-dev-token',
       httpClient: MockClient((request) async {
         requestedPaths.add(request.url.path);
+        if (request.url.path.endsWith('/commands')) {
+          return _jsonResponse({'commands': []});
+        }
         if (request.url.path == '/api/v1/aircraft/aircraft-1/flights') {
           return _jsonResponse({'flights': []});
         }
@@ -164,7 +460,10 @@ void main() {
       requestedPaths,
       contains('/api/v1/operational-intents/intent-1/flights'),
     );
-    expect(requestedPaths.last, endsWith('/missions/import'));
+    expect(
+      requestedPaths.where((path) => path.endsWith('/missions/import')),
+      hasLength(1),
+    );
     expect(idempotencyKey, startsWith('ops-mission-import-'));
     expect(importAuthorization, 'Bearer local-dev-token');
     expect(importBody?['aircraft_id'], 'aircraft-1');
@@ -532,6 +831,11 @@ void main() {
         baseUri: Uri.parse('http://api.test'),
         missionControlToken: 'local-dev-token',
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/volumes')) {
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          }
           if (request.url.path == '/api/v1/aircraft/aircraft-1/flights') {
             flightLookups += 1;
             if (flightLookups == 1) {
@@ -1303,6 +1607,11 @@ void main() {
           return _jsonResponse(_intentJson(status: 'draft'));
         }
         if (path == '/api/v1/operational-intents/intent-1/volumes') {
+          if (request.method == 'GET') {
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          }
           volumeCount += 1;
           return _jsonResponse(_volumeJson());
         }

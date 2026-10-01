@@ -203,6 +203,10 @@ make sitl-up
 make sitl-status
 ```
 
+The simulator uses the interactive MAVProxy text console in tmux; XLaunch and
+a desktop D-Bus session are not required. Startup output is retained in
+`/tmp/aero-arc-sitl-observer/logs/sitl.log`, including after startup failure.
+
 The simulator keeps its parameters and logs under the observer runtime directory,
 so existing files in the ArduPilot checkout do not affect a fresh demo. MAVProxy
 uses one explicit Agent output; automatic simulator outputs are disabled to
@@ -237,6 +241,11 @@ the API mission digest. Reconcile or retry the same durable command with:
 ```sh
 make sitl-mission-deploy
 ```
+
+Acceptance now commits a durable command for background dispatch; it does not
+mean Agent context is already installed. Startup polls the same deployment for
+up to three minutes to allow worker backoff and result delivery. This wait does
+not extend the command authorization deadline.
 
 The observer retains the API deployment ID. If the first request is pending,
 temporarily unavailable, or outcome-unknown, startup and the manual command
@@ -302,8 +311,11 @@ embedded conformance evidence. Live-state polling remains independently aged.
 
 Mission import is deliberately constrained to a single MSL Polygon volume and
 the supported WPL 110 navigation commands. A mission cannot replace or reshape
-the operational intent. `sitl-mission-run` configures SITL-only AUTO behavior,
-selects AUTO in MAVProxy, waits until fresh API telemetry confirms that mode,
+the operational intent. `sitl-up` loads SITL-only `AUTO_OPTIONS=3` so the UI can
+arm in AUTO and start the uploaded mission without RC throttle input. Normal arming checks
+remain enabled; startup does not arm or start the aircraft. In the intent workflow,
+issue ARM and wait for observed armed state, then issue MISSION START.
+`sitl-mission-run` selects AUTO in MAVProxy, waits until fresh API telemetry confirms that mode,
 and sends ARM through the authenticated Relay/Agent command lifecycle. The
 checked-in observer mission deliberately ends at an airborne waypoint rather
 than LAND so the post-mission boundary checks remain possible; landing stays an

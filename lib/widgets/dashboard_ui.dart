@@ -690,14 +690,24 @@ String displayEnum(String value) {
       .join(' ');
 }
 
-String formatDate(DateTime? value) {
+/// Formats display timestamps in local time, or UTC when explicitly requested.
+String formatDate(DateTime? value, {bool utc = false}) {
   if (value == null) {
     return 'Not provided';
   }
-  final local = value.toLocal();
-  String two(int n) => n.toString().padLeft(2, '0');
-  return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
+  final date = utc ? value.toUtc() : value.toLocal();
+  return '${formatDateOnly(date)} ${formatTime(date)}';
 }
+
+/// Formats a calendar date without changing its timezone or day.
+String formatDateOnly(DateTime value) =>
+    '${_dateDigits(value.month)}/${_dateDigits(value.day)}/${_dateDigits(value.year % 100)}';
+
+/// Formats a clock value with seconds in 24-hour notation.
+String formatTime(DateTime value) =>
+    '${_dateDigits(value.hour)}:${_dateDigits(value.minute)}:${_dateDigits(value.second)}';
+
+String _dateDigits(int value) => value.toString().padLeft(2, '0');
 
 String formatPercent(double? value) {
   if (value == null) {

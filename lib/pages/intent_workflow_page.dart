@@ -10,6 +10,8 @@ import 'package:latlong2/latlong.dart';
 import '../api/aero_arc_api.dart';
 import '../models/aero_arc_models.dart';
 import '../widgets/dashboard_ui.dart';
+import '../widgets/flight_command_panel.dart';
+import '../widgets/intent_situation_panel.dart';
 import '../widgets/open_street_map_basemap.dart';
 
 class IntentWorkflowRouteArguments {
@@ -103,6 +105,44 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   int _missionRestoreGeneration = 0;
   late final LatLng? _initialVolumeCenter;
   late List<LatLng> _volumePoints;
+  List<OperationalVolume> _savedVolumes = [];
+  bool _geometryEdited = false;
+  bool _geometryLoaded = false;
+  List<LatLng>? get _savedPolygon => _savedVolumes.isEmpty
+      ? null
+      : _pointsFromGeoJson(_savedVolumes.first.geoJson);
+
+  void _restoreGeometry(List<OperationalVolume> volumes) {
+    if (!mounted || _geometryLoaded) {
+      return;
+    }
+    final current = _acceptedIntent ?? _intent ?? _sourceIntent;
+    if (current == null ||
+        volumes.any(
+          (v) => v.intentId != current.id || v.intentVersion != current.version,
+        )) {
+      return;
+    }
+    setState(() {
+      _geometryLoaded = true;
+      _savedVolumes = volumes;
+      if (volumes.isEmpty) return;
+      final points = _savedPolygon;
+      if (!_geometryEdited && points != null && points.length >= 3) {
+        _volumePoints = points;
+      }
+      final volume = volumes.first;
+      _bufferMeters.text = volume.bufferMeters?.toString() ?? '';
+      if (current.minAltitudeFtAgl == null) {
+        _minAltitudeFt.text = _metersToFeet(volume.minAltitudeM).toString();
+      }
+      if (current.maxAltitudeFtAgl == null) {
+        _maxAltitudeFt.text = _metersToFeet(volume.maxAltitudeM).toString();
+      }
+      _altitudeRef = volumes.first.altitudeRef;
+      _volumeType = volumes.first.volumeType ?? _volumeType;
+    });
+  }
 
   @override
   void initState() {
@@ -115,6 +155,14 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     _initialVolumeCenter = widget.initialVolumeCenter;
     _volumePoints = _defaultRoutePoints(center: _initialVolumeCenter);
     _sourceIntent = widget.initialIntent;
+    _savedVolumes = widget.initialVolumes
+        .where(
+          (v) =>
+              v.intentId == _sourceIntent?.id &&
+              v.intentVersion == _sourceIntent?.version,
+        )
+        .toList();
+    _geometryLoaded = _sourceIntent == null || _savedVolumes.isNotEmpty;
     _hydrateFromInitialIntent(now);
     _startMissionStateRestore();
   }
@@ -143,6 +191,30 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         previousIntent?.version != nextIntent?.version) {
       _missionRestoreGeneration++;
       _sourceIntent = nextIntent;
+      _intent = null;
+      _acceptedIntent = null;
+      _activatedIntent = null;
+      _volume = null;
+      _preflight = null;
+      _deconfliction = null;
+      _modifyResult = null;
+      _geometryEdited = false;
+      _geometryLoaded =
+          nextIntent == null ||
+          widget.initialVolumes.any(
+            (v) =>
+                v.intentId == nextIntent.id &&
+                v.intentVersion == nextIntent.version,
+          );
+      _savedVolumes = widget.initialVolumes
+          .where(
+            (v) =>
+                v.intentId == nextIntent?.id &&
+                v.intentVersion == nextIntent?.version,
+          )
+          .toList();
+      _volumePoints = _defaultRoutePoints(center: widget.initialVolumeCenter);
+      _hydrateFromInitialIntent(DateTime.now());
       _flight = null;
       _mission = null;
       _missionSource = null;
@@ -303,6 +375,12 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   }
 
   Future<void> _saveAndCheck() async {
+    if (!_geometryLoaded) {
+      setState(
+        () => _error = 'Load the saved intent volume before modification.',
+      );
+      return;
+    }
     if (_missionRestoreError != null) {
       setState(
         () => _error =
@@ -348,7 +426,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         if (!mounted) return;
         setState(() {
           _adoptIntent(intent!);
-          _volume = volume;
+          _adoptVolumes(modified.volumes);
           _modifyResult = modified;
         });
       } else if (intent == null && source != null) {
@@ -361,7 +439,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         if (!mounted) return;
         setState(() {
           _adoptIntent(intent!);
-          _volume = volume;
+          _adoptVolumes(modified.volumes);
           _modifyResult = modified;
         });
       } else {
@@ -376,7 +454,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
             _volumeRequest(),
           );
           if (!mounted) return;
-          setState(() => _volume = volume);
+          setState(() => _adoptVolumes([volume!]));
         }
       }
       final submitted = intent.status == 'draft'
@@ -873,6 +951,17 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     _missionDeploymentReplayed = false;
   }
 
+  // A successful save becomes the exact geometry baseline, even when a
+  // subsequent readiness check fails and the operator saves again.
+  void _adoptVolumes(List<OperationalVolume> volumes) {
+    _savedVolumes = List.of(volumes);
+    _volume = volumes.firstOrNull;
+    _geometryLoaded = true;
+    _geometryEdited = false;
+    final points = _savedPolygon;
+    if (points != null) _volumePoints = points;
+  }
+
   void _adoptIntent(OperationalIntent next) {
     final previous = _intent ?? _sourceIntent;
     final mission = _mission;
@@ -889,6 +978,11 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
             (flight.intentId != next.id ||
                 flight.intentVersion != next.version ||
                 flight.aircraftId != widget.aircraftId));
+    if (_savedVolumes.any(
+      (v) => v.intentId != next.id || v.intentVersion != next.version,
+    )) {
+      _savedVolumes = [];
+    }
     _intent = next;
     final accepted = _acceptedIntent;
     if (accepted != null &&
@@ -1038,16 +1132,12 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     if (intent?.minAltitudeFtAgl != null) {
       _minAltitudeFt.text = intent!.minAltitudeFtAgl!.toStringAsFixed(0);
     } else if (firstVolume != null) {
-      _minAltitudeFt.text = _metersToFeet(
-        firstVolume.minAltitudeM,
-      ).toStringAsFixed(0);
+      _minAltitudeFt.text = _metersToFeet(firstVolume.minAltitudeM).toString();
     }
     if (intent?.maxAltitudeFtAgl != null) {
       _maxAltitudeFt.text = intent!.maxAltitudeFtAgl!.toStringAsFixed(0);
     } else if (firstVolume != null) {
-      _maxAltitudeFt.text = _metersToFeet(
-        firstVolume.maxAltitudeM,
-      ).toStringAsFixed(0);
+      _maxAltitudeFt.text = _metersToFeet(firstVolume.maxAltitudeM).toString();
     }
     _authorizationPath = intent?.authorizationPath.isNotEmpty == true
         ? intent!.authorizationPath
@@ -1061,7 +1151,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         : _altitudeRef;
     _volumeType = firstVolume?.volumeType ?? _volumeType;
     _bufferMeters.text =
-        firstVolume?.bufferMeters?.toStringAsFixed(0) ?? _bufferMeters.text;
+        firstVolume?.bufferMeters?.toString() ?? _bufferMeters.text;
     final points = _pointsFromGeoJson(firstVolume?.geoJson);
     if (points.length >= 3) _volumePoints = points;
   }
@@ -1083,6 +1173,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   }
 
   List<LatLng> _derivedVolumePolygon() {
+    if (!_geometryEdited && _savedPolygon != null) return _savedPolygon!;
     final widthMeters = double.tryParse(_bufferMeters.text.trim()) ?? 15;
     return _volumeShapeMode == 'precise'
         ? _preciseRouteVolume(_volumePoints, widthMeters)
@@ -1099,220 +1190,334 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   }
 
   bool get _editingLocked =>
-      _activatedIntent != null || _intent?.status == 'active';
+      _activatedIntent != null ||
+      (_intent ?? _sourceIntent)?.status == 'active';
 
   @override
   Widget build(BuildContext context) {
-    final editingLocked = _editingLocked;
+    final editingLocked = _editingLocked || !_geometryLoaded;
     final workflowBusy = _busy || _restoringMissionState;
+    final currentIntent = _acceptedIntent ?? _intent ?? _sourceIntent;
+    final volumeEditor = _VolumesPanel(
+      renderTiles: widget.renderTiles,
+      savedPolygon: _geometryEdited ? null : _savedPolygon,
+      points: _volumePoints,
+      deconfliction: _deconfliction,
+      bufferMeters: _bufferMeters,
+      altitudeRef: _altitudeRef,
+      volumeType: _volumeType,
+      volumeShapeMode: _volumeShapeMode,
+      locked: editingLocked,
+      onLoadDefault: () {
+        setState(() {
+          _geometryEdited = true;
+          _volumePoints = _defaultRoutePoints(center: _initialVolumeCenter);
+        });
+      },
+      onAddPoint: (point) {
+        setState(() {
+          _geometryEdited = true;
+          _volumePoints = [..._volumePoints, point];
+        });
+      },
+      onRemovePoint: (index) {
+        setState(() {
+          _geometryEdited = true;
+          _volumePoints = [
+            for (var i = 0; i < _volumePoints.length; i++)
+              if (i != index) _volumePoints[i],
+          ];
+        });
+      },
+      onUndoPoint: () {
+        if (_volumePoints.isEmpty) return;
+        setState(() {
+          _geometryEdited = true;
+          _volumePoints = _volumePoints.take(_volumePoints.length - 1).toList();
+        });
+      },
+      onAltitudeRefChanged: (value) {
+        if (value != null) setState(() => _altitudeRef = value);
+      },
+      onVolumeTypeChanged: (value) {
+        if (value != null) setState(() => _volumeType = value);
+      },
+      onShapeModeChanged: (value) {
+        if (value != null) {
+          setState(() {
+            _geometryEdited = true;
+            _volumeShapeMode = value;
+          });
+        }
+      },
+      onBufferMetersChanged: (_) {
+        setState(() => _geometryEdited = true);
+      },
+    );
+    final missionDetails = _MissionPanel(
+      aircraftId: widget.aircraftId,
+      missionName: _missionName,
+      summary: _summary,
+      useCase: _useCase,
+      routeSummary: _routeSummary,
+      plannedDate: _plannedDate,
+      plannedStartSlot: _plannedStartSlot,
+      plannedEndSlot: _plannedEndSlot,
+      minAltitude: _minAltitudeFt,
+      maxAltitude: _maxAltitudeFt,
+      supervisorId: _supervisorId,
+      coordinatorId: _coordinatorId,
+      authorizationPath: _authorizationPath,
+      populationCategory: _populationCategory,
+      conformanceRequired: _conformanceRequired,
+      locked: editingLocked,
+      onAuthorizationChanged: (value) {
+        if (value != null) {
+          setState(() => _authorizationPath = value);
+        }
+      },
+      onPopulationChanged: (value) {
+        if (value != null) {
+          setState(() => _populationCategory = value);
+        }
+      },
+      onDateChanged: (value) {
+        setState(() => _plannedDate = value);
+      },
+      onStartSlotChanged: (value) {
+        if (value != null) {
+          setState(() => _plannedStartSlot = value);
+        }
+      },
+      onEndSlotChanged: (value) {
+        if (value != null) {
+          setState(() => _plannedEndSlot = value);
+        }
+      },
+      onConformanceChanged: (value) {
+        setState(() => _conformanceRequired = value);
+      },
+    );
+    final checks = _ChecksPanel(
+      busy: workflowBusy,
+      checksBlocked: _missionRestoreError != null || (!_geometryLoaded),
+      sourceIntent: _sourceIntent,
+      modifyResult: _modifyResult,
+      intent: currentIntent,
+      volume: _volume ?? (_savedVolumes.isEmpty ? null : _savedVolumes.first),
+      preflight: _preflight,
+      deconfliction: _deconfliction,
+      onRunChecks: _saveAndCheck,
+    );
+    final review = _ReviewPanel(
+      aircraftId: widget.aircraftId,
+      intent: _intent ?? _sourceIntent,
+      volume: _volume ?? (_savedVolumes.isEmpty ? null : _savedVolumes.first),
+      preflight: _preflight,
+      deconfliction: _deconfliction,
+      activatedIntent:
+          _activatedIntent ??
+          (currentIntent?.status == 'active' ? currentIntent : null),
+      checksClear: _checksClear,
+      busy: workflowBusy,
+      checksBlocked: _missionRestoreError != null || (!_geometryLoaded),
+      onRunChecks: _saveAndCheck,
+      onAccept: _acceptIntent,
+      onActivate: _activateIntent,
+    );
+    final missionImport = _MissionImportPanel(
+      intent: _acceptedIntent ?? _intent ?? _sourceIntent,
+      flight: _flight,
+      mission: _mission,
+      selectedSource: _missionSource,
+      importFailed: _missionImportFailed,
+      localCredentialAvailable: _apiClient.hasLocalMissionControlToken,
+      busy: workflowBusy,
+      restorationError: _missionRestoreError,
+      onSelectAndImport: _selectAndImportMission,
+      onRetry: _retryMissionImport,
+      onRetryRestoration: _retryMissionStateRestore,
+    );
+    final deployment = _MissionDeploymentPanel(
+      intent: _acceptedIntent ?? _intent ?? _sourceIntent,
+      flight: _flight,
+      mission: _mission,
+      deployment: _missionDeployment,
+      replayed: _missionDeploymentReplayed,
+      confirmed: _missionDeploymentConfirmed,
+      attempted: _missionDeploymentAttempted,
+      localCredentialAvailable: _apiClient.hasLocalMissionControlToken,
+      blocker: _missionRestoreError ?? _missionDeploymentBlocker,
+      busy: workflowBusy,
+      onConfirm: _confirmMissionDeployment,
+      onDeploy: _deployMission,
+      onRefresh: _refreshMissionDeployment,
+      onPrepareNewAttempt: _prepareNewMissionDeploymentAttempt,
+    );
+    final commandPanel = _flight == null
+        ? Panel(
+            title: 'Aircraft commands',
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                _restoringMissionState
+                    ? 'Restoring the bound flight…'
+                    : 'Validate a mission and bind a flight to enable aircraft commands.',
+              ),
+            ),
+          )
+        : FlightCommandPanel(
+            key: ValueKey(_flight!.id),
+            api: _apiClient,
+            flight: _flight!,
+          );
     return Container(
       decoration: const BoxDecoration(gradient: aeroPageGradient),
-      child: Stack(
+      child: Column(
         children: [
-          SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _Header(
-                    aircraftId: widget.aircraftId,
-                    modifying: _sourceIntent != null,
-                  ),
-                  const SizedBox(height: 12),
-                  _IntentContextBanner(
-                    aircraftId: widget.aircraftId,
-                    sourceIntent: _sourceIntent,
-                  ),
-                  const SizedBox(height: 18),
-                  _VolumesPanel(
-                    renderTiles: widget.renderTiles,
-                    points: _volumePoints,
-                    deconfliction: _deconfliction,
-                    bufferMeters: _bufferMeters,
-                    altitudeRef: _altitudeRef,
-                    volumeType: _volumeType,
-                    volumeShapeMode: _volumeShapeMode,
-                    locked: editingLocked,
-                    onLoadDefault: () {
-                      setState(
-                        () => _volumePoints = _defaultRoutePoints(
-                          center: _initialVolumeCenter,
-                        ),
-                      );
-                    },
-                    onAddPoint: (point) {
-                      setState(() => _volumePoints = [..._volumePoints, point]);
-                    },
-                    onRemovePoint: (index) {
-                      setState(() {
-                        _volumePoints = [
-                          for (var i = 0; i < _volumePoints.length; i++)
-                            if (i != index) _volumePoints[i],
-                        ];
-                      });
-                    },
-                    onUndoPoint: () {
-                      if (_volumePoints.isEmpty) return;
-                      setState(() {
-                        _volumePoints = _volumePoints
-                            .take(_volumePoints.length - 1)
-                            .toList();
-                      });
-                    },
-                    onAltitudeRefChanged: (value) {
-                      if (value != null) setState(() => _altitudeRef = value);
-                    },
-                    onVolumeTypeChanged: (value) {
-                      if (value != null) setState(() => _volumeType = value);
-                    },
-                    onShapeModeChanged: (value) {
-                      if (value != null) {
-                        setState(() => _volumeShapeMode = value);
-                      }
-                    },
-                    onBufferMetersChanged: (_) {
-                      setState(() {});
-                    },
-                  ),
-                  const SizedBox(height: 18),
-                  TwoColumn(
-                    breakpoint: 1180,
-                    left: _MissionPanel(
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+              child: _WorkflowErrorBanner(
+                message: _error!,
+                onDismiss: () => setState(() => _error = null),
+              ),
+            ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 24),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _Header(
                       aircraftId: widget.aircraftId,
-                      missionName: _missionName,
-                      summary: _summary,
-                      useCase: _useCase,
-                      routeSummary: _routeSummary,
-                      plannedDate: _plannedDate,
-                      plannedStartSlot: _plannedStartSlot,
-                      plannedEndSlot: _plannedEndSlot,
-                      minAltitude: _minAltitudeFt,
-                      maxAltitude: _maxAltitudeFt,
-                      supervisorId: _supervisorId,
-                      coordinatorId: _coordinatorId,
-                      authorizationPath: _authorizationPath,
-                      populationCategory: _populationCategory,
-                      conformanceRequired: _conformanceRequired,
-                      locked: editingLocked,
-                      onAuthorizationChanged: (value) {
-                        if (value != null) {
-                          setState(() => _authorizationPath = value);
-                        }
-                      },
-                      onPopulationChanged: (value) {
-                        if (value != null) {
-                          setState(() => _populationCategory = value);
-                        }
-                      },
-                      onDateChanged: (value) {
-                        setState(() => _plannedDate = value);
-                      },
-                      onStartSlotChanged: (value) {
-                        if (value != null) {
-                          setState(() => _plannedStartSlot = value);
-                        }
-                      },
-                      onEndSlotChanged: (value) {
-                        if (value != null) {
-                          setState(() => _plannedEndSlot = value);
-                        }
-                      },
-                      onConformanceChanged: (value) {
-                        setState(() => _conformanceRequired = value);
-                      },
+                      modifying: _sourceIntent != null,
                     ),
-                    right: Column(
-                      children: [
-                        _ChecksPanel(
-                          busy: workflowBusy,
-                          checksBlocked: _missionRestoreError != null,
-                          sourceIntent: _sourceIntent,
-                          modifyResult: _modifyResult,
-                          intent: _intent,
-                          volume: _volume,
-                          preflight: _preflight,
-                          deconfliction: _deconfliction,
-                          onRunChecks: _saveAndCheck,
-                        ),
-                        const SizedBox(height: 18),
-                        _ReviewPanel(
+                    const SizedBox(height: 10),
+                    _IntentContextBanner(
+                      aircraftId: widget.aircraftId,
+                      sourceIntent: currentIntent,
+                    ),
+                    const SizedBox(height: 14),
+                    if (currentIntent != null)
+                      _WorkflowTopRow(
+                        map: IntentSituationPanel(
+                          key: ValueKey(
+                            '${widget.aircraftId}/${currentIntent.id}/${currentIntent.version}',
+                          ),
+                          api: _apiClient,
+                          intent: currentIntent,
                           aircraftId: widget.aircraftId,
-                          intent: _intent ?? _sourceIntent,
-                          volume:
-                              _volume ??
-                              (widget.initialVolumes.isEmpty
-                                  ? null
-                                  : widget.initialVolumes.first),
-                          preflight: _preflight,
-                          deconfliction: _deconfliction,
-                          activatedIntent: _activatedIntent,
-                          checksClear: _checksClear,
-                          busy: workflowBusy,
-                          checksBlocked: _missionRestoreError != null,
-                          onRunChecks: _saveAndCheck,
-                          onAccept: _acceptIntent,
-                          onActivate: _activateIntent,
-                        ),
-                        const SizedBox(height: 18),
-                        _MissionImportPanel(
-                          intent: _acceptedIntent ?? _intent ?? _sourceIntent,
-                          flight: _flight,
+                          initialVolumes: [
+                            ..._savedVolumes,
+                            if (_volume != null &&
+                                _volume!.intentId == currentIntent.id &&
+                                _volume!.intentVersion ==
+                                    currentIntent.version &&
+                                !_savedVolumes.any((v) => v.id == _volume!.id))
+                              _volume!,
+                          ],
                           mission: _mission,
-                          selectedSource: _missionSource,
-                          importFailed: _missionImportFailed,
-                          localCredentialAvailable:
-                              _apiClient.hasLocalMissionControlToken,
-                          busy: workflowBusy,
-                          restorationError: _missionRestoreError,
-                          onSelectAndImport: _selectAndImportMission,
-                          onRetry: _retryMissionImport,
-                          onRetryRestoration: _retryMissionStateRestore,
+                          renderTiles: widget.renderTiles,
+                          onVolumesLoaded: _restoreGeometry,
                         ),
-                        const SizedBox(height: 18),
-                        _MissionDeploymentPanel(
-                          intent: _acceptedIntent ?? _intent ?? _sourceIntent,
-                          flight: _flight,
-                          mission: _mission,
-                          deployment: _missionDeployment,
-                          replayed: _missionDeploymentReplayed,
-                          confirmed: _missionDeploymentConfirmed,
-                          attempted: _missionDeploymentAttempted,
-                          localCredentialAvailable:
-                              _apiClient.hasLocalMissionControlToken,
-                          blocker:
-                              _missionRestoreError ?? _missionDeploymentBlocker,
-                          busy: workflowBusy,
-                          onConfirm: _confirmMissionDeployment,
-                          onDeploy: _deployMission,
-                          onRefresh: _refreshMissionDeployment,
-                          onPrepareNewAttempt:
-                              _prepareNewMissionDeploymentAttempt,
+                        commands: commandPanel,
+                      )
+                    else
+                      volumeEditor,
+                    const SizedBox(height: 14),
+                    if (currentIntent != null) ...[
+                      Panel(
+                        title: 'Intent geometry',
+                        child: ExpansionTile(
+                          title: Text(
+                            editingLocked
+                                ? 'View saved boundary details'
+                                : 'Edit intent boundary',
+                          ),
+                          subtitle: const Text(
+                            'Saved authorization and mission waypoints are separate layers.',
+                          ),
+                          maintainState: true,
+                          children: [volumeEditor],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+                    _WorkflowDetailColumns(
+                      children: [
+                        missionDetails,
+                        Column(
+                          children: [
+                            checks,
+                            const SizedBox(height: 14),
+                            review,
+                          ],
+                        ),
+                        Column(
+                          children: [
+                            missionImport,
+                            const SizedBox(height: 14),
+                            deployment,
+                          ],
                         ),
                       ],
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-          if (_error != null)
-            Positioned(
-              left: 22,
-              right: 22,
-              top: 14,
-              child: _WorkflowErrorBanner(
-                message: _error!,
-                onDismiss: () {
-                  setState(() => _error = null);
-                },
-              ),
-            ),
         ],
       ),
     );
   }
+}
+
+class _WorkflowTopRow extends StatelessWidget {
+  const _WorkflowTopRow({required this.map, required this.commands});
+  final Widget map, commands;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (constraints.maxWidth < 900) {
+        return Column(children: [map, const SizedBox(height: 14), commands]);
+      }
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(flex: 7, child: map),
+          const SizedBox(width: 14),
+          Expanded(flex: 4, child: commands),
+        ],
+      );
+    },
+  );
+}
+
+class _WorkflowDetailColumns extends StatelessWidget {
+  const _WorkflowDetailColumns({required this.children});
+  final List<Widget> children;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final columns = constraints.maxWidth >= 1180
+          ? 3
+          : constraints.maxWidth >= 780
+          ? 2
+          : 1;
+      final width = (constraints.maxWidth - 14 * (columns - 1)) / columns;
+      return Wrap(
+        spacing: 14,
+        runSpacing: 14,
+        children: [
+          for (final child in children) SizedBox(width: width, child: child),
+        ],
+      );
+    },
+  );
 }
 
 class _WorkflowErrorBanner extends StatelessWidget {
@@ -1414,9 +1619,10 @@ class _Header extends StatelessWidget {
       children: [
         Text(
           modifying ? 'Modify Mission Intent' : 'New Mission Intent',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineMedium?.copyWith(fontSize: 42),
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+            fontSize: 26,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
@@ -1693,6 +1899,7 @@ class _MissionPanel extends StatelessWidget {
 class _VolumesPanel extends StatelessWidget {
   const _VolumesPanel({
     required this.renderTiles,
+    this.savedPolygon,
     required this.points,
     required this.deconfliction,
     required this.bufferMeters,
@@ -1711,6 +1918,7 @@ class _VolumesPanel extends StatelessWidget {
   });
 
   final bool renderTiles;
+  final List<LatLng>? savedPolygon;
   final List<LatLng> points;
   final DeconflictionResult? deconfliction;
   final TextEditingController bufferMeters;
@@ -1733,9 +1941,11 @@ class _VolumesPanel extends StatelessWidget {
         ? const LatLng(35.4676, -97.5164)
         : points.first;
     final widthMeters = double.tryParse(bufferMeters.text.trim()) ?? 15;
-    final volumePolygon = volumeShapeMode == 'precise'
-        ? _preciseRouteVolume(points, widthMeters)
-        : _boxRouteVolume(points, widthMeters);
+    final volumePolygon =
+        savedPolygon ??
+        (volumeShapeMode == 'precise'
+            ? _preciseRouteVolume(points, widthMeters)
+            : _boxRouteVolume(points, widthMeters));
     final conflictBoxes = _conflictingBoundingBoxes(deconfliction);
     final conflictsWithoutGeometry = _conflictingFindings(
       deconfliction,
@@ -1780,7 +1990,7 @@ class _VolumesPanel extends StatelessWidget {
                   label: 'Altitude ref',
                   value: altitudeRef,
                   enabled: !locked,
-                  options: const ['agl', 'amsl'],
+                  options: const ['agl', 'msl', 'amsl'],
                   onChanged: onAltitudeRefChanged,
                 ),
                 _SelectField(
@@ -3081,7 +3291,7 @@ class _DateField extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Expanded(child: Text(_formatDateOnly(value))),
+                Expanded(child: Text(formatDateOnly(value))),
                 const Icon(Icons.calendar_month),
               ],
             ),
@@ -3430,14 +3640,7 @@ String _formatTimeSlot(String slot) {
   final parts = slot.split(':');
   final hour = int.parse(parts[0]);
   final minute = int.parse(parts[1]);
-  final suffix = hour >= 12 ? 'PM' : 'AM';
-  var displayHour = hour % 12;
-  if (displayHour == 0) displayHour = 12;
-  return '$displayHour:${_twoDigits(minute)} $suffix';
-}
-
-String _formatDateOnly(DateTime value) {
-  return '${value.year}-${_twoDigits(value.month)}-${_twoDigits(value.day)}';
+  return formatTime(DateTime(2000, 1, 1, hour, minute));
 }
 
 String _twoDigits(int value) => value.toString().padLeft(2, '0');
