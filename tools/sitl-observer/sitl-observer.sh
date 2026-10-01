@@ -108,10 +108,15 @@ start_sitl() {
 }
 
 sitl_session_alive() {
-  local dead
-  tmux has-session -t "$TMUX_SESSION" 2>/dev/null || return 1
-  dead=$(tmux display-message -p -t "$TMUX_SESSION:0.0" '#{pane_dead}' 2>/dev/null) || return 1
-  [[ "$dead" == "0" ]]
+  local pane_state
+  pane_state=$(tmux display-message -p -t "$TMUX_SESSION:0.0" '#{pane_dead}:#{pane_dead_status}' 2>/dev/null) || {
+    echo "SITL simulator pane is unavailable" >&2
+    return 1
+  }
+  if [[ "$pane_state" != 0:* ]]; then
+    echo "SITL simulator exited (pane state $pane_state); see $RUN_DIR/logs/sitl.log" >&2
+    return 1
+  fi
 }
 
 require_mission_relay_source() {
@@ -647,6 +652,7 @@ up() {
   fi
   start_sitl
   sleep 5
+  sitl_session_alive || return 1
   if [[ -n "$deployment_id" ]]; then
     wait_deploy_mission "$deployment_id"
   fi
@@ -732,6 +738,7 @@ wait_navigation_ready() {
 }
 
 mission_run() {
+  sitl_session_alive || return 1
   wait_navigation_ready || return
   durable_command ARM
   durable_command MISSION_START

@@ -134,7 +134,7 @@ grep --fixed-strings --quiet "tmux send-keys -t $TMUX_SESSION C-c" "$CLEANUP_CAL
   tmux() {
     case "$1" in
       has-session) return 0 ;;
-      display-message) printf '1\n'; return 0 ;;
+      display-message) printf '1:2\n'; return 0 ;;
     esac
     return 0
   }
@@ -194,7 +194,10 @@ echo "sitl-observer headless startup and asynchronous deployment reconciliation 
     [[ "$*" == *"/commands/command-"* ]]
     printf '{"state":"applied","observation_state":"observed"}'
   }
-  tmux() { echo 'legacy simulator command unexpectedly used' >&2; return 1; }
+  tmux() {
+    if [[ "$1" == display-message ]]; then printf '0:\n'; return 0; fi
+    echo 'legacy simulator command unexpectedly used' >&2; return 1
+  }
   mission_run
   [[ $(cat "$calls") == $'ARM\nMISSION_START' ]]
   land

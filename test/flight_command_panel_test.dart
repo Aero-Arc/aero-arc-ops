@@ -25,6 +25,29 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets('unavailable history does not assert an empty durable history', (
+    tester,
+  ) async {
+    final api = AeroArcApiClient(
+      missionControlToken: 'test',
+      httpClient: MockClient(
+        (request) async => http.Response('unavailable', 503),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(api: api, flight: flight),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Command history unavailable:'), findsOneWidget);
+    expect(find.text('No accepted commands for this flight.'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets(
     'stalled reconciliation resumes polling and retries the same command',
     (tester) async {
