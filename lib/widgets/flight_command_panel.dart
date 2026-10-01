@@ -34,6 +34,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   Timer? _timer;
   int _historyGeneration = 0;
   String? _error, _pendingType, _pendingKey;
+  String? _historyError;
   FlightCommand? _failedReconciliation;
   bool _loading = true,
       _sending = false,
@@ -93,15 +94,13 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
           _commands = commands;
           _loading = false;
           _historyAvailable = true;
-          if (_error?.startsWith('Command history unavailable:') ?? false) {
-            _error = null;
-          }
+          _historyError = null;
         });
       }
     } catch (e) {
       if (mounted && generation == _historyGeneration) {
         setState(() {
-          _error = 'Command history unavailable: $e';
+          _historyError = 'Command history unavailable: $e';
           _historyAvailable = false;
           _loading = false;
         });
@@ -384,11 +383,11 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                 child: const Text('Retry same request'),
               ),
             if (_loading) const LinearProgressIndicator(),
-            if (_error != null)
+            for (final error in [_historyError, _error].whereType<String>())
               Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: Text(
-                  _error!,
+                  error,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),

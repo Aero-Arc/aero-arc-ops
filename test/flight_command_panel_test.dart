@@ -122,6 +122,7 @@ void main() {
     tester,
   ) async {
     var recovered = false;
+    var historyFailed = false;
     final api = AeroArcApiClient(
       missionControlToken: 'test',
       httpClient: MockClient((request) async {
@@ -131,6 +132,7 @@ void main() {
         if (request.url.path.endsWith('/reconcile')) {
           return http.Response('unavailable', 503);
         }
+        if (historyFailed) return http.Response('history outage', 503);
         return http.Response(
           jsonEncode({
             'commands': [
@@ -165,6 +167,22 @@ void main() {
     );
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Evidence recovery unavailable:'),
+      findsOneWidget,
+    );
+    historyFailed = true;
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Command history unavailable:'), findsOneWidget);
+    expect(
+      find.textContaining('Evidence recovery unavailable:'),
+      findsOneWidget,
+    );
+    historyFailed = false;
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Command history unavailable:'), findsNothing);
     expect(
       find.textContaining('Evidence recovery unavailable:'),
       findsOneWidget,
