@@ -282,3 +282,15 @@ echo 'durable command and completion helper tests passed'
   sleep() { SECONDS=3; }
   if complete;then echo 'completion timeout reported success' >&2;exit 1;fi
 )
+
+# A retained dead pane blocks demo actions before they submit authority.
+(
+  simulated_pane_state='0:'
+  tmux() { [[ "$1" == display-message ]] && printf '%s\n' "$simulated_pane_state"; }
+  sitl_session_alive
+  simulated_pane_state='1:2'
+  if sitl_session_alive; then exit 1; fi
+  api_post() { echo 'dead simulator mutated API state' >&2; exit 99; }
+  if demo_flight; then exit 1; fi
+  if mission_run; then exit 1; fi
+)
