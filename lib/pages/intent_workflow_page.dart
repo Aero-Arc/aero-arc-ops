@@ -426,7 +426,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         if (!mounted) return;
         setState(() {
           _adoptIntent(intent!);
-          _volume = volume;
+          _adoptVolumes(modified.volumes);
           _modifyResult = modified;
         });
       } else if (intent == null && source != null) {
@@ -439,7 +439,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         if (!mounted) return;
         setState(() {
           _adoptIntent(intent!);
-          _volume = volume;
+          _adoptVolumes(modified.volumes);
           _modifyResult = modified;
         });
       } else {
@@ -454,7 +454,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
             _volumeRequest(),
           );
           if (!mounted) return;
-          setState(() => _volume = volume);
+          setState(() => _adoptVolumes([volume!]));
         }
       }
       final submitted = intent.status == 'draft'
@@ -949,6 +949,17 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     _missionDeploymentConfirmed = false;
     _missionDeploymentAttempted = false;
     _missionDeploymentReplayed = false;
+  }
+
+  // A successful save becomes the exact geometry baseline, even when a
+  // subsequent readiness check fails and the operator saves again.
+  void _adoptVolumes(List<OperationalVolume> volumes) {
+    _savedVolumes = List.of(volumes);
+    _volume = volumes.firstOrNull;
+    _geometryLoaded = true;
+    _geometryEdited = false;
+    final points = _savedPolygon;
+    if (points != null) _volumePoints = points;
   }
 
   void _adoptIntent(OperationalIntent next) {

@@ -14,6 +14,83 @@ import 'package:aero_arc_web/pages/intent_workflow_page.dart';
 
 void main() {
   testWidgets(
+    'repeated saves preserve the returned version geometry after failed checks',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final saved = <Map<String, dynamic>>[];
+      final api = AeroArcApiClient(
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/modify')) {
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            saved.add((body['volumes'] as List).single as Map<String, dynamic>);
+            return _jsonResponse({
+              'intent': {
+                ..._intentJson(status: 'submitted'),
+                'version': saved.length + 1,
+              },
+              'volumes': [
+                {..._volumeJson(), 'intent_version': saved.length + 1},
+              ],
+              'supersedes_intent_id': 'intent-1',
+              'supersedes_version': saved.length,
+            });
+          }
+          if (request.url.path.endsWith('/volumes')) {
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          }
+          if (request.url.path.endsWith('/preflight/evaluate')) {
+            return http.Response('unavailable', 503);
+          }
+          if (request.url.path.endsWith('/state')) {
+            return _jsonResponse({
+              'aircraft_id': 'aircraft-1',
+              'telemetry': {'status': 'missing'},
+            });
+          }
+          return _jsonResponse({'flights': []});
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              apiClient: api,
+              renderTiles: false,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'submitted'),
+              ),
+              initialVolumes: [_volumeModel()],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final save = find.widgetWithText(FilledButton, 'Save & check');
+      for (var attempt = 0; attempt < 3; attempt++) {
+        await tester.ensureVisible(save);
+        await tester.tap(save);
+        await tester.pumpAndSettle();
+      }
+      expect(saved, hasLength(3));
+      for (final volume in saved) {
+        expect(
+          jsonDecode(volume['geojson'] as String),
+          jsonDecode(_volumeJson()['geojson'] as String),
+        );
+        expect(volume['buffer_meters'], 15);
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
     'late volumes preserve buffer and altitude fallback on modification',
     (tester) async {
       tester.view.physicalSize = const Size(1600, 1400);
