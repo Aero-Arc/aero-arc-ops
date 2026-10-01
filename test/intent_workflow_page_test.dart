@@ -241,6 +241,83 @@ void main() {
     },
   );
 
+  testWidgets(
+    'read-only canceled intent retains terminal flight and mission history',
+    (tester) async {
+      var intentReads = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: '',
+        httpClient: MockClient((request) async {
+          final path = request.url.path;
+          if (path.endsWith('/volumes')) {
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          }
+          if (path.endsWith('/state')) {
+            return _jsonResponse({
+              'aircraft_id': 'aircraft-1',
+              'telemetry': {'status': 'missing'},
+            });
+          }
+          if (path.endsWith('/flights')) {
+            return _jsonResponse({
+              'flights': [
+                {
+                  'id': 'flight-1',
+                  'aircraft_id': 'aircraft-1',
+                  'intent_id': 'intent-1',
+                  'intent_version': 1,
+                  'status': 'complete',
+                },
+              ],
+            });
+          }
+          if (path.endsWith('/missions/current')) {
+            return _jsonResponse(_missionJson());
+          }
+          if (path.endsWith('/commands')) {
+            return _jsonResponse({'commands': []});
+          }
+          if (path.endsWith('/completion')) {
+            return _jsonResponse({'state': 'complete'});
+          }
+          if (path == '/api/v1/operational-intents/intent-1') {
+            intentReads++;
+            return _jsonResponse(_intentJson(status: 'canceled'));
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              apiClient: api,
+              renderTiles: false,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'canceled'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Aircraft commands'), findsOneWidget);
+      expect(
+        find.textContaining('Could not restore durable mission state'),
+        findsNothing,
+      );
+      expect(intentReads, 0);
+      expect(find.textContaining('summary refresh will retry'), findsNothing);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(intentReads, 0);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('empty saved draft can create its first volume after loading', (
     tester,
   ) async {

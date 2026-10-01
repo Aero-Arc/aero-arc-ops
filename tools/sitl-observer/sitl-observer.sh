@@ -412,7 +412,13 @@ api_post_file() {
     headers+=(-H "Idempotency-Key: $idempotency_key")
   fi
   echo "POST $path" >&2
-  status=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' "${headers[@]}" -X POST "$API_URL$path" --data-binary "@$body_file")
+  if status=$(curl --max-time 10 --connect-timeout 5 --silent --show-error --output "$response_file" --write-out '%{http_code}' "${headers[@]}" -X POST "$API_URL$path" --data-binary "@$body_file"); then
+    :
+  else
+    local result=$?
+    echo "POST outcome uncertain (curl $result); retain request $body_file and idempotency key $idempotency_key for exact retry" >&2
+    return "$result"
+  fi
   if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
     echo "API returned HTTP $status for POST $path:" >&2
     sed 's/^/  /' "$response_file" >&2
@@ -659,10 +665,13 @@ durable_command() {
   if [[ ! -f "$request" ]]; then
     jq -n --arg type "$type" '{type:$type}' >"$request"
   fi
-  api_post_file "/api/v1/flights/$FLIGHT_ID/commands" "$request" "$key" >"$response"
+  if ! api_post_file "/api/v1/flights/$FLIGHT_ID/commands" "$request" "$key" >"$response"; then
+    echo "Command acceptance unconfirmed; rerun $type to recover the same request identity $key" >&2
+    return 1
+  fi
   command_id=$(jq -er '.id' "$response")
   for attempt in $(seq 1 90); do
-    curl --fail --silent --show-error -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN" \
+    curl --max-time 10 --connect-timeout 5 --fail --silent --show-error -H "Authorization: Bearer $MISSION_DEPLOY_TOKEN" \
       "$API_URL/api/v1/flights/$FLIGHT_ID/commands/$command_id" >"$response"
     state=$(jq -er '.state' "$response")
     case "$state" in

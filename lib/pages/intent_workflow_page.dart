@@ -298,14 +298,18 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       }
 
       MissionDeployment? deployment;
-      if (flight != null &&
+      final terminalIntent = ['complete', 'canceled'].contains(intent.status);
+      if (!terminalIntent &&
+          flight != null &&
           mission != null &&
           !_apiClient.hasLocalMissionControlToken) {
         throw const AeroArcApiException(
           'Mission deployment credential is unavailable, so durable deployment state cannot be authenticated. Configure the credential and retry durable state restoration before changing the intent.',
         );
       }
-      if (flight != null && mission != null) {
+      if (flight != null &&
+          mission != null &&
+          _apiClient.hasLocalMissionControlToken) {
         try {
           deployment = await _apiClient.getCurrentMissionDeployment(flight.id);
         } on AeroArcApiException catch (error) {

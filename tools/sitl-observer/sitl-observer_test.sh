@@ -214,3 +214,29 @@ echo 'durable command and completion helper tests passed'
   durable_command() { echo 'command unexpectedly submitted before navigation readiness' >&2; exit 99; }
   if mission_run; then echo 'stale navigation was accepted' >&2; exit 1; fi
 )
+
+# A timed-out command POST retains immutable request bytes/key for exact retry.
+(
+  post_log="$TEST_RUN_DIR/timed-posts"
+  curl() {
+    [[ "$*" == *"--max-time 10"* ]]
+    if [[ "$*" == *"-X POST"* ]]; then
+      printf '%s\n' "$*" >>"$post_log"
+      if [[ $(wc -l <"$post_log") == 1 ]]; then return 28; fi
+      local output='' previous=''
+      for argument in "$@"; do
+        if [[ "$previous" == --output ]]; then output=$argument; fi
+        previous=$argument
+      done
+      printf '{"id":"stable-command","state":"accepted"}' >"$output"
+      printf '202'
+    else
+      printf '{"state":"applied","observation_state":"observed"}'
+    fi
+  }
+  if durable_command RTL; then echo 'timeout claimed acceptance' >&2;exit 1;fi
+  before=$(sha256sum "$RUN_DIR/command-RTL-request.json")
+  durable_command RTL
+  [[ "$before" == "$(sha256sum "$RUN_DIR/command-RTL-request.json")" ]]
+  [[ $(sed -n '1p' "$post_log") == "$(sed -n '2p' "$post_log")" ]]
+)
