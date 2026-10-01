@@ -60,6 +60,27 @@ require_safe_run_dir() {
   esac
 }
 
+validate_sitl_ports() {
+  local entry name port
+  local -A seen=()
+  for entry in "API:$API_PORT" "Ops:$OPS_PORT" "Relay:$RELAY_PORT" "Registry:$REGISTRY_PORT" \
+    "Conformance:$CONFORMANCE_PORT" "Relay-metrics:$RELAY_METRICS_PORT" \
+    "Conformance-metrics:$CONFORMANCE_METRICS_PORT" "MAVLink:$MAVLINK_PORT" \
+    "Influx:$INFLUX_PORT" "PostGIS:$CONFORMANCE_DB_PORT"; do
+    name=${entry%%:*}
+    port=${entry#*:}
+    if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]] || ((port > 65535)); then
+      echo "invalid $name port: $port" >&2
+      return 2
+    fi
+    if [[ -n "${seen[$port]:-}" ]]; then
+      echo "port collision: $name and ${seen[$port]} both use $port" >&2
+      return 2
+    fi
+    seen[$port]=$name
+  done
+}
+
 require_command() {
   command -v "$1" >/dev/null 2>&1 || { echo "required command not found: $1" >&2; exit 1; }
 }
@@ -599,6 +620,7 @@ activate() {
 }
 
 up() {
+  validate_sitl_ports || return $?
   validate_ops_web_mode
   require_safe_run_dir
   validate_sitl_stream_rate

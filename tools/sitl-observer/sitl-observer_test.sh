@@ -51,6 +51,19 @@ for invalid_rate in 0 4.5 51 '4; touch /tmp/unsafe'; do
 done
 SITL_STREAM_RATE_HZ=4
 
+# Reject collisions before startup can stop or create any resources.
+validate_sitl_ports
+(
+  RELAY_PORT=$CONFORMANCE_DB_PORT
+  if validate_sitl_ports; then exit 1; fi
+  stop_processes() { echo 'invalid ports reached destructive startup' >&2; exit 99; }
+  if up; then exit 1; fi
+)
+(
+  INFLUX_PORT=65536
+  if validate_sitl_ports; then exit 1; fi
+)
+
 CURL_CALLS_FILE=$TEST_RUN_DIR/curl-calls
 RECONCILE_COUNT_FILE=$TEST_RUN_DIR/reconcile-count
 printf '0\n' >"$RECONCILE_COUNT_FILE"
