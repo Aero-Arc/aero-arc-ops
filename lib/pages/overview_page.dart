@@ -616,7 +616,9 @@ class _OverviewPageState extends State<OverviewPage> {
                     MarkerLayer(
                       markers: [
                         for (final item
-                            in _selectedMap!.validatedMission!.items)
+                            in _selectedMap!.validatedMission!.items.where(
+                              (item) => item.command != 20,
+                            ))
                           Marker(
                             point: LatLng(item.latitude, item.longitude),
                             width: 18,

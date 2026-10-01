@@ -70,3 +70,36 @@ class FlightCommandEvent {
         message: json['message'] as String? ?? '',
       );
 }
+
+/// Persisted aircraft evidence and API cleanup progress; receipt is not closure.
+class FlightCompletion {
+  const FlightCompletion({
+    required this.state,
+    required this.outcome,
+    required this.attempts,
+    required this.error,
+    required this.landedAt,
+    required this.disarmedAt,
+  });
+  final String state, outcome, error;
+  final int attempts;
+  final DateTime? landedAt, disarmedAt;
+  factory FlightCompletion.fromJson(Map<String, dynamic> json) {
+    final evidence = json['evidence'] as Map<String, dynamic>? ?? {};
+    DateTime? timestamp(dynamic value) {
+      final ns = int.tryParse('$value');
+      return ns == null
+          ? null
+          : DateTime.fromMicrosecondsSinceEpoch(ns ~/ 1000, isUtc: true);
+    }
+
+    return FlightCompletion(
+      state: json['state'] as String,
+      outcome: evidence['outcome'] as String? ?? '',
+      attempts: json['attempts'] as int? ?? 0,
+      error: json['error'] as String? ?? '',
+      landedAt: timestamp(evidence['landed_at_unix_ns']),
+      disarmedAt: timestamp(evidence['disarmed_at_unix_ns']),
+    );
+  }
+}

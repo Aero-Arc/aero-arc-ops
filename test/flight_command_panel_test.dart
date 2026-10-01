@@ -117,6 +117,9 @@ void main() {
     final api = AeroArcApiClient(
       missionControlToken: 'test',
       httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
         if (request.url.path.endsWith('/reconcile')) {
           reconciliations++;
           return http.Response(jsonEncode(command('applied')), 202);
@@ -291,6 +294,9 @@ void main() {
       final api = AeroArcApiClient(
         missionControlToken: 'test',
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response('{}', 404);
+          }
           if (request.url.path.endsWith('/reconcile')) {
             paths.add(request.url.path);
             return paths.length == 1
@@ -434,6 +440,9 @@ void main() {
     final api = AeroArcApiClient(
       missionControlToken: 'test',
       httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
         if (request.method == 'POST') {
           keys.add(request.headers['idempotency-key']);
           return keys.length == 1
@@ -476,12 +485,109 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('a delayed second completion poll blocks confirmation', (
+    tester,
+  ) async {
+    final second = Completer<http.Response>();
+    var reads = 0;
+    var posts = 0;
+    final api = AeroArcApiClient(
+      missionControlToken: 'test',
+      httpClient: MockClient((request) async {
+        if (request.method == 'POST') posts++;
+        if (request.url.path.endsWith('/completion')) {
+          reads++;
+          if (reads == 1) return http.Response('{}', 404);
+          return second.future;
+        }
+        return http.Response('{"commands":[]}', 200);
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(api: api, flight: flight),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'ARM'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    await tester.tap(find.text('Issue command'));
+    await tester.pumpAndSettle();
+    expect(posts, 0);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'ARM'))
+          .onPressed,
+      isNull,
+    );
+    second.complete(http.Response('{"state":"finalizing"}', 200));
+    await tester.pumpAndSettle();
+    expect(posts, 0);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final outcome in ['delayed', 'error', 'timeout']) {
+    testWidgets('commands wait for known completion status: $outcome', (
+      tester,
+    ) async {
+      final stalled = Completer<http.Response>();
+      var recovered = false;
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            if (recovered) return http.Response('{}', 404);
+            if (outcome == 'error') return http.Response('unavailable', 503);
+            return stalled.future;
+          }
+          return http.Response('{"commands":[]}', 200);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      OutlinedButton arm() => tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, 'ARM'),
+      );
+      expect(arm().onPressed, isNull);
+      if (outcome == 'timeout') {
+        await tester.pump(const Duration(seconds: 11));
+        await tester.pump();
+        expect(arm().onPressed, isNull);
+      }
+      recovered = true;
+      if (outcome == 'delayed') {
+        stalled.complete(http.Response('{}', 404));
+      }
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(arm().onPressed, isNotNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets(
     'definitive rejection releases pending identity after history refresh',
     (tester) async {
       final api = AeroArcApiClient(
         missionControlToken: 'test',
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response('{}', 404);
+          }
           return request.method == 'POST'
               ? http.Response('denied', 403)
               : http.Response('{"commands":[]}', 200);
@@ -521,6 +627,9 @@ void main() {
       final api = AeroArcApiClient(
         missionControlToken: 'test',
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response('{}', 404);
+          }
           if (request.method == 'POST') {
             return http.Response(jsonEncode(command('accepted')), 202);
           }
@@ -570,6 +679,9 @@ void main() {
       final api = AeroArcApiClient(
         missionControlToken: 'test',
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response('{}', 404);
+          }
           if (request.method == 'POST') {
             submissions++;
             return http.Response('{}', 500);
@@ -604,6 +716,231 @@ void main() {
     },
   );
 
+  for (final flightStatus in ['planned', 'canceled', 'complete']) {
+    testWidgets('canceled intent disables commands for $flightStatus flight', (
+      tester,
+    ) async {
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          return request.url.path.endsWith('/completion')
+              ? http.Response('{}', 404)
+              : http.Response(
+                  jsonEncode({
+                    'commands': [command('outcome_unknown')],
+                  }),
+                  200,
+                );
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(
+                api: api,
+                intentStatus: 'canceled',
+                flight: FlightRecord(
+                  id: 'flight-1',
+                  aircraftId: 'aircraft-1',
+                  intentId: 'intent-1',
+                  intentVersion: 1,
+                  status: flightStatus,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final controls = tester.widgetList<OutlinedButton>(
+        find.byType(OutlinedButton),
+      );
+      expect(controls, isNotEmpty);
+      expect(controls.every((button) => button.onPressed == null), isTrue);
+      await tester.tap(find.textContaining('ARM ·').last);
+      await tester.pumpAndSettle();
+      final recovery = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, 'Reconcile existing command'),
+      );
+      expect(recovery.onPressed, isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
+  testWidgets('stalled finalization callback times out and retries', (
+    tester,
+  ) async {
+    final stalled = Completer<void>();
+    var callbacks = 0;
+    final api = AeroArcApiClient(
+      missionControlToken: 'test',
+      httpClient: MockClient((request) async {
+        return request.url.path.endsWith('/completion')
+            ? http.Response(
+                '{"event_id":"event","state":"complete","outcome":"mission_completed"}',
+                200,
+              )
+            : http.Response('{"commands":[]}', 200);
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(
+              api: api,
+              flight: flight,
+              onFinalized: () {
+                callbacks++;
+                return callbacks == 1 ? stalled.future : Future<void>.value();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(callbacks, 1);
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
+    expect(find.textContaining('summary refresh will retry'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    expect(callbacks, 2);
+    stalled.complete();
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final blockedPath in ['/commands', '/completion']) {
+    testWidgets('status polling stays independent when $blockedPath hangs', (
+      tester,
+    ) async {
+      final stalled = Completer<http.Response>();
+      var historyReads = 0;
+      var completionReads = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          final completion = request.url.path.endsWith('/completion');
+          if (completion) {
+            completionReads++;
+          } else {
+            historyReads++;
+          }
+          if (request.url.path.endsWith(blockedPath)) return stalled.future;
+          return completion
+              ? http.Response('{}', 404)
+              : http.Response('{"commands":[]}', 200);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(blockedPath == '/commands' ? completionReads : historyReads, 2);
+      expect(blockedPath == '/commands' ? historyReads : completionReads, 1);
+      stalled.complete(
+        blockedPath == '/commands'
+            ? http.Response('{"commands":[]}', 200)
+            : http.Response('{}', 404),
+      );
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
+  testWidgets('reconcile response updates evidence before the next poll', (
+    tester,
+  ) async {
+    final api = AeroArcApiClient(
+      missionControlToken: 'trusted-session',
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
+        if (request.url.path.endsWith('/reconcile')) {
+          return http.Response(
+            jsonEncode({
+              ...command('applied'),
+              'observation_state': 'observed',
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'commands': [command('outcome_unknown')],
+          }),
+          200,
+        );
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(api: api, flight: flight),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('ARM').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Reconcile existing command'));
+    await tester.tap(find.text('Reconcile existing command'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Observation: observed'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('completion refresh survives unavailable command history', (
+    tester,
+  ) async {
+    var finalized = 0;
+    final api = AeroArcApiClient(
+      missionControlToken: 'trusted-session',
+      httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response(
+            '{"event_id":"event","state":"complete","outcome":"mission_completed"}',
+            200,
+          );
+        }
+        return http.Response('unavailable', 503);
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: FlightCommandPanel(
+              api: api,
+              flight: flight,
+              onFinalized: () async {
+                finalized++;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(finalized, 1);
+    expect(find.textContaining('Command history unavailable:'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
     'in-flight history blocks confirmation until other console authority arrives',
     (tester) async {
@@ -612,6 +949,9 @@ void main() {
       final api = AeroArcApiClient(
         missionControlToken: 'trusted-session',
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response('{}', 404);
+          }
           if (request.method == 'GET') {
             reads++;
             if (reads == 2) return stale.future;
@@ -654,6 +994,69 @@ void main() {
         isNull,
       );
       await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'completion evidence blocks controls until durable finalization',
+    (tester) async {
+      var finalized = false;
+      var notifications = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: 'trusted',
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion')) {
+            return http.Response(
+              jsonEncode({
+                'state': finalized ? 'complete' : 'retrying',
+                'attempts': 2,
+                'error': finalized ? '' : 'monitoring temporarily unavailable',
+                'evidence': {
+                  'outcome': 'ended_early',
+                  'landed_at_unix_ns': 1700000000000000000,
+                  'disarmed_at_unix_ns': 1700000001000000000,
+                },
+              }),
+              200,
+            );
+          }
+          return http.Response(jsonEncode({'commands': []}), 200);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(
+                api: api,
+                flight: flight,
+                onFinalized: () async {
+                  notifications++;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Flight outcome'), findsOneWidget);
+      expect(find.textContaining('Cleanup will retry:'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'ARM'))
+            .onPressed,
+        isNull,
+      );
+      finalized = true;
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(find.text('Complete'), findsWidgets);
+      expect(notifications, 1);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(notifications, 1);
+      expect(find.textContaining('Cleanup will retry:'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
     },
   );
 
@@ -710,6 +1113,9 @@ void main() {
     final api = AeroArcApiClient(
       missionControlToken: 'trusted-session',
       httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
         expect(request.headers['Authorization'], 'Bearer trusted-session');
         return http.Response(
           jsonEncode({
@@ -738,6 +1144,9 @@ void main() {
     final api = AeroArcApiClient(
       missionControlToken: 'trusted-session',
       httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/completion')) {
+          return http.Response('{}', 404);
+        }
         if (request.method == 'GET') {
           return http.Response(
             jsonEncode({

@@ -14,15 +14,23 @@ class FlightCommandPanel extends StatefulWidget {
     super.key,
     required this.api,
     required this.flight,
+    this.onFinalized,
+    this.intentStatus,
   });
   final AeroArcApiClient api;
   final FlightRecord flight;
+  final String? intentStatus;
+  final Future<void> Function()? onFinalized;
   @override
   State<FlightCommandPanel> createState() => _FlightCommandPanelState();
 }
 
 class _FlightCommandPanelState extends State<FlightCommandPanel> {
   List<FlightCommand> _commands = [];
+  FlightCompletion? _completion;
+  bool _reportedFinalization = false;
+  bool _completionAvailable = false;
+  String? _completionError;
   Timer? _timer;
   int _historyGeneration = 0;
   String? _error, _pendingType, _pendingKey;
@@ -31,7 +39,8 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
       <String, ({FlightCommand command, String message})>{};
   bool _loading = true,
       _sending = false,
-      _refreshing = false,
+      _historyRefreshing = false,
+      _completionRefreshing = false,
       _historyAvailable = false;
   @override
   void initState() {
@@ -50,12 +59,19 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   }
 
   Future<void> _refresh() async {
-    if (_refreshing || _sending || !widget.api.hasLocalMissionControlToken) {
+    if (_sending || !widget.api.hasLocalMissionControlToken) {
       if (mounted && _loading) setState(() => _loading = false);
       return;
     }
-    setState(() => _refreshing = true);
-    final generation = _historyGeneration;
+    await Future.wait([
+      _refreshHistory(_historyGeneration),
+      _refreshCompletion(),
+    ]);
+  }
+
+  Future<void> _refreshHistory(int generation) async {
+    if (_historyRefreshing) return;
+    setState(() => _historyRefreshing = true);
     try {
       final commands = await widget.api
           .flightCommands(widget.flight.id)
@@ -87,14 +103,62 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
         });
       }
     } finally {
-      if (mounted) setState(() => _refreshing = false);
+      if (mounted) setState(() => _historyRefreshing = false);
     }
   }
+
+  Future<void> _refreshCompletion() async {
+    if (_completionRefreshing) return;
+    setState(() {
+      _completionRefreshing = true;
+      _completionAvailable = false;
+    });
+    try {
+      final completion = await widget.api
+          .flightCompletion(widget.flight.id)
+          .timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      setState(() {
+        _completion = completion;
+        _completionAvailable = true;
+        _completionError = null;
+      });
+      if (completion?.state == 'complete' && !_reportedFinalization) {
+        try {
+          await widget.onFinalized?.call().timeout(const Duration(seconds: 10));
+          _reportedFinalization = true;
+        } catch (error) {
+          if (mounted) {
+            setState(
+              () => _completionError =
+                  'Flight complete; summary refresh will retry: $error',
+            );
+          }
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _completionAvailable = false;
+          _completionError = 'Completion status unavailable: $error';
+        });
+      }
+    } finally {
+      _completionRefreshing = false;
+    }
+  }
+
+  bool get _terminalOperation =>
+      ['complete', 'canceled'].contains(widget.flight.status) ||
+      ['complete', 'canceled'].contains(widget.intentStatus);
 
   bool get _commandBlocked => _submissionBlocked || _pendingKey != null;
 
   bool get _submissionBlocked =>
-      _refreshing ||
+      !_completionAvailable ||
+      _historyRefreshing ||
+      _completion != null ||
+      _terminalOperation ||
       _loading ||
       !_historyAvailable ||
       _sending ||
@@ -184,9 +248,11 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     return Panel(
       title: 'Aircraft commands',
       trailing: StatusBadge(
-        label: _loading
+        label: _completion != null
+            ? (_completion!.state == 'complete' ? 'complete' : 'finalizing')
+            : _loading
             ? 'loading'
-            : !_historyAvailable
+            : !_historyAvailable || !_completionAvailable
             ? 'unavailable'
             : _sending
             ? 'sending'
@@ -203,9 +269,45 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
               'Issue an action, then follow its execution and vehicle evidence.',
               style: TextStyle(fontSize: 12, color: Color(0xFF8797AB)),
             ),
+            if (_completion != null) ...[
+              const SizedBox(height: 10),
+              DetailLine(
+                label: 'Flight outcome',
+                value: displayEnum(_completion!.outcome),
+              ),
+              DetailLine(
+                label: 'Finalization',
+                value: displayEnum(_completion!.state),
+              ),
+              DetailLine(
+                label: 'Landed',
+                value: formatDate(_completion!.landedAt),
+              ),
+              DetailLine(
+                label: 'Disarmed',
+                value: formatDate(_completion!.disarmedAt),
+              ),
+              if (_completion!.error.isNotEmpty)
+                Text(
+                  'Cleanup will retry: ${_completion!.error}',
+                  style: const TextStyle(color: Color(0xFFF1BD64)),
+                ),
+            ] else
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Automatic completion waits for mission/recovery, landed, and disarmed evidence.',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF8797AB)),
+                ),
+              ),
+            if (_completionError != null)
+              Text(
+                _completionError!,
+                style: const TextStyle(color: Color(0xFFF1BD64)),
+              ),
             if (!widget.api.hasLocalMissionControlToken)
               const Text(
-                'Configure the trusted local control session to issue commands.',
+                'Configure the trusted local session to read command and finalization evidence or issue commands.',
               ),
             const SizedBox(height: 12),
             for (final group in const [
@@ -333,10 +435,23 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                                 (command.state == 'applied' &&
                                     command.observationState == 'pending'))
                               TextButton(
-                                onPressed: _sending || _refreshing
+                                onPressed:
+                                    _terminalOperation ||
+                                        _historyRefreshing ||
+                                        !_historyAvailable ||
+                                        _sending ||
+                                        !_completionAvailable ||
+                                        _completion != null
                                     ? null
                                     : () async {
-                                        if (_sending || _refreshing) return;
+                                        if (_terminalOperation ||
+                                            _historyRefreshing ||
+                                            !_historyAvailable ||
+                                            _sending ||
+                                            !_completionAvailable ||
+                                            _completion != null) {
+                                          return;
+                                        }
                                         setState(() {
                                           _sending = true;
                                           _historyGeneration++;

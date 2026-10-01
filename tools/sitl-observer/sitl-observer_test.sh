@@ -24,6 +24,20 @@ if validate_ops_web_mode 2>/dev/null; then
   exit 1
 fi
 OPS_WEB_MODE=release
+# The manifest hashes bytes served by Ops after startup, independently of any
+# local Flutter build directory. A failed asset read cannot produce evidence.
+(
+  git() { if [[ "$*" == *'rev-parse HEAD'* ]]; then printf 'candidate-sha'; fi; }
+  curl() { [[ "${!#}" == "$OPS_URL/main.dart.js" ]]; printf 'served compiled application'; }
+  mkdir -p "$RUN_DIR/bin"
+  for component in api relay agent registry conformance; do printf '%s' "$component" >"$RUN_DIR/bin/$component"; done
+  write_version_manifest
+  expected=$(printf 'served compiled application' | sha256sum | cut -d' ' -f1)
+  jq -e --arg expected "$expected" '.components[] | select(.component == "ops") | .web_entrypoint_sha256 == $expected and .web_mode == "release" and (has("binary_sha256") | not)' "$RUN_DIR/component-versions.json" >/dev/null
+  jq -e '[.components[] | select(.component != "ops") | .binary_sha256 | length == 64] | all' "$RUN_DIR/component-versions.json" >/dev/null
+  curl() { return 22; }
+  if write_version_manifest; then echo 'failed web read produced a manifest' >&2; exit 1; fi
+)
 # Stub in a subshell so subsequent process tests retain the real launcher.
 (
   start_process() {
@@ -40,8 +54,8 @@ ARDUPILOT_SOURCE='/tmp/ardupilot source'
 SIM_VEHICLE='/tmp/sim vehicle.py'
 printf -v expected_command 'cd /tmp/ardupilot\\ source/ArduCopter && exec env -u DISPLAY -u WAYLAND_DISPLAY PYTHONUNBUFFERED=1 /tmp/sim\\ vehicle.py -v ArduCopter --no-rebuild --no-extra-ports --use-dir %q --add-param-file %q --out=udp:127.0.0.1:14550 --mavproxy-args=--streamrate=7' "$RUN_DIR/sitl" "$SCRIPT_DIR/ui-command-defaults.parm"
 [[ "$(sitl_vehicle_command)" == "$expected_command" ]]
-# Startup supplies only the required AUTO options, retaining arming checks.
-[[ $(sed '/^#/d; /^$/d' "$SCRIPT_DIR/ui-command-defaults.parm") == 'AUTO_OPTIONS 3' ]]
+# Startup supplies AUTO and recovery options, retaining normal arming checks.
+[[ $(sed '/^#/d; /^$/d' "$SCRIPT_DIR/ui-command-defaults.parm") == $'AUTO_OPTIONS 3\nRTL_ALT_FINAL 0\nDISARM_DELAY 30' ]]
 for invalid_rate in 0 4.5 51 '4; touch /tmp/unsafe'; do
   SITL_STREAM_RATE_HZ=$invalid_rate
   if validate_sitl_stream_rate 2>/dev/null; then
@@ -50,6 +64,19 @@ for invalid_rate in 0 4.5 51 '4; touch /tmp/unsafe'; do
   fi
 done
 SITL_STREAM_RATE_HZ=4
+
+# Reject collisions before startup can stop or create any resources.
+validate_sitl_ports
+(
+  RELAY_PORT=$CONFORMANCE_DB_PORT
+  if validate_sitl_ports; then exit 1; fi
+  stop_processes() { echo 'invalid ports reached destructive startup' >&2; exit 99; }
+  if up; then exit 1; fi
+)
+(
+  INFLUX_PORT=65536
+  if validate_sitl_ports; then exit 1; fi
+)
 
 CURL_CALLS_FILE=$TEST_RUN_DIR/curl-calls
 RECONCILE_COUNT_FILE=$TEST_RUN_DIR/reconcile-count
@@ -128,6 +155,21 @@ if (
 fi
 grep --fixed-strings --quiet 'stop-processes' "$CLEANUP_CALLS_FILE"
 grep --fixed-strings --quiet "tmux send-keys -t $TMUX_SESSION C-c" "$CLEANUP_CALLS_FILE"
+
+# A retained tmux pane is not a live simulator. pane_dead must fail closed.
+(
+  tmux() {
+    case "$1" in
+      has-session) return 0 ;;
+      display-message) printf '1:2\n'; return 0 ;;
+    esac
+    return 0
+  }
+  if sitl_session_alive; then
+    echo 'dead SITL pane was reported live' >&2
+    exit 1
+  fi
+)
 grep --fixed-strings --quiet "tmux kill-session -t $TMUX_SESSION" "$CLEANUP_CALLS_FILE"
 grep --fixed-strings --quiet \
   "docker compose -p aero-arc-sitl-observer -f $SCRIPT_DIR/compose.yaml down --volumes --remove-orphans" \
@@ -155,7 +197,120 @@ jq -e '.deployment_id == "deployment-1" and .status == "already_applied"' <<<"$r
 # 15-attempt budget. No poll may create a second deployment.
 echo "sitl-observer headless startup and asynchronous deployment reconciliation tests passed"
 
-# Retaining a pane after exit must never authorize simulator commands.
+# Command helpers must use authenticated durable submission and wait for evidence.
+(
+  calls="$TEST_RUN_DIR/command-calls"
+  mkdir -p "$RUN_DIR/logs"
+  printf 'AP: EKF3 IMU0 is using GPS\n' >"$RUN_DIR/logs/sitl.log"
+
+  api_post_file() {
+    [[ "$1" == "/api/v1/flights/$FLIGHT_ID/commands" ]]
+    local type
+    type=$(jq -er '.type' "$2")
+    [[ "$3" == "sitl-$FLIGHT_ID-$type" ]]
+    [[ $(jq 'keys | length' "$2") == 1 ]]
+    printf '%s\n' "$type" >>"$calls"
+    printf '{"id":"command-%s","state":"accepted"}' "$type"
+  }
+  curl() {
+    if [[ "$*" == *"/state"* ]]; then
+      printf '{"telemetry":{"position":{"status":"fresh"},"gps":{"status":"fresh","gps_fix_type":"gps_fix_type_3d_fix"}}}'
+      return
+    fi
+    [[ "$*" == *"Authorization: Bearer $MISSION_DEPLOY_TOKEN"* ]]
+    [[ "$*" == *"/commands/command-"* ]]
+    printf '{"state":"applied","observation_state":"observed"}'
+  }
+  tmux() {
+    if [[ "$1" == display-message ]]; then printf '0:\n'; return 0; fi
+    echo 'legacy simulator command unexpectedly used' >&2; return 1
+  }
+  mission_run
+  [[ $(cat "$calls") == $'ARM\nMISSION_START' ]]
+  land
+  [[ $(tail -1 "$calls") == LAND ]]
+)
+# Completion 404 and asynchronous progress must not be presented as finished.
+(
+  count_file="$TEST_RUN_DIR/completion-count"
+  printf '0' >"$count_file"
+  curl() {
+    [[ "$*" == *"Authorization: Bearer $MISSION_DEPLOY_TOKEN"* ]]
+    local output= count
+    while (($#)); do
+      if [[ "$1" == --output ]]; then output=$2; shift 2; else shift; fi
+    done
+    count=$(<"$count_file"); count=$((count+1)); printf '%s' "$count" >"$count_file"
+    case "$count" in
+      1) return 28 ;;
+      2) printf '{}' >"$output"; printf 503 ;;
+      3) printf '{}' >"$output"; printf 404 ;;
+      4) printf '{"state":"finalizing"}' >"$output"; printf 200 ;;
+      *) printf '{"state":"complete"}' >"$output"; printf 200 ;;
+    esac
+  }
+  complete
+  [[ $(cat "$count_file") == 5 ]]
+)
+echo 'durable command and completion helper tests passed'
+
+# Readiness fails closed before any command when fresh position is missing.
+(
+  sleep() { :; }
+  curl() { printf '{"telemetry":{"position":{"status":"stale"},"gps":{"status":"fresh","gps_fix_type":"gps_fix_type_rtk_fixed"}}}'; }
+  durable_command() { echo 'command unexpectedly submitted before navigation readiness' >&2; exit 99; }
+  if mission_run; then echo 'stale navigation was accepted' >&2; exit 1; fi
+)
+
+# A timed-out command POST retains immutable request bytes/key for exact retry.
+(
+  post_log="$TEST_RUN_DIR/timed-posts"
+  curl() {
+    [[ "$*" == *"--max-time 10"* ]]
+    if [[ "$*" == *"-X POST"* ]]; then
+      printf '%s\n' "$*" >>"$post_log"
+      if [[ $(wc -l <"$post_log") == 1 ]]; then return 28; fi
+      local output='' previous=''
+      for argument in "$@"; do
+        if [[ "$previous" == --output ]]; then output=$argument; fi
+        previous=$argument
+      done
+      printf '{"id":"stable-command","state":"accepted"}' >"$output"
+      printf '202'
+    else
+      printf '{"state":"applied","observation_state":"observed"}'
+    fi
+  }
+  if durable_command RTL; then echo 'timeout claimed acceptance' >&2;exit 1;fi
+  before=$(sha256sum "$RUN_DIR/command-RTL-request.json")
+  durable_command RTL
+  [[ "$before" == "$(sha256sum "$RUN_DIR/command-RTL-request.json")" ]]
+  [[ $(sed -n '1p' "$post_log") == "$(sed -n '2p' "$post_log")" ]]
+)
+
+# Evidence polling survives a transport failure without resubmitting the command.
+(
+  calls="$TEST_RUN_DIR/poll-recovery"
+  api_post_file() { printf '{"id":"retained-command"}'; }
+  curl() {
+    [[ "$*" == *"--max-time 10 --connect-timeout 5"* ]]
+    [[ "$*" == *"/commands/retained-command"* ]]
+    if [[ ! -f "$calls" ]]; then touch "$calls";return 28;fi
+    printf '{"state":"applied","observation_state":"observed"}'
+  }
+  durable_command LAND
+)
+# Completion timeout is a wall-clock deadline, including failed requests.
+(
+  COMPLETION_TIMEOUT=2
+  SECONDS=0
+  curl() { [[ "$*" == *"--max-time 2"* ]];SECONDS=3;return 28; }
+  # Command substitution runs curl in a subshell; advance the caller at retry.
+  sleep() { SECONDS=3; }
+  if complete;then echo 'completion timeout reported success' >&2;exit 1;fi
+)
+
+# A retained dead pane blocks demo actions before they submit authority.
 (
   simulated_pane_state='0:'
   tmux() {

@@ -169,6 +169,302 @@ void main() {
     },
   );
 
+  testWidgets(
+    'canceled intent restores a completed flight without endless finalization refresh',
+    (tester) async {
+      var intentReads = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: 'local-dev-token',
+        httpClient: MockClient((request) async {
+          final path = request.url.path;
+          if (path.endsWith('/volumes')) {
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          }
+          if (path.endsWith('/state')) {
+            return _jsonResponse({
+              'aircraft_id': 'aircraft-1',
+              'telemetry': {'status': 'missing'},
+            });
+          }
+          if (path.endsWith('/flights')) {
+            return _jsonResponse({
+              'flights': [
+                {
+                  'id': 'flight-1',
+                  'aircraft_id': 'aircraft-1',
+                  'intent_id': 'intent-1',
+                  'intent_version': 1,
+                  'status': 'complete',
+                },
+              ],
+            });
+          }
+          if (path.endsWith('/missions/current')) {
+            return _jsonResponse(_missionJson());
+          }
+          if (path.endsWith('/commands')) {
+            return _jsonResponse({'commands': []});
+          }
+          if (path.endsWith('/completion')) {
+            return _jsonResponse({'state': 'complete'});
+          }
+          if (path == '/api/v1/operational-intents/intent-1') {
+            intentReads++;
+            return _jsonResponse(_intentJson(status: 'canceled'));
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              apiClient: api,
+              renderTiles: false,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'canceled'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(intentReads, 1);
+      expect(find.textContaining('summary refresh will retry'), findsNothing);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(intentReads, 1);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'read-only canceled intent retains terminal flight and mission history',
+    (tester) async {
+      var intentReads = 0;
+      final api = AeroArcApiClient(
+        missionControlToken: '',
+        httpClient: MockClient((request) async {
+          final path = request.url.path;
+          if (path.endsWith('/volumes')) {
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          }
+          if (path.endsWith('/state')) {
+            return _jsonResponse({
+              'aircraft_id': 'aircraft-1',
+              'telemetry': {'status': 'missing'},
+            });
+          }
+          if (path.endsWith('/flights')) {
+            return _jsonResponse({
+              'flights': [
+                {
+                  'id': 'flight-1',
+                  'aircraft_id': 'aircraft-1',
+                  'intent_id': 'intent-1',
+                  'intent_version': 1,
+                  'status': 'complete',
+                },
+              ],
+            });
+          }
+          if (path.endsWith('/missions/current')) {
+            return _jsonResponse(_missionJson());
+          }
+          if (path.endsWith('/commands')) {
+            return _jsonResponse({'commands': []});
+          }
+          if (path.endsWith('/completion')) {
+            return _jsonResponse({'state': 'complete'});
+          }
+          if (path == '/api/v1/operational-intents/intent-1') {
+            intentReads++;
+            return _jsonResponse(_intentJson(status: 'canceled'));
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              apiClient: api,
+              renderTiles: false,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'canceled'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Aircraft commands'), findsOneWidget);
+      expect(
+        find.textContaining('Could not restore durable mission state'),
+        findsNothing,
+      );
+      expect(intentReads, 0);
+      expect(find.textContaining('summary refresh will retry'), findsNothing);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(intentReads, 0);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  for (final failure in ['unavailable', 'timeout']) {
+    testWidgets('terminal history survives deployment $failure', (
+      tester,
+    ) async {
+      final stalled = Completer<http.Response>();
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          final path = request.url.path;
+          if (path.endsWith('/volumes')) {
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          }
+          if (path.endsWith('/state')) {
+            return _jsonResponse({
+              'aircraft_id': 'aircraft-1',
+              'telemetry': {'status': 'missing'},
+            });
+          }
+          if (path.endsWith('/flights')) {
+            return _jsonResponse({
+              'flights': [
+                {
+                  'id': 'flight-1',
+                  'aircraft_id': 'aircraft-1',
+                  'intent_id': 'intent-1',
+                  'intent_version': 1,
+                  'status': 'complete',
+                },
+              ],
+            });
+          }
+          if (path.endsWith('/missions/current')) {
+            return _jsonResponse(_missionJson());
+          }
+          if (path.endsWith('/mission-deployments/current')) {
+            return failure == 'timeout'
+                ? stalled.future
+                : http.Response('unavailable', 503);
+          }
+          if (path.endsWith('/commands')) {
+            return _jsonResponse({'commands': []});
+          }
+          if (path.endsWith('/completion')) {
+            return _jsonResponse({'state': 'complete'});
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              apiClient: api,
+              renderTiles: false,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'canceled'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pumpAndSettle();
+      expect(find.text('Aircraft commands'), findsOneWidget);
+      expect(find.text('Validated ending'), findsOneWidget);
+      expect(find.text('Onboard ending'), findsNothing);
+      expect(
+        find.textContaining('Could not restore deployment history'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Could not restore durable mission state'),
+        findsNothing,
+      );
+      expect(find.text('Retry durable state restore'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
+  for (final stalledPath in ['/flights', '/missions/current']) {
+    testWidgets('terminal restoration timeout at $stalledPath can retry', (
+      tester,
+    ) async {
+      final stalled = Completer<http.Response>();
+      var fail = true;
+      final api = AeroArcApiClient(
+        missionControlToken: '',
+        httpClient: MockClient((request) async {
+          final path = request.url.path;
+          if (fail && path.endsWith(stalledPath)) return stalled.future;
+          if (path.endsWith('/flights')) {
+            return _jsonResponse({
+              'flights': [
+                {
+                  'id': 'flight-1',
+                  'aircraft_id': 'aircraft-1',
+                  'intent_id': 'intent-1',
+                  'intent_version': 1,
+                  'status': 'complete',
+                },
+              ],
+            });
+          }
+          if (path.endsWith('/missions/current')) {
+            return _jsonResponse(_missionJson());
+          }
+          if (path.endsWith('/volumes')) {
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IntentWorkflowPage(
+              aircraftId: 'aircraft-1',
+              apiClient: api,
+              renderTiles: false,
+              initialIntent: OperationalIntent.fromJson(
+                _intentJson(status: 'canceled'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pumpAndSettle();
+      expect(find.text('Retry durable state restore'), findsOneWidget);
+      fail = false;
+      await _tapVisible(tester, find.text('Retry durable state restore'));
+      expect(find.text('Retry durable state restore'), findsNothing);
+      expect(find.text('Aircraft commands'), findsOneWidget);
+      stalled.complete(http.Response('late failure', 500));
+      await tester.pumpAndSettle();
+      expect(find.text('Aircraft commands'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('empty saved draft can create its first volume after loading', (
     tester,
   ) async {
@@ -467,6 +763,7 @@ void main() {
     expect(idempotencyKey, startsWith('ops-mission-import-'));
     expect(importAuthorization, 'Bearer local-dev-token');
     expect(importBody?['aircraft_id'], 'aircraft-1');
+    expect(importBody?['ending_behavior'], 'rtl');
     expect(importBody?['intent_id'], 'intent-1');
     expect(importBody?['intent_version'], 1);
     expect(find.text('1 item(s) · v1'), findsOneWidget);
@@ -978,6 +1275,12 @@ void main() {
       expect(find.text('deployment-1'), findsOneWidget);
       expect(find.text('Refresh durable status'), findsOneWidget);
       expect(find.text('Retry same import'), findsOneWidget);
+
+      final ending = find.widgetWithText(
+        CheckboxListTile,
+        'Return to launch after mission',
+      );
+      expect(tester.widget<CheckboxListTile>(ending).onChanged, isNull);
 
       await _tapVisible(tester, find.text('Retry same import'));
 

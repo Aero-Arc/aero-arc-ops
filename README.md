@@ -315,20 +315,22 @@ the operational intent. `sitl-up` loads SITL-only `AUTO_OPTIONS=3` so the UI can
 arm in AUTO and start the uploaded mission without RC throttle input. Normal arming checks
 remain enabled; startup does not arm or start the aircraft. In the intent workflow,
 issue ARM and wait for observed armed state, then issue MISSION START.
-`sitl-mission-run` selects AUTO in MAVProxy, waits until fresh API telemetry confirms that mode,
-and sends ARM through the authenticated Relay/Agent command lifecycle. The
-checked-in observer mission deliberately ends at an airborne waypoint rather
-than LAND so the post-mission boundary checks remain possible; landing stays an
-explicit operator action. The command plane also supports explicit ARM and
-DISARM:
+`sitl-mission-run` submits authenticated durable ARM, waits for observed armed
+state, then submits durable MISSION_START through the same API as the UI. The
+observer stack appends terminal RTL to the checked-in waypoint mission. SITL
+uses `RTL_ALT_FINAL=0` and `DISARM_DELAY=30`, so mission completion returns HOME,
+lands, and disarms automatically before evidence-driven flight finalization. The
+30-second delay also leaves time for durable mission verification before takeoff. Run
+boundary checks during the mission; there is no post-mission airborne inspection
+window. The command plane also supports explicit ARM and DISARM:
 
 ```sh
 make sitl-arm
 make sitl-disarm
 ```
 
-Movement commands are still issued from MAVProxy. Start a takeoff and waypoint
-demonstration, or attach to the interactive console:
+The demo-flight helper runs the same durable mission workflow. Attach to the
+interactive simulator console only for explicit simulator diagnostics:
 
 ```sh
 make sitl-demo-flight
@@ -347,20 +349,26 @@ make sitl-out-of-bounds
 make sitl-return-in-bounds
 ```
 
-Land first, observe the landing/disarm, and only then complete the operational
-lifecycle:
+For the default mission, let automatic RTL finish landing and disarming, then
+wait for durable finalization before shutting down:
 
 ```sh
-make sitl-land
 make sitl-complete
 make sitl-down
 ```
 
-`sitl-complete` is deliberately explicit: it completes the API intent and
-clears the matching Agent context, while the flight remains active if no
-authoritative flight-completion signal has been implemented. Automatic
-Agent-driven flight completion and broader guided movement commands remain
-command-lifecycle work, not behavior simulated by this runner.
+`sitl-complete` waits for durable completion evidence and background cleanup to
+reach `complete`. It never clears Agent context or treats HTTP acceptance as
+finished cleanup. `sitl-land` is an optional early-recovery action while the flight
+is still active; it submits durable LAND. Do not issue it after automatic
+finalization. Command helper retries retain
+one stable identity per flight and command type; use a new flight for another
+mission demonstration. The boundary-movement helpers remain explicit simulator
+fault injection through MAVProxy, outside the normal mission command path.
+
+Archive #1 is a standalone worker foundation. This demo ends at the API's
+`flight_finalized_outbox`; snapshot production, archive dispatch/discovery and
+Ops playback are not integrated.
 
 Source checkouts can be selected without editing the script, for example
 `AERO_ARC_RELAY_SOURCE=/tmp/aero-arc-relay-mission make sitl-up`. The runner

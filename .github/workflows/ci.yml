@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, feat/durable-c2]
 
 permissions:
   contents: read
@@ -27,7 +27,10 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      - run: bash tools/sitl-observer/sitl-observer_test.sh
+      - run: bash tools/sitl-observer/history-environment_test.sh
       - run: flutter test --coverage
+      - run: flutter build web --release
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:

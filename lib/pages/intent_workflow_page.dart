@@ -94,6 +94,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   Mission? _mission;
   MissionSourceSelection? _missionSource;
   String? _missionIdempotencyKey;
+  bool _returnHomeAfterMission = true;
+  String _selectedEndingBehavior = "rtl";
   bool _missionImportFailed = false;
   MissionDeployment? _missionDeployment;
   String? _missionDeploymentIdempotencyKey;
@@ -229,7 +231,12 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   void _startMissionStateRestore() {
     final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
     if (intent == null ||
-        (intent.status != 'accepted' && intent.status != 'active') ||
+        (![
+          'accepted',
+          'active',
+          'complete',
+          'canceled',
+        ].contains(intent.status)) ||
         intent.aircraftId != widget.aircraftId) {
       _restoringMissionState = false;
       _missionRestoreError = null;
@@ -245,7 +252,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     int generation,
   ) async {
     try {
-      final flights = await _apiClient.listAircraftFlights(widget.aircraftId);
+      final flights = await _apiClient
+          .listAircraftFlights(widget.aircraftId)
+          .timeout(const Duration(seconds: 10));
       final exactFlights = flights.flights
           .where(
             (flight) =>
@@ -257,7 +266,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       final missionFlights = <MapEntry<FlightRecord, Mission>>[];
       for (final flight in exactFlights) {
         try {
-          final mission = await _apiClient.getCurrentMission(flight.id);
+          final mission = await _apiClient
+              .getCurrentMission(flight.id)
+              .timeout(const Duration(seconds: 10));
           if (!_missionBindingMatches(
             mission,
             flight: flight,
@@ -291,37 +302,52 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
       }
 
       MissionDeployment? deployment;
-      if (flight != null &&
+      final terminalIntent = ['complete', 'canceled'].contains(intent.status);
+      final terminalOperation =
+          terminalIntent || ['complete', 'canceled'].contains(flight?.status);
+      String? deploymentWarning;
+      if (!terminalOperation &&
+          flight != null &&
           mission != null &&
           !_apiClient.hasLocalMissionControlToken) {
         throw const AeroArcApiException(
           'Mission deployment credential is unavailable, so durable deployment state cannot be authenticated. Configure the credential and retry durable state restoration before changing the intent.',
         );
       }
-      if (flight != null && mission != null) {
+      if (flight != null &&
+          mission != null &&
+          _apiClient.hasLocalMissionControlToken) {
         try {
-          deployment = await _apiClient.getCurrentMissionDeployment(flight.id);
-        } on AeroArcApiException catch (error) {
-          if (error.statusCode != 404) rethrow;
-        }
-        if (deployment != null &&
-            !_missionDeploymentCanRestore(
-              deployment,
-              mission: mission,
-              flight: flight,
-              intent: intent,
-            )) {
-          if (_missionDeploymentIsTerminalPriorMission(
+          deployment = await _apiClient
+              .getCurrentMissionDeployment(flight.id)
+              .timeout(const Duration(seconds: 10));
+          if (!_missionDeploymentCanRestore(
             deployment,
             mission: mission,
             flight: flight,
             intent: intent,
           )) {
+            if (_missionDeploymentIsTerminalPriorMission(
+              deployment,
+              mission: mission,
+              flight: flight,
+              intent: intent,
+            )) {
+              deployment = null;
+            } else {
+              throw const AeroArcApiException(
+                'Current deployment identity is stale or does not match the current flight, exact intent version, and current or unresolved prior mission.',
+              );
+            }
+          }
+        } catch (error) {
+          if (error is AeroArcApiException && error.statusCode == 404) {
             deployment = null;
+          } else if (terminalOperation) {
+            deployment = null;
+            deploymentWarning = 'Could not restore deployment history: $error';
           } else {
-            throw const AeroArcApiException(
-              'Current deployment identity is stale or does not match the current flight, exact intent version, and current or unresolved prior mission.',
-            );
+            rethrow;
           }
         }
       }
@@ -346,6 +372,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         _missionDeploymentReplayed = false;
         _restoringMissionState = false;
         _missionRestoreError = null;
+        if (deploymentWarning != null) _error = deploymentWarning;
       });
     } catch (error) {
       if (!mounted || generation != _missionRestoreGeneration) return;
@@ -358,10 +385,38 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     }
   }
 
+  Future<void> _refreshFinalizedFlight() async {
+    final flight = _flight;
+    if (flight == null) return;
+    final intent = await _apiClient
+        .getOperationalIntent(flight.intentId)
+        .timeout(const Duration(seconds: 4));
+    final flights = await _apiClient
+        .listAircraftFlights(widget.aircraftId)
+        .timeout(const Duration(seconds: 4));
+    if (!mounted || _flight?.id != flight.id) return;
+    final completed = flights.flights
+        .where((f) => f.id == flight.id)
+        .firstOrNull;
+    if (!['complete', 'canceled'].contains(intent.status) ||
+        completed?.status != 'complete') {
+      throw const AeroArcApiException('Finalized records not yet visible');
+    }
+    setState(() {
+      _intent = intent;
+      _acceptedIntent = null;
+      _activatedIntent = null;
+      _flight = completed;
+    });
+  }
+
   void _retryMissionStateRestore() {
     final intent = _acceptedIntent ?? _intent ?? _sourceIntent;
     if (intent == null ||
-        (intent.status != 'accepted' && intent.status != 'active') ||
+        (intent.status != 'accepted' &&
+            intent.status != 'active' &&
+            intent.status != 'complete' &&
+            intent.status != 'canceled') ||
         intent.aircraftId != widget.aircraftId) {
       return;
     }
@@ -375,6 +430,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
   }
 
   Future<void> _saveAndCheck() async {
+    final status = (_intent ?? _sourceIntent)?.status;
+    if (status == 'complete' || status == 'canceled') return;
     if (!_geometryLoaded) {
       setState(
         () => _error = 'Load the saved intent volume before modification.',
@@ -582,6 +639,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     setState(() {
       _missionSource = selected;
       _missionIdempotencyKey = 'ops-mission-import-$now';
+      _selectedEndingBehavior = _returnHomeAfterMission ? 'rtl' : 'land';
       _missionImportFailed = false;
     });
     await _importSelectedMission();
@@ -624,7 +682,9 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         flight = null;
       }
       if (flight == null) {
-        final flights = await _apiClient.listAircraftFlights(widget.aircraftId);
+        final flights = await _apiClient
+            .listAircraftFlights(widget.aircraftId)
+            .timeout(const Duration(seconds: 10));
         final candidates = flights.flights
             .where(
               (candidate) =>
@@ -658,6 +718,7 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
         intentId: intent.id,
         intentVersion: intent.version,
         source: selected.source,
+        endingBehavior: _selectedEndingBehavior,
         idempotencyKey: idempotencyKey,
       );
       final imported = result.mission;
@@ -727,6 +788,11 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           'Intent ${mission.intentId} v${mission.intentVersion}\n'
           'Mission ${mission.id} v${mission.version}\n'
           'Items ${mission.items.length}\n'
+          'Ending ${mission.items.last.command == 20
+              ? 'Return to launch'
+              : mission.items.last.command == 21
+              ? 'Land'
+              : 'Not configured'}\n'
           'Digest ${_shortDigest(mission.missionDigest)}\n\n'
           'This confirmation applies only to this exact immutable binding. The next action uploads the mission; it does not arm the aircraft, start the flight, or begin mission execution.',
         ),
@@ -1191,7 +1257,11 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
 
   bool get _editingLocked =>
       _activatedIntent != null ||
-      (_intent ?? _sourceIntent)?.status == 'active';
+      [
+        'active',
+        'complete',
+        'canceled',
+      ].contains((_intent ?? _sourceIntent)?.status);
 
   @override
   Widget build(BuildContext context) {
@@ -1300,7 +1370,11 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
     );
     final checks = _ChecksPanel(
       busy: workflowBusy,
-      checksBlocked: _missionRestoreError != null || (!_geometryLoaded),
+      checksBlocked:
+          _missionRestoreError != null ||
+          (!_geometryLoaded) ||
+          currentIntent?.status == 'complete' ||
+          currentIntent?.status == 'canceled',
       sourceIntent: _sourceIntent,
       modifyResult: _modifyResult,
       intent: currentIntent,
@@ -1320,12 +1394,19 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
           (currentIntent?.status == 'active' ? currentIntent : null),
       checksClear: _checksClear,
       busy: workflowBusy,
-      checksBlocked: _missionRestoreError != null || (!_geometryLoaded),
+      checksBlocked:
+          _missionRestoreError != null ||
+          (!_geometryLoaded) ||
+          currentIntent?.status == 'complete' ||
+          currentIntent?.status == 'canceled',
       onRunChecks: _saveAndCheck,
       onAccept: _acceptIntent,
       onActivate: _activateIntent,
     );
     final missionImport = _MissionImportPanel(
+      returnHome: _returnHomeAfterMission,
+      onReturnHomeChanged: (value) =>
+          setState(() => _returnHomeAfterMission = value),
       intent: _acceptedIntent ?? _intent ?? _sourceIntent,
       flight: _flight,
       mission: _mission,
@@ -1370,6 +1451,8 @@ class _IntentWorkflowPageState extends State<IntentWorkflowPage> {
             key: ValueKey(_flight!.id),
             api: _apiClient,
             flight: _flight!,
+            intentStatus: currentIntent?.status,
+            onFinalized: _refreshFinalizedFlight,
           );
     return Container(
       decoration: const BoxDecoration(gradient: aeroPageGradient),
@@ -2339,7 +2422,11 @@ class _ChecksPanel extends StatelessWidget {
 }
 
 class _MissionImportPanel extends StatelessWidget {
+  final bool returnHome;
+  final ValueChanged<bool> onReturnHomeChanged;
   const _MissionImportPanel({
+    required this.returnHome,
+    required this.onReturnHomeChanged,
     required this.intent,
     required this.flight,
     required this.mission,
@@ -2394,6 +2481,23 @@ class _MissionImportPanel extends StatelessWidget {
               'Import a QGC WPL 110 route after accepting the intent. The route is checked against this exact authorization version; it never changes the authorized volume.',
               style: TextStyle(color: Color(0xFF93A3C7), height: 1.4),
             ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: returnHome,
+              onChanged: busy || hasFailedSelection
+                  ? null
+                  : (value) => onReturnHomeChanged(value ?? true),
+              title: const Text('Return to launch after mission'),
+              subtitle: Text(
+                returnHome
+                    ? 'Default · add RTL to the onboard plan. HOME and RTL settings determine the return and landing.'
+                    : 'Land at the final mission location.',
+              ),
+            ),
+            const Text(
+              'The selected ending is saved with the new mission version. Flight completion requires landed and disarmed evidence.',
+              style: TextStyle(color: Color(0xFF93A3C7), fontSize: 12),
+            ),
             const SizedBox(height: 10),
             DetailLine(
               label: 'Binding',
@@ -2427,6 +2531,15 @@ class _MissionImportPanel extends StatelessWidget {
                   ? 'Not validated'
                   : '${mission!.items.length} item(s) · v${mission!.version}',
             ),
+            if (mission != null && mission!.items.isNotEmpty)
+              DetailLine(
+                label: 'Validated ending',
+                value: mission!.items.last.command == 20
+                    ? 'Return to launch'
+                    : mission!.items.last.command == 21
+                    ? 'Land'
+                    : 'Not configured',
+              ),
             if (mission != null)
               DetailLine(
                 label: 'Digest',
