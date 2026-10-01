@@ -1374,6 +1374,11 @@ void main() {
           return _jsonResponse(_intentJson(status: 'draft'));
         }
         if (path == '/api/v1/operational-intents/intent-1/volumes') {
+          if (request.method == 'GET') {
+            return _jsonResponse({
+              'volumes': [_volumeJson()],
+            });
+          }
           volumeCount += 1;
           return _jsonResponse(_volumeJson());
         }
