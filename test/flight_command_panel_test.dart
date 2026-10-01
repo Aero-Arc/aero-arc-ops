@@ -25,6 +25,82 @@ Map<String, dynamic> command(String state) => {
   'events': <dynamic>[],
 };
 void main() {
+  testWidgets(
+    'later command submission preserves an earlier recovery failure',
+    (tester) async {
+      var submitted = false;
+      var progressed = false;
+      final second = {...command('applied'), 'id': 'command-2', 'type': 'LAND'};
+      final api = AeroArcApiClient(
+        missionControlToken: 'test',
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/completion'))
+            return http.Response('{}', 404);
+          if (request.url.path.endsWith('/reconcile'))
+            return http.Response('unavailable', 503);
+          if (request.method == 'POST') {
+            submitted = true;
+            return http.Response(jsonEncode(second), 200);
+          }
+          return http.Response(
+            jsonEncode({
+              'commands': [
+                {
+                  ...command('applied'),
+                  'observation_state': progressed ? 'observed' : 'pending',
+                },
+                if (submitted) second,
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: FlightCommandPanel(api: api, flight: flight),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('ARM · applied'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Reconcile existing command'));
+      await tester.tap(find.text('Reconcile existing command'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Evidence recovery unavailable:'),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'LAND'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'LAND'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Issue command'));
+      await tester.pumpAndSettle();
+      expect(submitted, isTrue);
+      expect(
+        find.textContaining('Evidence recovery unavailable:'),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Evidence recovery unavailable:'),
+        findsOneWidget,
+      );
+      progressed = true;
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Evidence recovery unavailable:'),
+        findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
   testWidgets('unavailable history does not assert an empty durable history', (
     tester,
   ) async {
