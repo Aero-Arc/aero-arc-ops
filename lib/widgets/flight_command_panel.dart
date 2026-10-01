@@ -199,6 +199,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     setState(() {
       _sending = true;
       _historyGeneration++;
+      _historyAvailable = false;
       _error = null;
     });
     var definitivelyRejected = false;
@@ -236,7 +237,7 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
     } finally {
       if (mounted) {
         setState(() => _sending = false);
-        if (definitivelyRejected) unawaited(_refresh());
+        unawaited(_refresh());
       }
     }
   }
