@@ -17,10 +17,20 @@ class FlightCommand {
     if (!['accepted', 'dispatched', 'acknowledged'].contains(state)) {
       return null;
     }
-    if (events.any((e) => e.stage == 'awaiting_ack')) {
-      return 'Awaiting autopilot ACK';
+    FlightCommandEvent? latest;
+    for (final event in events) {
+      if (!['awaiting_ack', 'verifying_mission'].contains(event.stage)) {
+        continue;
+      }
+      if (latest == null ||
+          event.occurredAt.isAfter(latest.occurredAt) ||
+          (event.occurredAt == latest.occurredAt &&
+              !event.receivedAt.isBefore(latest.receivedAt))) {
+        latest = event;
+      }
     }
-    if (events.any((e) => e.stage == 'verifying_mission')) {
+    if (latest?.stage == 'awaiting_ack') return 'Awaiting autopilot ACK';
+    if (latest?.stage == 'verifying_mission') {
       return 'Verifying onboard mission';
     }
     return null;
