@@ -27,7 +27,8 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
   int _historyGeneration = 0;
   String? _error, _pendingType, _pendingKey;
   String? _historyError;
-  FlightCommand? _failedReconciliation;
+  final _reconciliationFailures =
+      <String, ({FlightCommand command, String message})>{};
   bool _loading = true,
       _sending = false,
       _refreshing = false,
@@ -61,20 +62,16 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
           .timeout(const Duration(seconds: 10));
       if (mounted && generation == _historyGeneration) {
         setState(() {
-          final failed = _failedReconciliation;
-          if (failed != null &&
-              commands.any(
-                (c) =>
-                    c.id == failed.id &&
-                    (c.state != failed.state ||
-                        c.observationState != failed.observationState ||
-                        c.events.length > failed.events.length),
-              )) {
-            if (_error?.startsWith('Evidence recovery unavailable:') ?? false) {
-              _error = null;
-            }
-            _failedReconciliation = null;
-          }
+          _reconciliationFailures.removeWhere((id, failure) {
+            final failed = failure.command;
+            return commands.any(
+              (c) =>
+                  c.id == failed.id &&
+                  (c.state != failed.state ||
+                      c.observationState != failed.observationState ||
+                      c.events.length > failed.events.length),
+            );
+          });
           _commands = commands;
           _loading = false;
           _historyAvailable = true;
@@ -273,7 +270,13 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                 child: const Text('Retry same request'),
               ),
             if (_loading) const LinearProgressIndicator(),
-            for (final error in [_historyError, _error].whereType<String>())
+            for (final error in [
+              _historyError,
+              _error,
+              ..._reconciliationFailures.values.map(
+                (failure) => failure.message,
+              ),
+            ].whereType<String>())
               Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: Text(
@@ -350,14 +353,19 @@ class _FlightCommandPanelState extends State<FlightCommandPanel> {
                                                 (c) => c.id != updated.id,
                                               ),
                                             ];
-                                            _error = null;
+                                            _reconciliationFailures.remove(
+                                              command.id,
+                                            );
                                           });
                                         } catch (e) {
                                           if (mounted) {
                                             setState(() {
-                                              _failedReconciliation = command;
-                                              _error =
-                                                  'Evidence recovery unavailable: $e';
+                                              _reconciliationFailures[command
+                                                  .id] = (
+                                                command: command,
+                                                message:
+                                                    'Evidence recovery unavailable: ${command.type} (${command.id}): $e',
+                                              );
                                             });
                                           }
                                         } finally {
