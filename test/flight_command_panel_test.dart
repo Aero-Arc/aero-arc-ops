@@ -28,6 +28,7 @@ void main() {
   testWidgets(
     'uncertain retry retains identity and respects history authority',
     (tester) async {
+      final postAttempt = Completer<http.Response>();
       final stalled = Completer<http.Response>();
       var reads = 0;
       var submissions = 0;
@@ -47,10 +48,11 @@ void main() {
                 : http.Response(jsonEncode(command('applied')), 202);
           }
           reads++;
-          if (reads == 2) return stalled.future;
+          if (reads == 2) return postAttempt.future;
+          if (reads == 3) return stalled.future;
           return http.Response(
             jsonEncode({
-              'commands': reads > 2 && blocked
+              'commands': reads > 3 && blocked
                   ? [
                       {...command('accepted'), 'id': 'other'},
                     ]
@@ -75,6 +77,9 @@ void main() {
       await tester.tap(find.text('Issue command'));
       await tester.pumpAndSettle();
       final retry = find.widgetWithText(TextButton, 'Retry same request');
+      expect(tester.widget<TextButton>(retry).onPressed, isNull);
+      postAttempt.complete(http.Response('{"commands":[]}', 200));
+      await tester.pumpAndSettle();
       final queued = tester.widget<TextButton>(retry).onPressed!;
       await tester.pump(const Duration(seconds: 3));
       await tester.pump();
@@ -435,7 +440,12 @@ void main() {
               ? stalled.future
               : http.Response(jsonEncode(command('accepted')), 202);
         }
-        return http.Response('{"commands":[]}', 200);
+        return http.Response(
+          jsonEncode({
+            'commands': keys.length > 1 ? [command('accepted')] : [],
+          }),
+          200,
+        );
       }),
     );
     await tester.pumpWidget(
@@ -729,7 +739,12 @@ void main() {
       missionControlToken: 'trusted-session',
       httpClient: MockClient((request) async {
         if (request.method == 'GET') {
-          return http.Response('{"commands":[]}', 200);
+          return http.Response(
+            jsonEncode({
+              'commands': keys.length > 1 ? [command('accepted')] : [],
+            }),
+            200,
+          );
         }
         keys.add(request.headers['Idempotency-Key']!);
         expect(jsonDecode(request.body)['type'], 'ARM');
