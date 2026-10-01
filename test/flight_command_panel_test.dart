@@ -57,8 +57,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final controls = tester.widgetList<FilledButton>(
-        find.byType(FilledButton),
+      final controls = tester.widgetList<OutlinedButton>(
+        find.byType(OutlinedButton),
       );
       expect(controls, isNotEmpty);
       expect(controls.every((button) => button.onPressed == null), isTrue);
